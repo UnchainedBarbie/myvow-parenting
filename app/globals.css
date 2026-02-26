@@ -1,0 +1,38 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --primary: 142 31% 47%;
+    --primary-light: 140 30% 94%;
+    --primary-dark: 142 28% 38%;
+    --background: 40 33% 98%;
+    --background-secondary: 36 18% 94%;
+    --foreground: 210 9% 18%;
+    --foreground-secondary: 210 9% 45%;
+    --alert: 0 42% 63%;
+    --info: 210 42% 63%;
+    --success: 142 57% 53%;
+    --radius: 0.75rem;
+    /* shadcn/ui */
+    --card: 40 20% 97%;
+    --card-foreground: 210 9% 18%;
+    --popover: 40 20% 97%;
+    --popover-foreground: 210 9% 18%;
+    --muted: 36 18% 94%;
+    --muted-foreground: 210 9% 45%;
+    --accent: 140 30% 94%;
+    --accent-foreground: 142 28% 38%;
+    --destructive: 0 42% 63%;
+    --border: 36 15% 90%;
+    --input: 36 15% 90%;
+    --ring: 142 31% 47%;
+  }
+  body {
+    @apply bg-background text-foreground font-body antialiased;
+  }
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-heading;
+  }
+}

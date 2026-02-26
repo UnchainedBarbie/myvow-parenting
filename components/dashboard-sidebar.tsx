@@ -1,0 +1,79 @@
+"use client";
+
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import {
+  LayoutDashboard,
+  MessageSquare,
+  Receipt,
+  FileText,
+  Calendar,
+  FileBarChart,
+  Settings,
+  LogOut,
+} from "lucide-react";
+import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import { createClient } from "@/lib/supabase/client";
+import { Separator } from "@/components/ui/separator";
+
+const navItems = [
+  { href: "/dashboard", label: "Overview", icon: LayoutDashboard },
+  { href: "/messages", label: "Messages", icon: MessageSquare },
+  { href: "/expenses", label: "Expenses", icon: Receipt },
+  { href: "/documents", label: "Documents", icon: FileText },
+  { href: "/calendar", label: "Calendar", icon: Calendar },
+  { href: "/reports", label: "Reports", icon: FileBarChart },
+  { href: "/settings", label: "Settings", icon: Settings },
+];
+
+export function DashboardSidebar() {
+  const pathname = usePathname();
+
+  async function handleSignOut() {
+    const supabase = createClient();
+    await supabase.auth.signOut();
+    window.location.href = "/";
+  }
+
+  return (
+    <aside className="hidden w-64 flex-col border-r border-border bg-background-secondary md:flex">
+      <div className="flex h-16 items-center gap-2 border-b border-border px-4">
+        <Link href="/dashboard" className="font-heading text-lg font-semibold text-primary-dark">
+          MyVow
+        </Link>
+      </div>
+      <nav className="flex-1 space-y-1 p-3">
+        {navItems.map(({ href, label, icon: Icon }) => {
+          const isActive = pathname === href || (href !== "/dashboard" && pathname.startsWith(href));
+          return (
+            <Link
+              key={href}
+              href={href}
+              className={cn(
+                "flex items-center gap-3 rounded-card px-3 py-2 text-sm font-medium transition-colors",
+                isActive
+                  ? "bg-primary-light text-primary-dark"
+                  : "text-foreground-secondary hover:bg-muted hover:text-foreground"
+              )}
+            >
+              <Icon className="h-5 w-5 shrink-0" />
+              {label}
+            </Link>
+          );
+        })}
+      </nav>
+      <Separator className="mx-3" />
+      <div className="p-3">
+        <Button
+          variant="ghost"
+          className="w-full justify-start gap-3 text-foreground-secondary"
+          onClick={handleSignOut}
+        >
+          <LogOut className="h-5 w-5" />
+          Sign out
+        </Button>
+      </div>
+    </aside>
+  );
+}

@@ -26,6 +26,8 @@ export async function POST(request: NextRequest) {
       all_day,
       is_private,
       recurring_rule,
+      kid_title,
+      visibility,
     } = body as {
       case_id?: string;
       title?: string;
@@ -37,6 +39,8 @@ export async function POST(request: NextRequest) {
       all_day?: boolean;
       is_private?: boolean;
       recurring_rule?: string;
+      kid_title?: string;
+      visibility?: "family" | "parents_only" | "private";
     };
     if (!case_id || !title || !start_time) {
       return NextResponse.json(
@@ -45,7 +49,10 @@ export async function POST(request: NextRequest) {
       );
     }
     const admin = getServiceRoleClient();
-    const privateFlag = !!is_private;
+    const visibilityValue: "family" | "parents_only" | "private" =
+      visibility ?? "family";
+    const privateFlag =
+      visibilityValue === "private" || (!!is_private && !visibility);
     const descriptionValue =
       description && description.trim().length > 0
         ? description.trim()
@@ -67,6 +74,8 @@ export async function POST(request: NextRequest) {
         end_time: end_time ?? null,
         all_day: all_day ?? false,
         recurring_rule: recurring_rule ?? null,
+        visibility: visibilityValue,
+        kid_title: kid_title ?? null,
       })
       .select("id")
       .single();

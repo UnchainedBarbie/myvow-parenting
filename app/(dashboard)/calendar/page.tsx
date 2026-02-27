@@ -1,8 +1,8 @@
 import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import { AddEventForm } from "@/components/calendar/add-event-form";
-import { CalendarMonth, type CalendarEventRow } from "@/components/calendar/calendar-month";
-import { UpcomingEventsList } from "@/components/calendar/upcoming-events-list";
+import type { CalendarEventRow } from "@/components/calendar/calendar-month";
+import { CalendarRoot } from "@/components/calendar/calendar-root";
 
 function getMonthRange(year: number, month: number) {
   const start = new Date(year, month - 1, 1);
@@ -68,11 +68,12 @@ export default async function CalendarPage({
   const { data: eventsRaw } = await admin
     .from("calendar_events")
     .select(
-      "id, title, description, event_type, child_id, start_time, end_time, all_day, created_by, created_at, swap_status, recurring_rule"
+      "id, title, description, event_type, child_id, start_time, end_time, all_day, status, created_by, created_at, recurring_rule, deleted_at"
     )
     .eq("case_id", caseId)
     .gte("start_time", start)
     .lte("start_time", end)
+    .is("deleted_at", null)
     .order("start_time", { ascending: true });
 
   const childIds = [
@@ -109,6 +110,10 @@ export default async function CalendarPage({
     {} as Record<string, string>
   );
 
+  // Debug: log raw events from Supabase, including status/deleted_at
+  // eslint-disable-next-line no-console
+  console.log("[CalendarPage] eventsRaw", eventsRaw);
+
   const events: CalendarEventRow[] = (eventsRaw ?? [])
     .filter((e) => {
       const isPrivate = e.description?.startsWith("[PRIVATE]") ?? false;
@@ -130,7 +135,7 @@ export default async function CalendarPage({
         start_time: e.start_time,
         end_time: e.end_time,
         all_day: e.all_day ?? false,
-        status: e.swap_status ?? null,
+        status: (e as any).status ?? null,
         isPrivate,
         isMine: e.created_by === user.id,
         created_at: e.created_at,
@@ -159,34 +164,27 @@ export default async function CalendarPage({
   }));
 
   return (
-    <div className="p-6 md:p-8">
-      <h1 className="font-heading text-2xl font-semibold text-foreground mb-2">
+    <div className="px-3 pt-3 pb-1 md:px-4 md:pt-4 md:pb-2">
+      <h1 className="font-heading text-xl md:text-2xl font-semibold text-foreground mb-1">
         Calendar
       </h1>
-      <p className="text-foreground-secondary mb-8">Shared parenting calendar.</p>
-      <div className="space-y-8">
-        <div className="grid gap-8 lg:grid-cols-[320px_1fr]">
+      <p className="text-xs md:text-sm text-foreground-secondary mb-2">
+        Shared record of parenting events.
+      </p>
+      <div className="space-y-2.5">
+        <div className="grid gap-3 lg:grid-cols-[420px_minmax(0,1fr)] items-start">
           <AddEventForm
             caseId={caseId}
             children={children ?? []}
             initialYear={safeYear}
             initialMonth={safeMonth}
           />
-          <div className="flex flex-col gap-4">
-            <CalendarMonth
-              year={safeYear}
-              month={safeMonth}
-              events={events}
-              caseId={caseId}
-              children={children ?? []}
-            />
-            <UpcomingEventsList
-              caseId={caseId}
-              upcoming={upcoming}
-              events={events}
-              children={children ?? []}
-            />
-          </div>
+          <CalendarRoot
+            caseId={caseId}
+            events={events}
+            upcoming={upcoming}
+            children={children ?? []}
+          />
         </div>
       </div>
     </div>

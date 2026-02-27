@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -24,6 +25,11 @@ export type CalendarEventRow = {
   start_time: string;
   end_time: string | null;
   all_day: boolean;
+  status: string | null;
+  isPrivate: boolean;
+  isMine: boolean;
+  created_at: string;
+  created_by_name: string | null;
 };
 
 interface CalendarMonthProps {
@@ -44,6 +50,11 @@ function formatTime(iso: string) {
 
 export function CalendarMonth({ year, month, events }: CalendarMonthProps) {
   const router = useRouter();
+  const [ownerFilter, setOwnerFilter] = useState<"all" | "mine" | "shared">(
+    "all"
+  );
+  const [categoryFilter, setCategoryFilter] = useState<"all" | string>("all");
+  const [conflictsOnly, setConflictsOnly] = useState(false);
   const first = new Date(year, month - 1, 1);
   const last = new Date(year, month, 0);
   const startPad = first.getDay();
@@ -51,8 +62,17 @@ export function CalendarMonth({ year, month, events }: CalendarMonthProps) {
   const totalCells = startPad + daysInMonth;
   const rows = Math.ceil(totalCells / 7);
 
+  const filteredEvents = events.filter((e) => {
+    if (ownerFilter === "mine" && !e.isMine) return false;
+    if (ownerFilter === "shared" && e.isPrivate) return false;
+    if (categoryFilter !== "all" && e.event_type !== categoryFilter)
+      return false;
+    if (conflictsOnly && e.status !== "conflict") return false;
+    return true;
+  });
+
   const eventsByDay: Record<string, CalendarEventRow[]> = {};
-  for (const e of events) {
+  for (const e of filteredEvents) {
     const d = new Date(e.start_time);
     const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
     if (!eventsByDay[key]) eventsByDay[key] = [];
@@ -86,31 +106,69 @@ export function CalendarMonth({ year, month, events }: CalendarMonthProps) {
 
   return (
     <Card className="shadow-card">
-      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-        <CardTitle className="font-heading text-lg">{monthName}</CardTitle>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => goMonth(-1)}
-            className="rounded-full p-2 text-foreground-secondary hover:bg-muted hover:text-foreground"
-            aria-label="Previous month"
+      <CardHeader className="flex flex-col gap-2 space-y-0 pb-2">
+        <div className="flex flex-row items-center justify-between">
+          <CardTitle className="font-heading text-lg">{monthName}</CardTitle>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => goMonth(-1)}
+              className="rounded-full p-2 text-foreground-secondary hover:bg-muted hover:text-foreground"
+              aria-label="Previous month"
+            >
+              ←
+            </button>
+            <Link
+              href={`/calendar?year=${new Date().getFullYear()}&month=${new Date().getMonth() + 1}`}
+              className="rounded-full px-3 py-1.5 text-sm text-foreground-secondary hover:bg-muted hover:text-foreground"
+            >
+              Today
+            </Link>
+            <button
+              type="button"
+              onClick={() => goMonth(1)}
+              className="rounded-full p-2 text-foreground-secondary hover:bg-muted hover:text-foreground"
+              aria-label="Next month"
+            >
+              →
+            </button>
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center justify-end gap-2 text-xs text-foreground-secondary">
+          <select
+            value={ownerFilter}
+            onChange={(e) =>
+              setOwnerFilter(e.target.value as "all" | "mine" | "shared")
+            }
+            className="h-8 rounded-card border border-border bg-background px-2"
           >
-            ←
-          </button>
-          <Link
-            href={`/calendar?year=${new Date().getFullYear()}&month=${new Date().getMonth() + 1}`}
-            className="rounded-full px-3 py-1.5 text-sm text-foreground-secondary hover:bg-muted hover:text-foreground"
+            <option value="all">All events</option>
+            <option value="mine">My events</option>
+            <option value="shared">Shared events</option>
+          </select>
+          <select
+            value={categoryFilter}
+            onChange={(e) =>
+              setCategoryFilter(e.target.value as "all" | string)
+            }
+            className="h-8 rounded-card border border-border bg-background px-2"
           >
-            Today
-          </Link>
-          <button
-            type="button"
-            onClick={() => goMonth(1)}
-            className="rounded-full p-2 text-foreground-secondary hover:bg-muted hover:text-foreground"
-            aria-label="Next month"
-          >
-            →
-          </button>
+            <option value="all">All categories</option>
+            {Object.entries(EVENT_TYPE_LABELS).map(([value, label]) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
+          </select>
+          <label className="inline-flex items-center gap-1">
+            <input
+              type="checkbox"
+              checked={conflictsOnly}
+              onChange={(e) => setConflictsOnly(e.target.checked)}
+              className="rounded border-border"
+            />
+            <span>Conflicts only</span>
+          </label>
         </div>
       </CardHeader>
       <CardContent>

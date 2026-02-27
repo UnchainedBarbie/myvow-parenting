@@ -65,7 +65,7 @@ export default async function CalendarPage({
   const { data: eventsRaw } = await admin
     .from("calendar_events")
     .select(
-      "id, title, description, event_type, child_id, start_time, end_time, all_day, created_by, recurring_rule"
+      "id, title, description, event_type, child_id, start_time, end_time, all_day, created_by, created_at, swap_status, recurring_rule"
     )
     .eq("case_id", caseId)
     .gte("start_time", start)
@@ -84,6 +84,23 @@ export default async function CalendarPage({
   const childMap = (childRows ?? []).reduce(
     (acc, c) => {
       acc[c.id] = c.first_name;
+      return acc;
+    },
+    {} as Record<string, string>
+  );
+
+  const creatorIds = [
+    ...new Set(
+      (eventsRaw ?? []).map((e) => e.created_by).filter(Boolean)
+    ),
+  ] as string[];
+  const { data: creatorRows } =
+    creatorIds.length > 0
+      ? await admin.from("users").select("id, full_name").in("id", creatorIds)
+      : { data: [] };
+  const creatorMap = (creatorRows ?? []).reduce(
+    (acc, u) => {
+      acc[u.id] = u.full_name;
       return acc;
     },
     {} as Record<string, string>
@@ -110,6 +127,11 @@ export default async function CalendarPage({
         start_time: e.start_time,
         end_time: e.end_time,
         all_day: e.all_day ?? false,
+        status: e.swap_status ?? null,
+        isPrivate,
+        isMine: e.created_by === user.id,
+        created_at: e.created_at,
+        created_by_name: creatorMap[e.created_by] ?? null,
       };
     });
 
@@ -127,11 +149,7 @@ export default async function CalendarPage({
             initialYear={safeYear}
             initialMonth={safeMonth}
           />
-          <CalendarMonth
-            year={safeYear}
-            month={safeMonth}
-            events={events}
-          />
+          <CalendarMonth year={safeYear} month={safeMonth} events={events} />
         </div>
       </div>
     </div>

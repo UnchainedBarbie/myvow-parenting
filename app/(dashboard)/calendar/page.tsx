@@ -2,6 +2,7 @@ import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import { AddEventForm } from "@/components/calendar/add-event-form";
 import { CalendarMonth, type CalendarEventRow } from "@/components/calendar/calendar-month";
+import { UpcomingEventsList } from "@/components/calendar/upcoming-events-list";
 
 function getMonthRange(year: number, month: number) {
   const start = new Date(year, month - 1, 1);
@@ -45,7 +46,9 @@ export default async function CalendarPage({
         <h1 className="font-heading text-2xl font-semibold text-foreground mb-2">
           Calendar
         </h1>
-        <p className="text-foreground-secondary mb-8">Shared parenting calendar.</p>
+        <p className="text-foreground-secondary mb-8">
+          Shared record of parenting events.
+        </p>
         <div className="rounded-card border border-border bg-background-secondary p-8 text-center">
           <p className="text-foreground-secondary">
             Create or join a case in Settings to view and add events.
@@ -132,8 +135,28 @@ export default async function CalendarPage({
         isMine: e.created_by === user.id,
         created_at: e.created_at,
         created_by_name: creatorMap[e.created_by] ?? null,
+        recurring_rule: e.recurring_rule ?? null,
       };
     });
+
+  const nowIso = new Date().toISOString();
+  const { data: upcomingRaw } = await admin
+    .from("calendar_events")
+    .select("id, title, event_type, child_id, start_time, swap_status, deleted_at")
+    .eq("case_id", caseId)
+    .gte("start_time", nowIso)
+    .is("deleted_at", null)
+    .order("start_time", { ascending: true })
+    .limit(10);
+
+  const upcoming = (upcomingRaw ?? []).map((e) => ({
+    id: e.id,
+    title: e.title,
+    event_type: e.event_type as string | null,
+    child_name: e.child_id ? childMap[e.child_id] ?? null : null,
+    start_time: e.start_time as string,
+    status: (e as any).swap_status as string | null,
+  }));
 
   return (
     <div className="p-6 md:p-8">
@@ -149,7 +172,21 @@ export default async function CalendarPage({
             initialYear={safeYear}
             initialMonth={safeMonth}
           />
-          <CalendarMonth year={safeYear} month={safeMonth} events={events} />
+          <div className="flex flex-col gap-4">
+            <CalendarMonth
+              year={safeYear}
+              month={safeMonth}
+              events={events}
+              caseId={caseId}
+              children={children ?? []}
+            />
+            <UpcomingEventsList
+              caseId={caseId}
+              upcoming={upcoming}
+              events={events}
+              children={children ?? []}
+            />
+          </div>
         </div>
       </div>
     </div>

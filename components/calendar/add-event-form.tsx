@@ -44,7 +44,8 @@ export function AddEventForm({
   const [startTime, setStartTime] = useState("09:00");
   const [endTime, setEndTime] = useState("10:00");
   const [isPrivate, setIsPrivate] = useState(false);
-  const [repeat, setRepeat] = useState<string>("none");
+  const [isRepeating, setIsRepeating] = useState(false);
+  const [repeat, setRepeat] = useState<string>("weekly");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -78,7 +79,7 @@ export function AddEventForm({
           end_time: end,
           all_day: false,
           is_private: isPrivate,
-          recurring_rule: repeat === "none" ? undefined : repeat,
+          recurring_rule: isRepeating ? repeat : undefined,
         }),
       });
       const data = await res.json();
@@ -109,34 +110,42 @@ export function AddEventForm({
             <Input id="title" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Pediatrician visit" required />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="event_type">Type</Label>
+            <Label htmlFor="event_type">Category</Label>
             <select
               id="event_type"
               value={eventType}
               onChange={(e) => setEventType(e.target.value)}
-              className={cn("flex h-10 w-full rounded-card border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2")}
+              className={cn(
+                "flex h-10 w-full rounded-card border border-input bg-background px-3 py-2 text-sm ring-offset-background",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+              )}
             >
               {EVENT_TYPES.map((t) => (
-                <option key={t.value} value={t.value}>{t.label}</option>
+                <option key={t.value} value={t.value}>
+                  {t.label}
+                </option>
               ))}
             </select>
           </div>
-          {children.length > 0 && (
-            <div className="space-y-2">
-              <Label htmlFor="child">Child (optional)</Label>
-              <select
-                id="child"
-                value={childId}
-                onChange={(e) => setChildId(e.target.value)}
-                className={cn("flex h-10 w-full rounded-card border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2")}
-              >
-                <option value="">None</option>
-                {children.map((c) => (
-                  <option key={c.id} value={c.id}>{c.first_name}</option>
-                ))}
-              </select>
-            </div>
-          )}
+          <div className="space-y-2">
+            <Label htmlFor="child">Child</Label>
+            <select
+              id="child"
+              value={childId}
+              onChange={(e) => setChildId(e.target.value)}
+              className={cn(
+                "flex h-10 w-full rounded-card border border-input bg-background px-3 py-2 text-sm ring-offset-background",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+              )}
+            >
+              <option value="">All children</option>
+              {children.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.first_name}
+                </option>
+              ))}
+            </select>
+          </div>
           <div className="space-y-2">
             <Label htmlFor="description">Description</Label>
             <Input
@@ -156,55 +165,75 @@ export function AddEventForm({
               className="rounded border-border"
             />
             <Label htmlFor="private" className="font-normal">
-              Private – My calendar only
+              🔒 Visible only to me
             </Label>
           </div>
-          <div className="space-y-2">
-            <Label htmlFor="date">Date</Label>
-            <Input
-              id="date"
-              type="date"
-              value={date}
-              onChange={(e) => setDate(e.target.value)}
-              required
-            />
-          </div>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-3">
             <div className="space-y-2">
-              <Label htmlFor="start_time">Start time</Label>
+              <Label htmlFor="date">Date</Label>
               <Input
-                id="start_time"
-                type="time"
-                value={startTime}
-                onChange={(e) => setStartTime(e.target.value)}
+                id="date"
+                type="date"
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+                required
+                className="w-full"
               />
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="end_time">End time</Label>
-              <Input
-                id="end_time"
-                type="time"
-                value={endTime}
-                onChange={(e) => setEndTime(e.target.value)}
-              />
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="start_time">Start time</Label>
+                <Input
+                  id="start_time"
+                  type="time"
+                  value={startTime}
+                  onChange={(e) => setStartTime(e.target.value)}
+                  className="w-full min-w-[140px]"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="end_time">End time</Label>
+                <Input
+                  id="end_time"
+                  type="time"
+                  value={endTime}
+                  onChange={(e) => setEndTime(e.target.value)}
+                  className="w-full min-w-[140px]"
+                />
+              </div>
             </div>
           </div>
           <div className="space-y-2">
-            <Label htmlFor="repeat">Repeat</Label>
-            <select
-              id="repeat"
-              value={repeat}
-              onChange={(e) => setRepeat(e.target.value)}
-              className={cn(
-                "flex h-10 w-full rounded-card border border-input bg-background px-3 py-2 text-sm",
-                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-              )}
-            >
-              <option value="none">Does not repeat</option>
-              <option value="weekly">Weekly</option>
-              <option value="biweekly">Every 2 weeks</option>
-              <option value="monthly">Monthly</option>
-            </select>
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                id="repeating"
+                checked={isRepeating}
+                onChange={(e) => setIsRepeating(e.target.checked)}
+                className="rounded border-border"
+              />
+              <Label htmlFor="repeating" className="font-normal">
+                Repeating event
+              </Label>
+            </div>
+            {isRepeating && (
+              <>
+                <Label htmlFor="repeat">Frequency</Label>
+                <select
+                  id="repeat"
+                  value={repeat}
+                  onChange={(e) => setRepeat(e.target.value)}
+                  className={cn(
+                    "flex h-10 w-full rounded-card border border-input bg-background px-3 py-2 text-sm",
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                  )}
+                >
+                  <option value="weekly">Weekly</option>
+                  <option value="biweekly">Every 2 weeks</option>
+                  <option value="monthly">Monthly</option>
+                </select>
+              </>
+            )}
           </div>
           <Button type="submit" disabled={loading} className="rounded-full">
             {loading ? "Adding…" : "Add event"}

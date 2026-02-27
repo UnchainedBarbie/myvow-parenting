@@ -45,9 +45,7 @@ export default async function CalendarPage({
         <h1 className="font-heading text-2xl font-semibold text-foreground mb-2">
           Calendar
         </h1>
-        <p className="text-foreground-secondary mb-8">
-          Shared parenting calendar, custody schedule, and swap requests.
-        </p>
+        <p className="text-foreground-secondary mb-8">Shared parenting calendar.</p>
         <div className="rounded-card border border-border bg-background-secondary p-8 text-center">
           <p className="text-foreground-secondary">
             Create or join a case in Settings to view and add events.
@@ -67,7 +65,7 @@ export default async function CalendarPage({
   const { data: eventsRaw } = await admin
     .from("calendar_events")
     .select(
-      "id, title, description, event_type, child_id, start_time, end_time, all_day"
+      "id, title, description, event_type, child_id, start_time, end_time, all_day, created_by, recurring_rule"
     )
     .eq("case_id", caseId)
     .gte("start_time", start)
@@ -91,27 +89,36 @@ export default async function CalendarPage({
     {} as Record<string, string>
   );
 
-  const events: CalendarEventRow[] = (eventsRaw ?? []).map((e) => ({
-    id: e.id,
-    title: e.title,
-    description: e.description,
-    event_type: e.event_type,
-    child_id: e.child_id,
-    child_name: e.child_id ? childMap[e.child_id] ?? null : null,
-    start_time: e.start_time,
-    end_time: e.end_time,
-    all_day: e.all_day ?? false,
-  }));
+  const events: CalendarEventRow[] = (eventsRaw ?? [])
+    .filter((e) => {
+      const isPrivate = e.description?.startsWith("[PRIVATE]") ?? false;
+      if (!isPrivate) return true;
+      return e.created_by === user.id;
+    })
+    .map((e) => {
+      const isPrivate = e.description?.startsWith("[PRIVATE]") ?? false;
+      const desc = isPrivate
+        ? e.description?.replace(/^\[PRIVATE\]\s*/, "") ?? null
+        : e.description;
+      return {
+        id: e.id,
+        title: e.title,
+        description: desc,
+        event_type: e.event_type,
+        child_id: e.child_id,
+        child_name: e.child_id ? childMap[e.child_id] ?? null : null,
+        start_time: e.start_time,
+        end_time: e.end_time,
+        all_day: e.all_day ?? false,
+      };
+    });
 
   return (
     <div className="p-6 md:p-8">
       <h1 className="font-heading text-2xl font-semibold text-foreground mb-2">
         Calendar
       </h1>
-      <p className="text-foreground-secondary mb-8">
-        Shared parenting calendar. Add medical, school, extracurricular, custody
-        exchange, and therapy events.
-      </p>
+      <p className="text-foreground-secondary mb-8">Shared parenting calendar.</p>
       <div className="space-y-8">
         <div className="grid gap-8 lg:grid-cols-[320px_1fr]">
           <AddEventForm

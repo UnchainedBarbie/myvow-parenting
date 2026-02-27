@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname } from "next/navigation";
 import {
   LayoutDashboard,
@@ -37,10 +38,16 @@ export function DashboardSidebar() {
   }
 
   return (
-    <aside className="hidden w-64 flex-col border-r border-border bg-background-secondary md:flex">
-      <div className="flex h-16 items-center gap-2 border-b border-border px-4">
-        <Link href="/dashboard" className="font-heading text-lg font-semibold text-primary-dark">
-          MyVow
+    <aside className="hidden w-64 flex-col border-r border-border bg-background md:flex">
+      <div className="flex min-h-[4.5rem] items-center border-b border-border bg-background px-4 py-3">
+        <Link href="/dashboard" className="flex items-center focus:outline-none">
+          <Image
+            src="/Horiztonal%20logo%20translucent.png"
+            alt="MyVow"
+            width={160}
+            height={48}
+            className="h-auto w-[160px] object-contain object-left"
+          />
         </Link>
       </div>
       <nav className="flex-1 space-y-1 p-3">

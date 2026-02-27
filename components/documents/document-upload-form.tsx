@@ -50,6 +50,10 @@ export function DocumentUploadForm({ caseId, children }: DocumentUploadFormProps
       setError("Please select a file.");
       return;
     }
+    if (!description.trim()) {
+      setError("Please add a brief description.");
+      return;
+    }
     setLoading(true);
     try {
       const formData = new FormData();
@@ -57,7 +61,7 @@ export function DocumentUploadForm({ caseId, children }: DocumentUploadFormProps
       formData.set("case_id", caseId);
       formData.set("category", category);
       if (childId) formData.set("child_id", childId);
-      if (description.trim()) formData.set("description", description.trim());
+      formData.set("description", description.trim());
       const res = await fetch("/api/documents/upload", {
         method: "POST",
         body: formData,
@@ -80,9 +84,7 @@ export function DocumentUploadForm({ caseId, children }: DocumentUploadFormProps
     <Card className="shadow-card">
       <CardHeader>
         <CardTitle className="font-heading text-lg">Upload document</CardTitle>
-        <CardDescription>
-          PDF or images. Categorize and optionally assign to a child.
-        </CardDescription>
+        <CardDescription />
       </CardHeader>
       <CardContent>
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -142,12 +144,13 @@ export function DocumentUploadForm({ caseId, children }: DocumentUploadFormProps
             </div>
           )}
           <div className="space-y-2">
-            <Label htmlFor="description">Description (optional)</Label>
+            <Label htmlFor="description">Description</Label>
             <Input
               id="description"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               placeholder="Brief description"
+              required
             />
           </div>
           <Button type="submit" disabled={loading} className="rounded-full">

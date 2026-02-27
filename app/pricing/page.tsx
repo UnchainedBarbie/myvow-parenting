@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
@@ -25,8 +26,14 @@ export default function PricingPage() {
     <div className="min-h-screen bg-background">
       <header className="border-b border-border bg-background/95 backdrop-blur">
         <div className="container mx-auto flex h-16 items-center justify-between px-4">
-          <Link href="/" className="font-heading text-xl font-semibold text-primary-dark">
-            MyVow Parenting
+          <Link href="/" className="flex items-center">
+            <Image
+              src="/Horiztonal%20log.png"
+              alt="MyVow Parenting"
+              width={140}
+              height={40}
+              className="h-auto w-[140px] object-contain object-left"
+            />
           </Link>
           <nav className="flex items-center gap-4">
             <Link href="/login" className="text-sm text-foreground-secondary hover:text-foreground">

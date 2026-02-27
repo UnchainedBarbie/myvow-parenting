@@ -41,9 +41,10 @@ export function AddEventForm({
     const d = new Date(initialYear, initialMonth - 1, 1);
     return d.toISOString().slice(0, 10);
   });
-  const [allDay, setAllDay] = useState(true);
   const [startTime, setStartTime] = useState("09:00");
   const [endTime, setEndTime] = useState("10:00");
+  const [isPrivate, setIsPrivate] = useState(false);
+  const [repeat, setRepeat] = useState<string>("none");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -54,8 +55,14 @@ export function AddEventForm({
       setError("Please enter a title.");
       return;
     }
-    const start = allDay ? `${date}T00:00:00.000Z` : `${date}T${startTime}:00.000Z`;
-    const end = allDay ? null : `${date}T${endTime}:00.000Z`;
+    if (!description.trim()) {
+      setError("Please enter a description.");
+      return;
+    }
+    const startTimeValue = startTime || "00:00";
+    const endTimeValue = endTime || "";
+    const start = `${date}T${startTimeValue}:00.000Z`;
+    const end = endTimeValue ? `${date}T${endTimeValue}:00.000Z` : null;
     setLoading(true);
     try {
       const res = await fetch("/api/calendar/create", {
@@ -69,7 +76,9 @@ export function AddEventForm({
           child_id: childId || undefined,
           start_time: start,
           end_time: end,
-          all_day: allDay,
+          all_day: false,
+          is_private: isPrivate,
+          recurring_rule: repeat === "none" ? undefined : repeat,
         }),
       });
       const data = await res.json();
@@ -129,29 +138,74 @@ export function AddEventForm({
             </div>
           )}
           <div className="space-y-2">
-            <Label htmlFor="description">Description (optional)</Label>
-            <Input id="description" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Notes" />
+            <Label htmlFor="description">Description</Label>
+            <Input
+              id="description"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Notes"
+              required
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              id="private"
+              checked={isPrivate}
+              onChange={(e) => setIsPrivate(e.target.checked)}
+              className="rounded border-border"
+            />
+            <Label htmlFor="private" className="font-normal">
+              Private – My calendar only
+            </Label>
           </div>
           <div className="space-y-2">
             <Label htmlFor="date">Date</Label>
-            <Input id="date" type="date" value={date} onChange={(e) => setDate(e.target.value)} required />
+            <Input
+              id="date"
+              type="date"
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+              required
+            />
           </div>
-          <div className="flex items-center gap-2">
-            <input type="checkbox" id="all_day" checked={allDay} onChange={(e) => setAllDay(e.target.checked)} className="rounded border-border" />
-            <Label htmlFor="all_day" className="font-normal">All day</Label>
-          </div>
-          {!allDay && (
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="start_time">Start time</Label>
-                <Input id="start_time" type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="end_time">End time</Label>
-                <Input id="end_time" type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} />
-              </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="start_time">Start time</Label>
+              <Input
+                id="start_time"
+                type="time"
+                value={startTime}
+                onChange={(e) => setStartTime(e.target.value)}
+              />
             </div>
-          )}
+            <div className="space-y-2">
+              <Label htmlFor="end_time">End time</Label>
+              <Input
+                id="end_time"
+                type="time"
+                value={endTime}
+                onChange={(e) => setEndTime(e.target.value)}
+              />
+            </div>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="repeat">Repeat</Label>
+            <select
+              id="repeat"
+              value={repeat}
+              onChange={(e) => setRepeat(e.target.value)}
+              className={cn(
+                "flex h-10 w-full rounded-card border border-input bg-background px-3 py-2 text-sm",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+              )}
+            >
+              <option value="none">Does not repeat</option>
+              <option value="weekly">Weekly</option>
+              <option value="biweekly">Every 2 weeks</option>
+              <option value="monthly">Monthly</option>
+            </select>
+          </div>
           <Button type="submit" disabled={loading} className="rounded-full">
             {loading ? "Adding…" : "Add event"}
           </Button>

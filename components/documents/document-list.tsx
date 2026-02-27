@@ -44,7 +44,65 @@ function formatSize(bytes: number | null) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+type SortKey = "docId" | "file_name" | "category" | "child_name" | "description" | "created_at" | "file_size_bytes";
+
 export function DocumentList({ documents }: DocumentListProps) {
+  // Derive a stable display ID like DOC-001, DOC-002 based on created_at descending.
+  const sortedByCreated = [...documents].sort(
+    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+  );
+  const withDocId = sortedByCreated.map((doc, index) => ({
+    ...doc,
+    docId: `DOC-${String(index + 1).padStart(3, "0")}`,
+  }));
+
+  const [sortKey, setSortKey] = useState<SortKey>("created_at");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+
+  function handleSort(key: SortKey) {
+    if (key === sortKey) {
+      setSortDir(sortDir === "asc" ? "desc" : "asc");
+    } else {
+      setSortKey(key);
+      setSortDir(key === "created_at" ? "desc" : "asc");
+    }
+  }
+
+  const sorted = [...withDocId].sort((a, b) => {
+    let av: any;
+    let bv: any;
+    switch (sortKey) {
+      case "docId":
+        av = a.docId;
+        bv = b.docId;
+        break;
+      case "file_name":
+      case "category":
+      case "child_name":
+      case "description":
+        av = (a[sortKey] ?? "").toString().toLowerCase();
+        bv = (b[sortKey] ?? "").toString().toLowerCase();
+        break;
+      case "created_at":
+        av = new Date(a.created_at).getTime();
+        bv = new Date(b.created_at).getTime();
+        break;
+      case "file_size_bytes":
+        av = a.file_size_bytes ?? 0;
+        bv = b.file_size_bytes ?? 0;
+        break;
+      default:
+        av = 0;
+        bv = 0;
+    }
+    if (av < bv) return sortDir === "asc" ? -1 : 1;
+    if (av > bv) return sortDir === "asc" ? 1 : -1;
+    return 0;
+  });
+
+  const sortIndicator = (key: SortKey) =>
+    key === sortKey ? (sortDir === "asc" ? " ▲" : " ▼") : "";
+
   return (
     <Card className="shadow-card">
       <CardHeader>
@@ -56,33 +114,89 @@ export function DocumentList({ documents }: DocumentListProps) {
             No documents yet. Upload one above.
           </p>
         ) : (
-          <ul className="space-y-3">
-            {documents.map((doc) => (
-              <li
-                key={doc.id}
-                className={cn(
-                  "rounded-card border border-border bg-background-secondary/50 p-4 shadow-card"
-                )}
-              >
-                <div className="flex flex-wrap items-start justify-between gap-2">
-                  <div>
-                    <p className="font-medium text-foreground">
+          <div className="overflow-x-auto rounded-card border border-border bg-background-secondary/40">
+            <table className="min-w-full text-sm">
+              <thead className="bg-background-secondary/80 text-foreground-secondary">
+                <tr>
+                  <th
+                    className="px-3 py-2 text-left font-medium cursor-pointer"
+                    onClick={() => handleSort("docId")}
+                  >
+                    Doc ID{sortIndicator("docId")}
+                  </th>
+                  <th
+                    className="px-3 py-2 text-left font-medium cursor-pointer"
+                    onClick={() => handleSort("file_name")}
+                  >
+                    File Name{sortIndicator("file_name")}
+                  </th>
+                  <th
+                    className="px-3 py-2 text-left font-medium cursor-pointer"
+                    onClick={() => handleSort("category")}
+                  >
+                    Category{sortIndicator("category")}
+                  </th>
+                  <th
+                    className="px-3 py-2 text-left font-medium cursor-pointer"
+                    onClick={() => handleSort("child_name")}
+                  >
+                    Child{sortIndicator("child_name")}
+                  </th>
+                  <th
+                    className="px-3 py-2 text-left font-medium cursor-pointer"
+                    onClick={() => handleSort("description")}
+                  >
+                    Description{sortIndicator("description")}
+                  </th>
+                  <th
+                    className="px-3 py-2 text-left font-medium cursor-pointer"
+                    onClick={() => handleSort("created_at")}
+                  >
+                    Date Uploaded{sortIndicator("created_at")}
+                  </th>
+                  <th
+                    className="px-3 py-2 text-right font-medium cursor-pointer"
+                    onClick={() => handleSort("file_size_bytes")}
+                  >
+                    File Size{sortIndicator("file_size_bytes")}
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {sorted.map((doc, idx) => (
+                  <tr
+                    key={doc.id}
+                    className={cn(
+                      "border-t border-border",
+                      idx % 2 === 0 ? "bg-background" : "bg-background-secondary/40"
+                    )}
+                  >
+                    <td className="px-3 py-2 font-mono text-xs text-foreground-secondary">
+                      {doc.docId}
+                    </td>
+                    <td className="px-3 py-2 text-foreground">
                       {doc.file_name}
-                    </p>
-                    <p className="text-sm text-foreground-secondary mt-0.5">
+                    </td>
+                    <td className="px-3 py-2 text-foreground-secondary">
                       {CATEGORY_LABELS[doc.category] ?? doc.category}
-                      {doc.child_name && ` · ${doc.child_name}`}
-                      {doc.description && ` · ${doc.description}`}
-                    </p>
-                  </div>
-                  <div className="text-right text-sm text-foreground-secondary">
-                    <p>{formatDate(doc.created_at)}</p>
-                    <p>{formatSize(doc.file_size_bytes)}</p>
-                  </div>
-                </div>
-              </li>
-            ))}
-          </ul>
+                    </td>
+                    <td className="px-3 py-2 text-foreground-secondary">
+                      {doc.child_name ?? "—"}
+                    </td>
+                    <td className="px-3 py-2 text-foreground-secondary">
+                      {doc.description ?? "—"}
+                    </td>
+                    <td className="px-3 py-2 text-foreground-secondary whitespace-nowrap">
+                      {formatDate(doc.created_at)}
+                    </td>
+                    <td className="px-3 py-2 text-right text-foreground-secondary whitespace-nowrap">
+                      {formatSize(doc.file_size_bytes)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </CardContent>
     </Card>

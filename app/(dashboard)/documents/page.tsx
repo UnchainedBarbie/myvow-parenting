@@ -22,12 +22,12 @@ export default async function DocumentsPage() {
 
   if (!caseId) {
     return (
-      <div className="p-6 md:p-8">
-        <h1 className="font-heading text-2xl font-semibold text-foreground mb-2">
+      <div className="px-3 pt-3 pb-1 md:px-4 md:pt-4 md:pb-2">
+        <h1 className="font-heading text-xl md:text-2xl font-semibold text-foreground mb-1">
           Documents
         </h1>
-        <p className="text-foreground-secondary mb-8">
-          Secure document vault with categories and access log.
+        <p className="text-xs md:text-sm text-foreground-secondary mb-2">
+          Secure, time-stamped documentation. Court-export ready.
         </p>
         <div className="rounded-card border border-border bg-background-secondary p-8 text-center">
           <p className="text-foreground-secondary">
@@ -98,16 +98,20 @@ export default async function DocumentsPage() {
   }));
 
   return (
-    <div className="p-6 md:p-8">
-      <h1 className="font-heading text-2xl font-semibold text-foreground mb-2">
-        Documents
-      </h1>
-      <p className="text-foreground-secondary mb-8">
-        Secure, time-stamped documentation. Court-export ready.
-      </p>
-      <div className="space-y-8">
-        <DocumentUploadForm caseId={caseId} children={children ?? []} logEntries={logEntries} />
-        <DocumentList documents={documents} children={children ?? []} />
+    <div className="px-3 pt-3 pb-1 md:px-4 md:pt-4 md:pb-2">
+      <div className="mb-4">
+        <h1 className="font-heading text-xl md:text-2xl font-semibold text-foreground mb-1">
+          Documents
+        </h1>
+        <p className="text-xs md:text-sm text-foreground-secondary leading-snug">
+          Secure, time-stamped documentation. Court-export ready.
+        </p>
+      </div>
+      <div className="space-y-2">
+        <div className="grid gap-4 lg:grid-cols-[minmax(260px,28%)_minmax(0,1fr)] items-start">
+          <DocumentUploadForm caseId={caseId} children={children ?? []} logEntries={logEntries} />
+          <DocumentList documents={documents} children={children ?? []} />
+        </div>
       </div>
     </div>
   );

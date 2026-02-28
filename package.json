@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test:ingest": "tsx scripts/test-ingest.ts"
+    "test:ingest": "tsx scripts/test-ingest.ts",
+    "test:categories": "tsx lib/categoryColors.test.ts"
   },
   "dependencies": {
     "@radix-ui/react-avatar": "^1.1.1",
@@ -21,6 +22,7 @@
     "@radix-ui/react-toast": "^1.2.2",
     "@supabase/ssr": "^0.5.2",
     "@supabase/supabase-js": "^2.47.10",
+    "archiver": "^7.0.1",
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.1.1",
     "jspdf": "^2.5.2",
@@ -31,6 +33,7 @@
     "tailwind-merge": "^2.5.4"
   },
   "devDependencies": {
+    "@types/archiver": "^7.0.0",
     "@types/node": "^22.9.0",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",

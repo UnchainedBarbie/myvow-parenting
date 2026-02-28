@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 
+import { getCalendarEventColors } from "@/lib/categoryColors";
+
 const EVENT_TYPE_LABELS: Record<string, string> = {
   medical: "Medical",
   school: "School",
@@ -12,16 +14,6 @@ const EVENT_TYPE_LABELS: Record<string, string> = {
   custody_exchange: "Custody",
   therapy: "Therapy",
   other: "Other",
-};
-
-const EVENT_COLORS: Record<string, { bg: string; dot: string }> = {
-  medical: { bg: "bg-[#7BA3C9]/15", dot: "bg-[#7BA3C9]" }, // soft blue
-  school: { bg: "bg-[#7B9E87]/15", dot: "bg-[#7B9E87]" }, // sage
-  extracurricular: { bg: "bg-[#9B8EC4]/15", dot: "bg-[#9B8EC4]" }, // soft purple
-  custody_exchange: { bg: "bg-[#C9A97B]/20", dot: "bg-[#C9A97B]" }, // warm gold
-  therapy: { bg: "bg-[#7BC9B5]/20", dot: "bg-[#7BC9B5]" }, // teal
-  missed_visit: { bg: "bg-[#C97B7B]/15", dot: "bg-[#C97B7B]" }, // muted rose
-  conflict: { bg: "bg-[#C97B7B]/15", dot: "bg-[#C97B7B]" }, // muted rose
 };
 
 export type CalendarEventRow = {
@@ -285,10 +277,7 @@ export function CalendarMonth({
                             const isCanceled = ev.status === "canceled";
                             const color = isCanceled
                               ? { bg: "bg-gray-100", dot: "bg-gray-400" }
-                              : EVENT_COLORS[ev.event_type ?? ""] ?? {
-                                  bg: "bg-primary-light",
-                                  dot: "bg-primary-dark",
-                                };
+                              : getCalendarEventColors(ev.event_type);
                             const categoryLabel =
                               EVENT_TYPE_LABELS[ev.event_type ?? ""] ??
                               ev.event_type ??
@@ -382,10 +371,7 @@ export function CalendarMonth({
                         const isCanceled = ev.status === "canceled";
                         const color = isCanceled
                           ? { bg: "bg-gray-100", dot: "bg-gray-400" }
-                          : EVENT_COLORS[ev.event_type ?? ""] ?? {
-                              bg: "bg-primary-light",
-                              dot: "bg-primary-dark",
-                            };
+                          : getCalendarEventColors(ev.event_type);
                         const categoryLabel =
                           EVENT_TYPE_LABELS[ev.event_type ?? ""] ??
                           ev.event_type ??

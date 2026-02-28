@@ -3,7 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getServiceRoleClient } from "@/lib/supabase/server";
 
 const DESCRIPTION_MAX = 250;
-const VISIBILITY_VALUES = ["private", "shared", "shared_ai_review"] as const;
+const VISIBILITY_VALUES = ["family", "parents_only", "private", "family_read_only"] as const;
 
 /**
  * Upload to Supabase Storage + create document metadata. Court-ready vault.
@@ -38,7 +38,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const visibilityValue = visibility && VISIBILITY_VALUES.includes(visibility as any) ? visibility : "private";
+    const visibilityValue = visibility && VISIBILITY_VALUES.includes(visibility as any) ? visibility : "family";
 
     const admin = getServiceRoleClient();
     const path = `${case_id}/${user.id}/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9.-]/g, "_")}`;

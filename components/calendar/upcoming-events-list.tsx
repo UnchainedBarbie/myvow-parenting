@@ -26,15 +26,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   other: "Other",
 };
 
-const EVENT_COLORS: Record<string, string> = {
-  medical: "bg-[#7BA3C9]",
-  school: "bg-[#7B9E87]",
-  extracurricular: "bg-[#9B8EC4]",
-  custody_exchange: "bg-[#C9A97B]",
-  therapy: "bg-[#7BC9B5]",
-  missed_visit: "bg-[#C97B7B]",
-  conflict: "bg-[#C97B7B]",
-};
+import { getCalendarEventColors } from "@/lib/categoryColors";
 
 function formatUpcomingDate(iso: string) {
   const d = new Date(iso);
@@ -149,7 +141,7 @@ export function UpcomingEventsList({
                     const isCanceled = e.status === "canceled";
                     const colorClass = isCanceled
                       ? "bg-gray-400"
-                      : EVENT_COLORS[e.event_type ?? ""] ?? "bg-primary";
+                      : getCalendarEventColors(e.event_type).dot;
                     const label =
                       CATEGORY_LABELS[e.event_type ?? ""] ??
                       e.event_type ??

@@ -18,6 +18,7 @@ import {
   getLocalTimeInputFromUtc,
   parseTimeInput,
 } from "@/lib/time";
+import { getCalendarEventColors } from "@/lib/categoryColors";
 
 type Child = { id: string; first_name: string };
 
@@ -77,16 +78,6 @@ const EVENT_TYPE_LABELS: Record<string, string> = {
   custody_exchange: "Custody exchange",
   therapy: "Therapy",
   other: "Other",
-};
-
-const EVENT_COLORS: Record<string, string> = {
-  medical: "bg-[#7BA3C9]",
-  school: "bg-[#7B9E87]",
-  extracurricular: "bg-[#9B8EC4]",
-  custody_exchange: "bg-[#C9A97B]",
-  therapy: "bg-[#7BC9B5]",
-  missed_visit: "bg-[#C97B7B]",
-  conflict: "bg-[#C97B7B]",
 };
 
 export function EventDetailModal({
@@ -347,8 +338,7 @@ export function EventDetailModal({
     EVENT_TYPE_LABELS[event.event_type ?? ""] ??
     event.event_type ??
     "Event";
-  const colorClass =
-    EVENT_COLORS[event.event_type ?? ""] ?? "bg-primary";
+  const colorClass = getCalendarEventColors(event.event_type).dot;
 
   const currentDisplayStatus = status;
 

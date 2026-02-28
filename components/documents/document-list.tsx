@@ -18,6 +18,10 @@ import { DocumentPreviewDrawer } from "@/components/documents/document-preview-d
 import { CategoryPill } from "@/components/documents/category-pill";
 import { getCategoryColor } from "@/lib/categoryColors";
 import { DateFilterPopover, type DateFilterValue } from "@/components/documents/date-filter-popover";
+import { ColumnFilterPopover } from "@/components/documents/column-filter-popover";
+import { DescriptionFilterPopover } from "@/components/documents/description-filter-popover";
+
+const CHILD_NONE_VALUE = "__none__";
 
 const CATEGORY_LABELS: Record<string, string> = {
   court_order: "Court Order",
@@ -86,19 +90,18 @@ function formatSize(bytes: number | null) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function truncateName(name: string, maxLen = 28) {
-  if (name.length <= maxLen) return name;
-  return name.slice(0, maxLen - 3) + "…";
+/** Truncate to roughly one line (~60 chars) with ellipsis. */
+function truncateDescription(text: string | null, maxLen = 60) {
+  const t = text?.trim() ?? "";
+  if (t.length <= maxLen) return t || "—";
+  return t.slice(0, maxLen - 1).trim() + "…";
 }
 
 const SORT_OPTIONS = [
   { value: "date_desc", label: "Date uploaded (newest)" },
   { value: "date_asc", label: "Date uploaded (oldest)" },
-  { value: "name_asc", label: "File name (A–Z)" },
-  { value: "name_desc", label: "File name (Z–A)" },
-  { value: "category", label: "Category" },
-  { value: "child", label: "Child" },
-  { value: "visibility", label: "Visibility" },
+  { value: "desc_asc", label: "Description (A–Z)" },
+  { value: "desc_desc", label: "Description (Z–A)" },
 ] as const;
 
 
@@ -111,17 +114,27 @@ function useDebounce<T>(value: T, delay: number): T {
   return debounced;
 }
 
+function parseMultiParam(s: string | null): string[] {
+  if (!s?.trim()) return [];
+  return s.split(",").map((x) => x.trim()).filter(Boolean);
+}
+
 export function DocumentList({ documents, children = [] }: DocumentListProps) {
   const searchParams = useSearchParams();
   const [searchInput, setSearchInput] = useState(() => searchParams.get("q") ?? "");
   const debouncedSearch = useDebounce(searchInput.trim(), 300);
-  const [filterCategory, setFilterCategory] = useState(() => searchParams.get("cat") ?? "all");
-  const [filterVisibility, setFilterVisibility] = useState(() => searchParams.get("vis") ?? "all");
-  const [filterChild, setFilterChild] = useState(() => searchParams.get("child") ?? "all");
+  const [filterCategories, setFilterCategories] = useState<string[]>(() => parseMultiParam(searchParams.get("cat")));
+  const [filterChildren, setFilterChildren] = useState<string[]>(() => parseMultiParam(searchParams.get("child")));
+  const [filterVisibilities, setFilterVisibilities] = useState<string[]>(() => parseMultiParam(searchParams.get("vis")));
+  const [filterDescription, setFilterDescription] = useState(() => searchParams.get("desc") ?? "");
   const [startDate, setStartDate] = useState(() => searchParams.get("startDate") ?? "");
   const [endDate, setEndDate] = useState(() => searchParams.get("endDate") ?? "");
   const [sort, setSort] = useState(() => searchParams.get("sort") ?? "date_desc");
   const [dateFilterOpen, setDateFilterOpen] = useState(false);
+  const [categoryFilterOpen, setCategoryFilterOpen] = useState(false);
+  const [childFilterOpen, setChildFilterOpen] = useState(false);
+  const [visibilityFilterOpen, setVisibilityFilterOpen] = useState(false);
+  const [descriptionFilterOpen, setDescriptionFilterOpen] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [detailDoc, setDetailDoc] = useState<DocumentRow | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -129,11 +142,20 @@ export function DocumentList({ documents, children = [] }: DocumentListProps) {
   const [deleteConfirm, setDeleteConfirm] = useState<{ ids: string[]; doc?: DocumentRow } | null>(null);
 
   const setParams = useCallback(
-    (updates: Record<string, string>) => {
+    (updates: Record<string, string | string[]>) => {
       const next = new URLSearchParams(searchParams.toString());
       Object.entries(updates).forEach(([k, v]) => {
-        if (v === "all" || v === "" || v === "date_desc") next.delete(k);
-        else next.set(k, v);
+        if (v === undefined || v === null) {
+          next.delete(k);
+          return;
+        }
+        const str = Array.isArray(v) ? v.filter(Boolean).join(",") : String(v);
+        const shouldDelete =
+          str === "" ||
+          (k !== "desc" && str === "date_desc") ||
+          (k !== "desc" && str === "all");
+        if (shouldDelete) next.delete(k);
+        else next.set(k, str);
       });
       window.history.replaceState(null, "", next.toString() ? `?${next}` : window.location.pathname);
     },
@@ -143,16 +165,21 @@ export function DocumentList({ documents, children = [] }: DocumentListProps) {
   useEffect(() => {
     setParams({
       q: debouncedSearch,
-      cat: filterCategory,
-      vis: filterVisibility,
-      child: filterChild,
+      cat: filterCategories,
+      child: filterChildren,
+      vis: filterVisibilities,
+      desc: filterDescription,
       startDate,
       endDate,
       sort,
     });
-  }, [debouncedSearch, filterCategory, filterVisibility, filterChild, startDate, endDate, sort, setParams]);
+  }, [debouncedSearch, filterCategories, filterChildren, filterVisibilities, filterDescription, startDate, endDate, sort, setParams]);
 
   const dateFilterActive = !!(startDate || endDate);
+  const categoryFilterActive = filterCategories.length > 0;
+  const childFilterActive = filterChildren.length > 0;
+  const visibilityFilterActive = filterVisibilities.length > 0;
+  const descriptionFilterActive = filterDescription.trim().length > 0;
 
   function applyDateFilter({ startDate: s, endDate: e }: DateFilterValue) {
     setStartDate(s);
@@ -181,9 +208,21 @@ export function DocumentList({ documents, children = [] }: DocumentListProps) {
           (d.description ?? "").toLowerCase().includes(q)
       );
     }
-    if (filterCategory !== "all") list = list.filter((d) => d.category === filterCategory);
-    if (filterVisibility !== "all") list = list.filter((d) => d.visibility === filterVisibility);
-    if (filterChild !== "all") list = list.filter((d) => (d.child_id ?? "") === filterChild);
+    if (filterDescription.trim()) {
+      const words = filterDescription.trim().toLowerCase().split(/\s+/).filter(Boolean);
+      list = list.filter((d) => {
+        const desc = (d.description ?? "").toLowerCase();
+        return words.every((w) => desc.includes(w));
+      });
+    }
+    if (filterCategories.length > 0) list = list.filter((d) => filterCategories.includes(d.category));
+    if (filterVisibilities.length > 0) list = list.filter((d) => filterVisibilities.includes(d.visibility));
+    if (filterChildren.length > 0) {
+      list = list.filter((d) => {
+        const key = d.child_id ?? CHILD_NONE_VALUE;
+        return filterChildren.includes(key);
+      });
+    }
     if (startDate) {
       const start = new Date(startDate + "T00:00:00");
       list = list.filter((d) => new Date(d.created_at) >= start);
@@ -196,26 +235,17 @@ export function DocumentList({ documents, children = [] }: DocumentListProps) {
       case "date_asc":
         list.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
         break;
-      case "name_asc":
-        list.sort((a, b) => (a.file_name ?? "").localeCompare(b.file_name ?? ""));
+      case "desc_asc":
+        list.sort((a, b) => (a.description ?? "").toLowerCase().localeCompare((b.description ?? "").toLowerCase()));
         break;
-      case "name_desc":
-        list.sort((a, b) => (b.file_name ?? "").localeCompare(a.file_name ?? ""));
-        break;
-      case "category":
-        list.sort((a, b) => (CATEGORY_LABELS[a.category] ?? a.category).localeCompare(CATEGORY_LABELS[b.category] ?? b.category));
-        break;
-      case "child":
-        list.sort((a, b) => (a.child_name ?? "").localeCompare(b.child_name ?? ""));
-        break;
-      case "visibility":
-        list.sort((a, b) => (VISIBILITY_LABELS[a.visibility] ?? a.visibility).localeCompare(VISIBILITY_LABELS[b.visibility] ?? b.visibility));
+      case "desc_desc":
+        list.sort((a, b) => (b.description ?? "").toLowerCase().localeCompare((a.description ?? "").toLowerCase()));
         break;
       default:
         list.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
     }
     return list;
-  }, [documents, debouncedSearch, filterCategory, filterVisibility, filterChild, startDate, endDate, sort]);
+  }, [documents, debouncedSearch, filterDescription, filterCategories, filterVisibilities, filterChildren, startDate, endDate, sort]);
 
   const categories = useMemo(() => [...new Set(documents.map((d) => d.category))], [documents]);
   const visibilities = useMemo(() => [...new Set(documents.map((d) => d.visibility))], [documents]);
@@ -299,60 +329,15 @@ export function DocumentList({ documents, children = [] }: DocumentListProps) {
         <CardTitle className="font-heading text-lg text-foreground">All documents</CardTitle>
       </CardHeader>
       <CardContent className="px-4 pb-4 space-y-3">
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex items-center gap-2">
           <Input
             type="search"
-            placeholder="Search filename, category, child, description…"
+            placeholder="Search description, filename, category, child…"
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
-            className="max-w-[220px] h-9 rounded-card border-border text-sm"
+            className="h-9 w-full max-w-[280px] rounded-card border-border text-sm"
             aria-label="Search documents"
           />
-          <select
-            value={filterCategory}
-            onChange={(e) => setFilterCategory(e.target.value)}
-            className="h-9 rounded-card border border-border bg-background px-2 text-xs text-foreground-secondary min-w-[120px]"
-            aria-label="Filter by category"
-          >
-            <option value="all">All categories</option>
-            {categories.map((c) => (
-              <option key={c} value={c}>{CATEGORY_LABELS[c] ?? c}</option>
-            ))}
-          </select>
-          <select
-            value={filterVisibility}
-            onChange={(e) => setFilterVisibility(e.target.value)}
-            className="h-9 rounded-card border border-border bg-background px-2 text-xs text-foreground-secondary min-w-[110px]"
-            aria-label="Filter by visibility"
-          >
-            <option value="all">All visibility</option>
-            {visibilities.map((v) => (
-              <option key={v} value={v}>{VISIBILITY_LABELS[v] ?? v}</option>
-            ))}
-          </select>
-          {children.length > 0 && (
-            <select
-              value={filterChild}
-              onChange={(e) => setFilterChild(e.target.value)}
-              className="h-9 rounded-card border border-border bg-background px-2 text-xs text-foreground-secondary min-w-[100px]"
-              aria-label="Filter by child"
-            >
-              <option value="all">All children</option>
-              {children.map((c) => (
-                <option key={c.id} value={c.id}>{c.first_name}</option>
-              ))}
-            </select>
-          )}
-          <select
-            value={sort}
-            onChange={(e) => setSort(e.target.value)}
-            className="h-9 rounded-card border border-border bg-background px-2 text-xs text-foreground-secondary min-w-[160px]"
-            aria-label="Sort by"
-          >
-            {SORT_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>{opt.label}</option>
-            ))}
-          </select>
         </div>
 
         {selectedIds.size > 0 && (
@@ -381,11 +366,20 @@ export function DocumentList({ documents, children = [] }: DocumentListProps) {
             <p className="text-sm text-foreground-secondary mb-1">No documents yet.</p>
             <p className="text-xs text-foreground-secondary">Upload your first document using the form on the left.</p>
           </div>
-        ) : filteredAndSorted.length === 0 ? (
-          <p className="text-sm text-foreground-secondary py-6">No documents match your filters.</p>
         ) : (
           <div className="overflow-x-auto rounded-card border border-border bg-background-secondary/40">
-            <table className="min-w-full text-sm">
+            <table className="w-full text-sm table-fixed" style={{ tableLayout: "fixed", minWidth: 900 }}>
+              <colgroup>
+                <col style={{ width: 40 }} />
+                <col style={{ width: 80 }} />
+                <col style={{ width: 36 }} />
+                <col />
+                <col style={{ width: 140 }} />
+                <col style={{ width: 140 }} />
+                <col style={{ width: 150 }} />
+                <col style={{ width: 130 }} />
+                <col style={{ width: 140 }} />
+              </colgroup>
               <thead className="bg-background-secondary/80 text-foreground-secondary sticky top-0 z-10">
                 <tr>
                   <th className="px-3 py-2.5 w-10">
@@ -398,11 +392,52 @@ export function DocumentList({ documents, children = [] }: DocumentListProps) {
                     />
                   </th>
                   <th className="px-3 py-2.5 text-left font-medium w-20">Doc ID</th>
-                  <th className="px-3 py-2.5 text-left font-medium w-8" title="Type"><span className="sr-only">Type</span></th>
-                  <th className="px-3 py-2.5 text-left font-medium">File name</th>
-                  <th className="px-3 py-2.5 text-left font-medium w-16">Size</th>
-                  <th className="px-3 py-2.5 text-left font-medium">Category</th>
-                  <th className="px-3 py-2.5 text-left font-medium">Child</th>
+                  <th className="px-3 py-2.5 text-left font-medium w-8" title="File type"><span className="sr-only">Type</span></th>
+                  <th className="px-3 py-2.5 text-left font-medium min-w-[140px]">
+                    <span className="inline-flex items-center gap-1">
+                      <span>Description</span>
+                      <DescriptionFilterPopover
+                        open={descriptionFilterOpen}
+                        onOpenChange={setDescriptionFilterOpen}
+                        value={filterDescription}
+                        onApply={setFilterDescription}
+                        onClear={() => setFilterDescription("")}
+                        active={descriptionFilterActive}
+                      />
+                    </span>
+                  </th>
+                  <th className="px-3 py-2.5 text-left font-medium">
+                    <span className="inline-flex items-center gap-1">
+                      <span>Category</span>
+                      <ColumnFilterPopover
+                        title="Category"
+                        options={categories.map((c) => ({ value: c, label: CATEGORY_LABELS[c] ?? c }))}
+                        selected={filterCategories}
+                        onApply={setFilterCategories}
+                        onClear={() => setFilterCategories([])}
+                        open={categoryFilterOpen}
+                        onOpenChange={setCategoryFilterOpen}
+                        active={categoryFilterActive}
+                      />
+                    </span>
+                  </th>
+                  <th className="px-3 py-2.5 text-left font-medium">
+                    <span className="inline-flex items-center gap-1">
+                      <span>Child</span>
+                      <ColumnFilterPopover
+                        title="Child"
+                        options={children.map((c) => ({ value: c.id, label: c.first_name }))}
+                        selected={filterChildren}
+                        onApply={setFilterChildren}
+                        onClear={() => setFilterChildren([])}
+                        open={childFilterOpen}
+                        onOpenChange={setChildFilterOpen}
+                        active={childFilterActive}
+                        noneValue={CHILD_NONE_VALUE}
+                        noneLabel="— No child"
+                      />
+                    </span>
+                  </th>
                   <th className="px-3 py-2.5 text-left font-medium whitespace-nowrap">
                     <span className="inline-flex items-center gap-1">
                       <button
@@ -425,13 +460,44 @@ export function DocumentList({ documents, children = [] }: DocumentListProps) {
                       </span>
                     </span>
                   </th>
-                  <th className="px-3 py-2.5 text-left font-medium">Visibility</th>
-                  <th className="px-3 py-2.5 text-left font-medium w-16">Status</th>
-                  <th className="px-3 py-2.5 w-10" aria-hidden />
+                  <th className="px-3 py-2.5 text-left font-medium">
+                    <span className="inline-flex items-center gap-1">
+                      <span>Visibility</span>
+                      <ColumnFilterPopover
+                        title="Visibility"
+                        options={visibilities.map((v) => ({ value: v, label: VISIBILITY_LABELS[v] ?? v }))}
+                        selected={filterVisibilities}
+                        onApply={setFilterVisibilities}
+                        onClear={() => setFilterVisibilities([])}
+                        open={visibilityFilterOpen}
+                        onOpenChange={setVisibilityFilterOpen}
+                        active={visibilityFilterActive}
+                      />
+                    </span>
+                  </th>
+                  <th className="px-3 py-2.5 w-[140px]">
+                    <select
+                      value={sort}
+                      onChange={(e) => setSort(e.target.value)}
+                      className="h-8 w-full rounded-card border border-border bg-background px-2 text-xs text-foreground-secondary"
+                      aria-label="Sort by"
+                    >
+                      {SORT_OPTIONS.map((opt) => (
+                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                      ))}
+                    </select>
+                  </th>
                 </tr>
               </thead>
               <tbody>
-                {filteredAndSorted.map((doc, idx) => {
+                {filteredAndSorted.length === 0 ? (
+                  <tr>
+                    <td colSpan={9} className="px-3 py-6 text-sm text-foreground-secondary text-center">
+                      No documents match your filters.
+                    </td>
+                  </tr>
+                ) : (
+                filteredAndSorted.map((doc, idx) => {
                   const docIdLabel = doc.document_number != null ? docIdFromNumber(doc.document_number) : docIdFromNumber(idx + 1);
                   const isDeleted = !!doc.deleted_at;
                   const isImage = doc.mime_type?.startsWith("image/");
@@ -456,25 +522,33 @@ export function DocumentList({ documents, children = [] }: DocumentListProps) {
                           type="checkbox"
                           checked={selectedIds.has(doc.id)}
                           onChange={() => toggleSelect(doc.id)}
-                          aria-label={`Select ${doc.file_name}`}
+                          aria-label={`Select ${doc.description ?? doc.file_name}`}
                           className="rounded border-border"
                         />
                       </td>
                       <td className={cn("px-3 py-2.5 font-mono text-xs", isDeleted && "line-through text-foreground-secondary")}>
                         {docIdLabel}
                       </td>
-                      <td className="px-3 py-2.5">
+                      <td className="px-3 py-2.5" title={doc.file_name}>
                         {isImage ? (
                           <Image className="h-4 w-4 text-foreground-secondary" aria-hidden />
                         ) : (
                           <FileText className="h-4 w-4 text-foreground-secondary" aria-hidden />
                         )}
                       </td>
-                      <td className={cn("px-3 py-2.5 text-foreground", isDeleted && "line-through text-foreground-secondary")}>
-                        <span title={doc.file_name}>{truncateName(doc.file_name ?? "")}</span>
-                      </td>
-                      <td className={cn("px-3 py-2.5 text-foreground-secondary text-xs", isDeleted && "line-through")}>
-                        {formatSize(doc.file_size_bytes)}
+                      <td className={cn("px-3 py-2.5 min-w-[140px]", isDeleted && "line-through")}>
+                        <div className="flex flex-col gap-0.5">
+                          <span
+                            className="text-foreground line-clamp-1"
+                            title={doc.description ?? undefined}
+                          >
+                            {truncateDescription(doc.description)}
+                          </span>
+                          <span className="text-[11px] text-foreground-secondary truncate">
+                            {doc.file_name ?? "—"}
+                            {doc.file_size_bytes != null && ` • ${formatSize(doc.file_size_bytes)}`}
+                          </span>
+                        </div>
                       </td>
                       <td className={cn("px-3 py-2.5", isDeleted && "line-through")}>
                         <CategoryPill
@@ -497,9 +571,6 @@ export function DocumentList({ documents, children = [] }: DocumentListProps) {
                         >
                           {VISIBILITY_LABELS[doc.visibility] ?? doc.visibility}
                         </span>
-                      </td>
-                      <td className="px-3 py-2.5 text-xs text-foreground-secondary">
-                        Ready
                       </td>
                       <td className="px-3 py-2.5 w-10" onClick={(e) => e.stopPropagation()} data-dropdown>
                         <DropdownMenu>
@@ -549,7 +620,8 @@ export function DocumentList({ documents, children = [] }: DocumentListProps) {
                       </td>
                     </tr>
                   );
-                })}
+                })
+                )}
               </tbody>
             </table>
           </div>

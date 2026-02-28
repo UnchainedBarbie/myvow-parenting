@@ -2,8 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getServiceRoleClient } from "@/lib/supabase/server";
 
+const TITLE_MAX = 120;
 const DESCRIPTION_MAX = 250;
-const VISIBILITY_VALUES = ["family", "parents_only", "private", "family_read_only"] as const;
+const VISIBILITY_VALUES = ["family", "private"] as const;
 
 /**
  * Upload to Supabase Storage + create document metadata. Court-ready vault.
@@ -17,6 +18,7 @@ export async function POST(request: NextRequest) {
     const formData = await request.formData();
     const file = formData.get("file") as File | null;
     const case_id = formData.get("case_id") as string | null;
+    const title = formData.get("title") as string | null;
     const category = formData.get("category") as string | null;
     const child_id = formData.get("child_id") as string | null;
     const description = formData.get("description") as string | null;
@@ -25,6 +27,17 @@ export async function POST(request: NextRequest) {
 
     if (!file || !case_id) {
       return NextResponse.json({ message: "Missing file or case_id" }, { status: 400 });
+    }
+
+    const titleTrimmed = title?.trim() ?? "";
+    if (!titleTrimmed) {
+      return NextResponse.json({ message: "Document title is required." }, { status: 400 });
+    }
+    if (titleTrimmed.length > TITLE_MAX) {
+      return NextResponse.json(
+        { message: `Title must be ${TITLE_MAX} characters or fewer.` },
+        { status: 400 }
+      );
     }
 
     const descTrimmed = description?.trim() ?? "";
@@ -38,7 +51,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const visibilityValue = visibility && VISIBILITY_VALUES.includes(visibility as any) ? visibility : "family";
+    const visibilityValue =
+      visibility && VISIBILITY_VALUES.includes(visibility as (typeof VISIBILITY_VALUES)[number])
+        ? visibility
+        : "family";
 
     const admin = getServiceRoleClient();
     const path = `${case_id}/${user.id}/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9.-]/g, "_")}`;
@@ -53,6 +69,7 @@ export async function POST(request: NextRequest) {
     const insertPayload: Record<string, unknown> = {
       case_id,
       uploaded_by: user.id,
+      title: titleTrimmed,
       file_name: file.name,
       file_size_bytes: file.size,
       mime_type: file.type,

@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "next lint",
     "test:ingest": "tsx scripts/test-ingest.ts",
-    "test:categories": "tsx lib/categoryColors.test.ts"
+    "test:categories": "tsx lib/categoryColors.test.ts",
+    "test:documents": "tsx lib/documents/validation.test.ts"
   },
   "dependencies": {
     "@radix-ui/react-avatar": "^1.1.1",

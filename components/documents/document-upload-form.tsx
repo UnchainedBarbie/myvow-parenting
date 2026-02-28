@@ -23,9 +23,9 @@ const DOCUMENT_CATEGORIES = [
 ] as const;
 
 const VISIBILITY_OPTIONS = [
-  { value: "private", label: "Private", tooltip: "Only you can view" },
-  { value: "family", label: "Shared", tooltip: "Other parent can view" },
   { value: "family_read_only", label: "Shared + AI", tooltip: "AI can categorize and draft court-export notes" },
+  { value: "family", label: "Shared", tooltip: "Other parent can view" },
+  { value: "private", label: "Private", tooltip: "Only you can view" },
 ] as const;
 
 const DESCRIPTION_MAX = 250;
@@ -60,7 +60,7 @@ export function DocumentUploadForm({ caseId, children, logEntries = [] }: Docume
   const [category, setCategory] = useState<string>("other");
   const [childId, setChildId] = useState<string>("");
   const [description, setDescription] = useState("");
-  const [visibility, setVisibility] = useState<string>("family");
+  const [visibility, setVisibility] = useState<string>("family_read_only");
   const [notifyOtherParent, setNotifyOtherParent] = useState(false);
   const [relatedCommId, setRelatedCommId] = useState<string>("");
   const [loading, setLoading] = useState(false);
@@ -89,7 +89,6 @@ export function DocumentUploadForm({ caseId, children, logEntries = [] }: Docume
       return;
     }
     setFile(f);
-    if (!description.trim()) setDescription(fileNameWithoutExt(f.name));
   }
 
   function handleDrag(e: React.DragEvent) {
@@ -167,63 +166,6 @@ export function DocumentUploadForm({ caseId, children, logEntries = [] }: Docume
             </p>
           )}
 
-          {/* Step 1: File */}
-          <div className="space-y-2">
-            <Label className="text-xs font-medium">File (required)</Label>
-            {!file ? (
-              <>
-                <div
-                  onDragEnter={handleDrag}
-                  onDragLeave={handleDrag}
-                  onDragOver={handleDrag}
-                  onDrop={handleDrop}
-                  className={cn(
-                    "rounded-card border border-dashed transition-colors flex flex-col items-center justify-center min-h-[80px] py-4 px-3 text-center",
-                    dragActive ? "border-primary bg-primary/5" : "border-border bg-background-secondary/30"
-                  )}
-                >
-                  <input
-                    ref={inputRef}
-                    type="file"
-                    accept={ACCEPT}
-                    className="hidden"
-                    onChange={(e) => handleFileSelect(e.target.files?.[0] ?? null)}
-                  />
-                  <p className="text-xs text-foreground-secondary">Drop file or click to browse</p>
-                  <p className="text-[11px] text-foreground-secondary mt-1">{ACCEPT_LABEL}, max 25MB</p>
-                  <Button type="button" variant="ghost" size="sm" className="mt-2 h-7 text-xs" onClick={() => inputRef.current?.click()}>
-                    Choose file
-                  </Button>
-                </div>
-                {fileError && <p className="text-xs text-alert">{fileError}</p>}
-              </>
-            ) : (
-              <div className="rounded-card border border-border bg-background p-2 flex items-center gap-2">
-                {file.type.startsWith("image/") ? (
-                  <Image className="h-8 w-8 text-foreground-secondary shrink-0" aria-hidden />
-                ) : (
-                  <FileText className="h-8 w-8 text-foreground-secondary shrink-0" aria-hidden />
-                )}
-                <div className="min-w-0 flex-1">
-                  <p className="text-xs text-foreground truncate" title={file.name}>{file.name}</p>
-                  <p className="text-[11px] text-foreground-secondary">{formatSize(file.size)} · {file.type.split("/")[1] || "file"}</p>
-                </div>
-                <Button type="button" variant="ghost" size="sm" className="h-7 text-xs shrink-0" onClick={() => inputRef.current?.click()}>
-                  Replace
-                </Button>
-                <button
-                  type="button"
-                  onClick={() => handleFileSelect(null)}
-                  className="p-1.5 rounded hover:bg-muted text-foreground-secondary"
-                  aria-label="Remove file"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </button>
-              </div>
-            )}
-          </div>
-
-          {/* Step 2: Tag */}
           <div className="space-y-2">
             <Label htmlFor="category" className="text-xs font-medium">Category (required)</Label>
             <select
@@ -242,25 +184,23 @@ export function DocumentUploadForm({ caseId, children, logEntries = [] }: Docume
             </select>
           </div>
 
-          {children.length > 0 && (
-            <div className="space-y-2">
-              <Label htmlFor="child" className="text-xs font-medium">Child (optional)</Label>
-              <select
-                id="child"
-                value={childId}
-                onChange={(e) => setChildId(e.target.value)}
-                className={cn(
-                  "flex h-8 w-full rounded-card border border-input bg-background px-2 py-1 text-xs",
-                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-                )}
-              >
-                <option value="">— Add child (optional)</option>
-                {children.map((c) => (
-                  <option key={c.id} value={c.id}>{c.first_name}</option>
-                ))}
-              </select>
-            </div>
-          )}
+          <div className="space-y-2">
+            <Label htmlFor="child" className="text-xs font-medium">Child (optional)</Label>
+            <select
+              id="child"
+              value={childId}
+              onChange={(e) => setChildId(e.target.value)}
+              className={cn(
+                "flex h-8 w-full rounded-card border border-input bg-background px-2 py-1 text-xs",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+              )}
+            >
+              <option value="">— No child</option>
+              {children.map((c) => (
+                <option key={c.id} value={c.id}>{c.first_name}</option>
+              ))}
+            </select>
+          </div>
 
           <div className="space-y-2">
             <Label htmlFor="description" className="text-xs font-medium">Description (required)</Label>
@@ -268,17 +208,19 @@ export function DocumentUploadForm({ caseId, children, logEntries = [] }: Docume
               id="description"
               value={description}
               onChange={(e) => setDescription(e.target.value.slice(0, DESCRIPTION_MAX))}
-              placeholder='Example: Photo of lunch contents sent with Avery on 2/26/26'
+              placeholder="Example: Photo of lunch contents sent with Avery on 2/26/26"
               required
               maxLength={DESCRIPTION_MAX}
               rows={3}
+              aria-required="true"
+              aria-describedby="description-counter"
               className={cn(
                 "flex w-full rounded-card border border-input bg-background px-3 py-2 text-xs resize-y min-h-[72px]",
                 "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
               )}
             />
-            <p className="text-xs text-foreground-secondary">
-              <span className={cn(descLen > DESCRIPTION_MAX ? "text-alert" : "")}>{descLen}</span> / {DESCRIPTION_MAX}
+            <p id="description-counter" className="text-xs text-foreground-secondary tabular-nums" aria-live="polite">
+              <span className={cn(descLen > DESCRIPTION_MAX && "text-alert")}>{descLen}</span> / {DESCRIPTION_MAX}
             </p>
           </div>
 
@@ -340,7 +282,62 @@ export function DocumentUploadForm({ caseId, children, logEntries = [] }: Docume
             </div>
           )}
 
-          {/* Step 3: Confirm */}
+          {/* File (last before submit) */}
+          <div className="space-y-2">
+            <Label className="text-xs font-medium">File (required)</Label>
+            {!file ? (
+              <>
+                <div
+                  onDragEnter={handleDrag}
+                  onDragLeave={handleDrag}
+                  onDragOver={handleDrag}
+                  onDrop={handleDrop}
+                  className={cn(
+                    "rounded-card border border-dashed transition-colors flex flex-col items-center justify-center min-h-[80px] py-4 px-3 text-center",
+                    dragActive ? "border-primary bg-primary/5" : "border-border bg-background-secondary/30"
+                  )}
+                >
+                  <input
+                    ref={inputRef}
+                    type="file"
+                    accept={ACCEPT}
+                    className="hidden"
+                    onChange={(e) => handleFileSelect(e.target.files?.[0] ?? null)}
+                  />
+                  <p className="text-xs text-foreground-secondary">Drop file or click to browse</p>
+                  <p className="text-[11px] text-foreground-secondary mt-1">{ACCEPT_LABEL}, max 25MB</p>
+                  <Button type="button" variant="ghost" size="sm" className="mt-2 h-7 text-xs" onClick={() => inputRef.current?.click()}>
+                    Choose file
+                  </Button>
+                </div>
+                {fileError && <p className="text-xs text-alert">{fileError}</p>}
+              </>
+            ) : (
+              <div className="rounded-card border border-border bg-background p-2 flex items-center gap-2">
+                {file.type.startsWith("image/") ? (
+                  <Image className="h-8 w-8 text-foreground-secondary shrink-0" aria-hidden />
+                ) : (
+                  <FileText className="h-8 w-8 text-foreground-secondary shrink-0" aria-hidden />
+                )}
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs text-foreground truncate" title={file.name}>{file.name}</p>
+                  <p className="text-[11px] text-foreground-secondary">{formatSize(file.size)} · {file.type.split("/")[1] || "file"}</p>
+                </div>
+                <Button type="button" variant="ghost" size="sm" className="h-7 text-xs shrink-0" onClick={() => inputRef.current?.click()}>
+                  Replace
+                </Button>
+                <button
+                  type="button"
+                  onClick={() => handleFileSelect(null)}
+                  className="p-1.5 rounded hover:bg-muted text-foreground-secondary"
+                  aria-label="Remove file"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              </div>
+            )}
+          </div>
+
           <Button type="submit" disabled={!canSubmit || loading} className="rounded-full h-8 px-4 text-xs w-full">
             {loading ? "Uploading…" : "Add document"}
           </Button>

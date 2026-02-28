@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -54,6 +54,56 @@ export function AddEventForm({
   const [kidTitle, setKidTitle] = useState("");
   const [autoParentsOnlyHint, setAutoParentsOnlyHint] = useState(false);
   const [visibilityTouched, setVisibilityTouched] = useState(false);
+  const [sourceMessageId, setSourceMessageId] = useState<string | null>(null);
+  const [photoUploading, setPhotoUploading] = useState(false);
+  const photoInputRef = useRef<HTMLInputElement>(null);
+
+  function timeToHHmm(s: string | null): string {
+    if (!s || !s.trim()) return "09:00";
+    const t = s.trim();
+    const match = t.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i);
+    if (match) {
+      let h = parseInt(match[1], 10);
+      const m = parseInt(match[2] || "0", 10);
+      if (match[3]?.toLowerCase() === "pm" && h < 12) h += 12;
+      if (match[3]?.toLowerCase() === "am" && h === 12) h = 0;
+      return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+    }
+    if (/^\d{1,2}:\d{2}$/.test(t)) return t.length === 4 ? `0${t}` : t;
+    return "09:00";
+  }
+
+  async function handlePhotoUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file || !file.type.startsWith("image/")) return;
+    setPhotoUploading(true);
+    setError(null);
+    try {
+      const form = new FormData();
+      form.set("file", file);
+      form.set("case_id", caseId);
+      const res = await fetch("/api/calendar/inbox/photo", { method: "POST", body: form });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Upload failed");
+      const d = data.draft ?? {};
+      if (d.title) setTitle(d.title);
+      if (d.date) setDate(d.date.slice(0, 10));
+      if (d.start_time) setStartTime(timeToHHmm(d.start_time));
+      if (d.end_time) setEndTime(timeToHHmm(d.end_time));
+      setDescription(d.notes ?? (d.title ? "From photo" : ""));
+      if (d.category && EVENT_TYPES.some((t) => t.value === d.category)) setEventType(d.category);
+      if (d.child_name && children.length) {
+        const child = children.find((c) => c.first_name.toLowerCase() === String(d.child_name).toLowerCase());
+        if (child) setChildId(child.id);
+      }
+      setSourceMessageId(data.message_id ?? null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Upload failed");
+    } finally {
+      setPhotoUploading(false);
+    }
+  }
 
   function getDefaultVisibilityForType(
     type: string
@@ -103,6 +153,7 @@ export function AddEventForm({
           is_private: visibility === "private",
           recurring_rule: isRepeating ? repeat : undefined,
           kid_title: kidTitle.trim() || undefined,
+          ...(sourceMessageId && { source: "photo", source_message_id: sourceMessageId }),
         }),
       });
       const data = await res.json();
@@ -110,6 +161,7 @@ export function AddEventForm({
       setTitle("");
       setDescription("");
       setKidTitle("");
+      setSourceMessageId(null);
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
@@ -127,12 +179,34 @@ export function AddEventForm({
         </CardDescription>
       </CardHeader>
       <CardContent className="pt-2">
-        <form onSubmit={handleSubmit} className="space-y-2">
+        <form onSubmit={handleSubmit} className="space-y-3">
+          <input
+            ref={photoInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={handlePhotoUpload}
+          />
           {error && (
             <p className="text-xs text-alert" role="alert">
               {error}
             </p>
           )}
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={photoUploading}
+              onClick={() => photoInputRef.current?.click()}
+              className="text-xs"
+            >
+              {photoUploading ? "Extracting…" : "Add event via photo"}
+            </Button>
+            {sourceMessageId && (
+              <span className="text-[11px] text-foreground-secondary">Draft from photo — edit and save</span>
+            )}
+          </div>
           <div className="space-y-1">
             <Label htmlFor="title" className="text-xs">
               Title
@@ -201,7 +275,7 @@ export function AddEventForm({
             <Label htmlFor="description" className="text-xs">
               Description
             </Label>
-            <Input
+            <textarea
               id="description"
               value={description}
               onChange={(e) => {
@@ -210,6 +284,12 @@ export function AddEventForm({
               }}
               placeholder="Notes"
               required
+              rows={4}
+              className={cn(
+                "flex w-full rounded-card border border-input bg-background px-3 py-2 text-sm ring-offset-background",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                "min-h-[80px] resize-y"
+              )}
             />
           </div>
           <div className="space-y-1">

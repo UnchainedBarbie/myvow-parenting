@@ -28,6 +28,8 @@ export async function POST(request: NextRequest) {
       recurring_rule,
       kid_title,
       visibility,
+      source,
+      source_message_id,
     } = body as {
       case_id?: string;
       title?: string;
@@ -41,6 +43,8 @@ export async function POST(request: NextRequest) {
       recurring_rule?: string;
       kid_title?: string;
       visibility?: "family" | "parents_only" | "private";
+      source?: "manual" | "email" | "photo";
+      source_message_id?: string;
     };
     if (!case_id || !title || !start_time) {
       return NextResponse.json(
@@ -61,22 +65,26 @@ export async function POST(request: NextRequest) {
       ? [`[PRIVATE]`, descriptionValue].filter(Boolean).join(" ")
       : descriptionValue;
 
+    const insertPayload: Record<string, unknown> = {
+      case_id,
+      created_by: user.id,
+      title,
+      description: storedDescription,
+      event_type: event_type ?? null,
+      child_id: child_id ?? null,
+      start_time,
+      end_time: end_time ?? null,
+      all_day: all_day ?? false,
+      recurring_rule: recurring_rule ?? null,
+      visibility: visibilityValue,
+      kid_title: kid_title ?? null,
+    };
+    if (source) insertPayload.source = source;
+    if (source_message_id) insertPayload.source_message_id = source_message_id;
+
     const { data: event, error } = await admin
       .from("calendar_events")
-      .insert({
-        case_id,
-        created_by: user.id,
-        title,
-        description: storedDescription,
-        event_type: event_type ?? null,
-        child_id: child_id ?? null,
-        start_time,
-        end_time: end_time ?? null,
-        all_day: all_day ?? false,
-        recurring_rule: recurring_rule ?? null,
-        visibility: visibilityValue,
-        kid_title: kid_title ?? null,
-      })
+      .insert(insertPayload)
       .select("id")
       .single();
     if (error) {
@@ -84,6 +92,32 @@ export async function POST(request: NextRequest) {
         { message: error.message },
         { status: 500 }
       );
+    }
+
+    if (source_message_id) {
+      await admin.from("calendar_inbox_messages").update({ created_event_id: event.id, parse_status: "parsed" }).eq("id", source_message_id);
+      const { data: inboxRow } = await admin.from("calendar_inbox_messages").select("source, raw_payload_json, body_text").eq("id", source_message_id).single();
+      const payload = (inboxRow as any)?.raw_payload_json ?? {};
+      await admin.from("calendar_event_attachments").insert({
+        event_id: event.id,
+        attachment_type: (inboxRow as any)?.source ?? "photo",
+        inbox_message_id: source_message_id,
+        storage_path: payload.storage_path ?? null,
+        content_text: (inboxRow as any)?.body_text?.slice(0, 2000) ?? null,
+      });
+    }
+
+    // Best-effort: record initial "Event created" history entry.
+    try {
+      await admin.from("calendar_event_history").insert({
+        event_id: event.id,
+        field_changed: "created",
+        new_value: "Event created",
+        note: null,
+        changed_by: user.id,
+      });
+    } catch {
+      // Ignore history failures so event creation is not blocked.
     }
 
     // Attempt to store a notification record when creating a shared event and a co-parent exists.

@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
@@ -41,6 +40,8 @@ export type CalendarEventRow = {
   created_at: string;
   created_by_name: string | null;
   recurring_rule?: string | null;
+  visibility?: "family" | "parents_only" | "private" | "family_read_only" | null;
+  kid_title?: string | null;
 };
 
 interface CalendarMonthProps {
@@ -120,6 +121,11 @@ export function CalendarMonth({
     year: "numeric",
   });
 
+  const today = new Date();
+  const todayYear = today.getFullYear();
+  const todayMonth = today.getMonth() + 1;
+  const todayDate = today.getDate();
+
   const cells: { day: number | null; key: string | null }[] = [];
   for (let i = 0; i < rows * 7; i++) {
     if (i < startPad) {
@@ -135,135 +141,154 @@ export function CalendarMonth({
     }
   }
 
+  const isMonthView = viewMode === "month";
+
   return (
     <>
       <Card className="shadow-card">
-        <CardHeader className="flex flex-col gap-1 space-y-0 pb-1">
-          <div className="flex flex-row items-center justify-between">
-            <CardTitle className="font-heading text-lg">{monthName}</CardTitle>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => goMonth(-1)}
-                className="rounded-full p-2 text-foreground-secondary hover:bg-muted hover:text-foreground"
-                aria-label="Previous month"
-              >
-                ←
-              </button>
-              <Link
-                href={`/calendar?year=${new Date().getFullYear()}&month=${new Date().getMonth() + 1}`}
-                className="rounded-full px-3 py-1.5 text-sm text-foreground-secondary hover:bg-muted hover:text-foreground"
-              >
-                Today
-              </Link>
-              <button
-                type="button"
-                onClick={() => goMonth(1)}
-                className="rounded-full p-2 text-foreground-secondary hover:bg-muted hover:text-foreground"
-                aria-label="Next month"
-              >
-                →
-              </button>
-            </div>
-          </div>
-          <div className="flex flex-wrap items-center justify-end gap-2 text-xs text-foreground-secondary">
-            <select
-              value={ownerFilter}
-              onChange={(e) =>
-                setOwnerFilter(e.target.value as "all" | "mine" | "shared")
-              }
-              className="h-8 rounded-card border border-border bg-background px-2"
-            >
-              <option value="all">All events</option>
-              <option value="mine">My events</option>
-              <option value="shared">Shared events</option>
-            </select>
-            <select
-              value={categoryFilter}
-              onChange={(e) =>
-                setCategoryFilter(e.target.value as "all" | string)
-              }
-              className="h-8 rounded-card border border-border bg-background px-2"
-            >
-              <option value="all">All categories</option>
-              {Object.entries(EVENT_TYPE_LABELS).map(([value, label]) => (
-                <option key={value} value={value}>
-                  {label}
-                </option>
-              ))}
-            </select>
+        <CardHeader className="flex flex-col gap-2 space-y-0 pb-0.5">
+          {/* Row 1: Month nav — same for Month and List view */}
+          <div className="flex items-center gap-3">
             <button
               type="button"
-              onClick={() => setConflictsOnly((prev) => !prev)}
-              className={cn(
-                "rounded-full px-3 py-1 border text-xs",
-                conflictsOnly
-                  ? "bg-[#7B9E87] border-[#7B9E87] text-white"
-                  : "border-border text-foreground-secondary bg-background hover:bg-muted hover:text-foreground"
-              )}
+              onClick={() => goMonth(-1)}
+              className="p-1 rounded-md hover:bg-muted"
+              aria-label="Previous month"
             >
-              Conflicts only
+              ←
             </button>
-            <div className="inline-flex rounded-full border border-border bg-background-secondary/60 p-0.5">
+            <h2 className="text-lg font-semibold">
+              {monthName}
+            </h2>
+            <button
+              type="button"
+              onClick={() => goMonth(1)}
+              className="p-1 rounded-md hover:bg-muted"
+              aria-label="Next month"
+            >
+              →
+            </button>
+          </div>
+          {/* Row 2: Month/List toggle far left, filters grouped to the right — same for both views */}
+          <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-foreground-secondary">
+            <div className="flex items-center gap-2">
+              <div className="inline-flex rounded-full border border-border bg-background-secondary/60 p-0.5">
+                <button
+                  type="button"
+                  onClick={() => setViewMode("month")}
+                  className={cn(
+                    "px-3 py-1 text-xs rounded-full",
+                    isMonthView
+                      ? "bg-[#7B9E87] text-white"
+                      : "text-foreground-secondary"
+                  )}
+                >
+                  Month
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewMode("list")}
+                  className={cn(
+                    "px-3 py-1 text-xs rounded-full",
+                    !isMonthView
+                      ? "bg-[#7B9E87] text-white"
+                      : "text-foreground-secondary"
+                  )}
+                >
+                  List
+                </button>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <select
+                value={ownerFilter}
+                onChange={(e) =>
+                  setOwnerFilter(e.target.value as "all" | "mine" | "shared")
+                }
+                className="h-8 rounded-card border border-border bg-background px-2"
+              >
+                <option value="all">All events</option>
+                <option value="mine">My events</option>
+                <option value="shared">Shared events</option>
+              </select>
+              <select
+                value={categoryFilter}
+                onChange={(e) =>
+                  setCategoryFilter(e.target.value as "all" | string)
+                }
+                className="h-8 rounded-card border border-border bg-background px-2"
+              >
+                <option value="all">All categories</option>
+                {Object.entries(EVENT_TYPE_LABELS).map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
               <button
                 type="button"
-                onClick={() => setViewMode("month")}
+                onClick={() => setConflictsOnly((prev) => !prev)}
                 className={cn(
-                  "px-3 py-1 text-xs rounded-full",
-                  viewMode === "month"
-                    ? "bg-[#7B9E87] text-white"
-                    : "text-foreground-secondary"
+                  "rounded-full px-3 py-1 border text-xs",
+                  conflictsOnly
+                    ? "bg-[#7B9E87] border-[#7B9E87] text-white"
+                    : "border-border text-foreground-secondary bg-background hover:bg-muted hover:text-foreground"
                 )}
               >
-                Month
-              </button>
-              <button
-                type="button"
-                onClick={() => setViewMode("list")}
-                className={cn(
-                  "px-3 py-1 text-xs rounded-full",
-                  viewMode === "list"
-                    ? "bg-[#7B9E87] text-white"
-                    : "text-foreground-secondary"
-                )}
-              >
-                List
+                Conflicts only
               </button>
             </div>
           </div>
         </CardHeader>
-        <CardContent className="pt-1">
+        <CardContent className="pt-0.5">
           {viewMode === "month" ? (
             <>
-              <div className="grid grid-cols-7 gap-px rounded-card border border-border bg-border">
+              <div className="grid grid-cols-7 gap-px rounded-card border border-gray-300 bg-gray-300">
                 {DAYS.map((day) => (
                   <div
                     key={day}
-                    className="bg-background-secondary px-1 py-1 text-center text-[11px] font-medium text-foreground-secondary"
+                    className="border-r border-b border-gray-300 bg-gray-200/95 px-1 py-1 text-center text-[11px] font-medium text-gray-600"
                   >
                     {day}
                   </div>
                 ))}
-                {cells.map(({ day, key }, i) => (
+                {cells.map(({ day, key }, i) => {
+                  const isToday =
+                    day != null &&
+                    year === todayYear &&
+                    month === todayMonth &&
+                    day === todayDate;
+                  return (
                   <div
                     key={i}
                     className={cn(
-                      "min-h-[100px] bg-background p-1.5",
-                      !day && "bg-background-secondary/30"
+                      "min-h-[100px] border-r border-b border-gray-300 p-1.5",
+                      !day && "bg-background-secondary/30",
+                      day != null && !isToday && "bg-background",
+                      day != null &&
+                        isToday &&
+                        "bg-[#EBE9E6]"
                     )}
                   >
                     {day != null && (
                       <>
-                        <p className="text-sm font-medium text-foreground">
+                        <p
+                          className={cn(
+                            "text-sm font-medium",
+                            isToday ? "text-gray-800" : "text-gray-700"
+                          )}
+                        >
                           {day}
                         </p>
                         <ul className="mt-1 space-y-1">
                           {(eventsByDay[key!] ?? []).map((ev) => {
-                            const color =
-                              EVENT_COLORS[ev.event_type ?? ""] ?? {
-                                bg: "bg-primary-light",
-                                dot: "bg-primary-dark",
-                              };
+                            const isCanceled = ev.status === "canceled";
+                            const color = isCanceled
+                              ? { bg: "bg-gray-100", dot: "bg-gray-400" }
+                              : EVENT_COLORS[ev.event_type ?? ""] ?? {
+                                  bg: "bg-primary-light",
+                                  dot: "bg-primary-dark",
+                                };
                             const categoryLabel =
                               EVENT_TYPE_LABELS[ev.event_type ?? ""] ??
                               ev.event_type ??
@@ -275,9 +300,9 @@ export function CalendarMonth({
                                   className={cn(
                                     "w-full text-left",
                                     "rounded-card px-2 py-1 text-xs shadow-card",
-                                    "text-foreground bg-background",
-                                    color.bg,
-                                    "hover:bg-muted"
+                                    "bg-background hover:bg-muted",
+                                    isCanceled ? "text-gray-500" : "text-foreground",
+                                    color.bg
                                   )}
                                   title={ev.description ?? ev.title}
                                   onClick={() => onEventClick?.(ev)}
@@ -289,11 +314,19 @@ export function CalendarMonth({
                                         color.dot
                                       )}
                                     />
-                                    <span className="truncate font-semibold">
+                                    <span
+                                      className={cn(
+                                        "truncate font-semibold",
+                                        isCanceled && "line-through"
+                                      )}
+                                    >
                                       {ev.title}
                                     </span>
                                   </div>
-                                  <span className="mt-0.5 block truncate text-[10px] text-foreground-secondary/60">
+                                  <span className={cn(
+                                    "mt-0.5 block truncate text-[10px]",
+                                    isCanceled ? "text-gray-400" : "text-foreground-secondary/60"
+                                  )}>
                                     {ev.all_day
                                       ? categoryLabel
                                       : `${formatTime(ev.start_time)} · ${categoryLabel}`}
@@ -307,7 +340,8 @@ export function CalendarMonth({
                       </>
                     )}
                   </div>
-                ))}
+                );
+                })}
               </div>
               {filteredEvents.length === 0 && (
                 <p className="mt-4 text-center text-xs text-foreground-secondary">
@@ -316,22 +350,23 @@ export function CalendarMonth({
               )}
             </>
           ) : (
-            <div className="mt-2 overflow-x-auto rounded-card border border-border bg-background">
+            <div className="mt-1.5 overflow-x-auto rounded-card border border-border bg-background">
               {events.length === 0 ? (
                 <p className="px-4 py-4 text-xs text-foreground-secondary text-center">
                   No events scheduled yet.
                 </p>
               ) : (
+                <>
                 <table className="min-w-full text-left text-xs md:text-sm">
                   <thead>
-                    <tr className="bg-[#E7EFE8] text-foreground-secondary">
+                    <tr className="bg-[#E7EFE8]/80 text-foreground-secondary">
                       <th className="w-8 px-3 py-2"></th>
-                      <th className="px-3 py-2 font-semibold">event</th>
-                      <th className="px-3 py-2 font-semibold">date</th>
-                      <th className="px-3 py-2 font-semibold">time</th>
-                      <th className="px-3 py-2 font-semibold">child</th>
-                      <th className="px-3 py-2 font-semibold">category</th>
-                      <th className="px-3 py-2 font-semibold">status</th>
+                      <th className="px-3 py-2 font-medium">event</th>
+                      <th className="px-3 py-2 font-medium">date</th>
+                      <th className="px-3 py-2 font-medium">time</th>
+                      <th className="px-3 py-2 font-medium">child</th>
+                      <th className="px-3 py-2 font-medium">category</th>
+                      <th className="px-3 py-2 font-medium">status</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -342,18 +377,24 @@ export function CalendarMonth({
                           new Date(a.start_time).getTime() -
                           new Date(b.start_time).getTime()
                       )
+                      .slice(0, 25)
                       .map((ev, index) => {
-                        const color =
-                          EVENT_COLORS[ev.event_type ?? ""] ?? {
-                            bg: "bg-primary-light",
-                            dot: "bg-primary-dark",
-                          };
+                        const isCanceled = ev.status === "canceled";
+                        const color = isCanceled
+                          ? { bg: "bg-gray-100", dot: "bg-gray-400" }
+                          : EVENT_COLORS[ev.event_type ?? ""] ?? {
+                              bg: "bg-primary-light",
+                              dot: "bg-primary-dark",
+                            };
                         const categoryLabel =
                           EVENT_TYPE_LABELS[ev.event_type ?? ""] ??
                           ev.event_type ??
                           "Event";
-                        const rowBg =
-                          index % 2 === 0 ? "bg-background" : "bg-[#FAF8F5]";
+                        const rowBg = isCanceled
+                          ? "bg-gray-50"
+                          : index % 2 === 0
+                            ? "bg-background"
+                            : "bg-[#FAF8F5]";
                         const rawStatus = ev.status ?? "scheduled";
                         const statusKey = (
                           ["completed", "no_show", "conflict", "canceled"].includes(
@@ -385,9 +426,9 @@ export function CalendarMonth({
                         const dateStr = new Date(
                           ev.start_time
                         ).toLocaleDateString("en-US", {
-                          weekday: "short",
                           month: "short",
                           day: "numeric",
+                          year: "numeric",
                         });
                         const timeStr = formatTime(ev.start_time);
                         return (
@@ -395,34 +436,40 @@ export function CalendarMonth({
                             key={ev.id}
                             className={cn(
                               rowBg,
-                              "border-t border-border text-foreground cursor-pointer hover:bg-background-secondary/50"
+                              "border-t border-border cursor-pointer hover:bg-background-secondary/50",
+                              isCanceled ? "text-gray-500" : "text-foreground"
                             )}
                             onClick={() => onEventClick?.(ev)}
                           >
-                            <td className="px-3 py-2 align-middle">
+                            <td className="px-3 py-1.5 align-middle">
                               <span
                                 className={cn(
-                                  "inline-block h-2.5 w-2.5 rounded-full",
+                                  "inline-block h-2.5 w-2.5 rounded-full opacity-75",
                                   color.dot
                                 )}
                               />
                             </td>
-                            <td className="px-3 py-2 align-middle font-medium">
+                            <td
+                              className={cn(
+                                "px-3 py-1.5 align-middle font-medium",
+                                isCanceled && "line-through"
+                              )}
+                            >
                               {ev.title}
                             </td>
-                            <td className="px-3 py-2 align-middle text-foreground-secondary">
+                            <td className="px-3 py-1.5 align-middle text-foreground-secondary">
                               {dateStr}
                             </td>
-                            <td className="px-3 py-2 align-middle text-foreground-secondary">
+                            <td className="px-3 py-1.5 align-middle text-foreground-secondary">
                               {timeStr}
                             </td>
-                            <td className="px-3 py-2 align-middle text-foreground-secondary">
+                            <td className="px-3 py-1.5 align-middle text-foreground-secondary">
                               {ev.child_name || "All children"}
                             </td>
-                            <td className="px-3 py-2 align-middle text-foreground-secondary">
+                            <td className="px-3 py-1.5 align-middle text-foreground-secondary">
                               {categoryLabel}
                             </td>
-                            <td className="px-3 py-2 align-middle">
+                            <td className="px-3 py-1.5 align-middle">
                               <span
                                 className={cn(
                                   "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] md:text-xs font-medium",
@@ -437,6 +484,18 @@ export function CalendarMonth({
                       })}
                   </tbody>
                 </table>
+                {events.length > 25 && (
+                  <div className="border-t border-border px-3 py-2 text-center">
+                    <button
+                      type="button"
+                      onClick={() => setViewMode("month")}
+                      className="text-xs text-foreground-secondary underline-offset-2 hover:underline"
+                    >
+                      View all events
+                    </button>
+                  </div>
+                )}
+                </>
               )}
             </div>
           )}

@@ -47,10 +47,18 @@ export default async function DocumentsPage() {
   const { data: docsRaw } = await admin
     .from("documents")
     .select(
-      "id, file_name, file_size_bytes, mime_type, category, child_id, description, created_at"
+      "id, file_name, file_size_bytes, mime_type, category, child_id, description, created_at, visibility, related_comm_id"
     )
     .eq("case_id", caseId)
     .order("created_at", { ascending: false });
+
+  const { data: messagesForLog } = await admin
+    .from("messages")
+    .select("id, external_comm_id, created_at")
+    .eq("case_id", caseId)
+    .not("external_comm_id", "eq", null)
+    .order("created_at", { ascending: false })
+    .limit(100);
 
   const childIds = [
     ...new Set(
@@ -79,6 +87,14 @@ export default async function DocumentsPage() {
     child_name: d.child_id ? childMap[d.child_id] ?? null : null,
     description: d.description,
     created_at: d.created_at,
+    visibility: (d as { visibility?: string }).visibility ?? "private",
+    related_comm_id: (d as { related_comm_id?: string | null }).related_comm_id ?? null,
+  }));
+
+  const logEntries = (messagesForLog ?? []).map((m) => ({
+    id: m.id,
+    external_comm_id: (m as { external_comm_id?: string | null }).external_comm_id ?? null,
+    created_at: (m as { created_at: string }).created_at,
   }));
 
   return (
@@ -87,12 +103,11 @@ export default async function DocumentsPage() {
         Documents
       </h1>
       <p className="text-foreground-secondary mb-8">
-        Upload PDFs and images. Categorize by type and optionally assign to a
-        child. Access is logged.
+        Secure, time-stamped documentation. Court-export ready.
       </p>
       <div className="space-y-8">
-        <DocumentUploadForm caseId={caseId} children={children ?? []} />
-        <DocumentList documents={documents} />
+        <DocumentUploadForm caseId={caseId} children={children ?? []} logEntries={logEntries} />
+        <DocumentList documents={documents} children={children ?? []} />
       </div>
     </div>
   );

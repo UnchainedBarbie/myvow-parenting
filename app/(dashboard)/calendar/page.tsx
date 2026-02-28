@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { AddEventForm } from "@/components/calendar/add-event-form";
 import type { CalendarEventRow } from "@/components/calendar/calendar-month";
 import { CalendarRoot } from "@/components/calendar/calendar-root";
+import { CalendarInboxButton } from "@/components/calendar/calendar-inbox-button";
 
 function getMonthRange(year: number, month: number) {
   const start = new Date(year, month - 1, 1);
@@ -68,7 +69,7 @@ export default async function CalendarPage({
   const { data: eventsRaw } = await admin
     .from("calendar_events")
     .select(
-      "id, title, description, event_type, child_id, start_time, end_time, all_day, status, created_by, created_at, recurring_rule, deleted_at"
+      "id, title, description, event_type, child_id, start_time, end_time, all_day, status, visibility, kid_title, created_by, created_at, recurring_rule, deleted_at"
     )
     .eq("case_id", caseId)
     .gte("start_time", start)
@@ -116,15 +117,39 @@ export default async function CalendarPage({
 
   const events: CalendarEventRow[] = (eventsRaw ?? [])
     .filter((e) => {
-      const isPrivate = e.description?.startsWith("[PRIVATE]") ?? false;
-      if (!isPrivate) return true;
-      return e.created_by === user.id;
+      // Respect explicit visibility when present; fall back to legacy [PRIVATE] marker.
+      const visibility = (e as any).visibility as
+        | "family"
+        | "parents_only"
+        | "private"
+        | "family_read_only"
+        | null
+        | undefined;
+      const legacyPrivate = e.description?.startsWith("[PRIVATE]") ?? false;
+
+      if (visibility === "private") {
+        return e.created_by === user.id;
+      }
+      if (!visibility && legacyPrivate) {
+        return e.created_by === user.id;
+      }
+      return true;
     })
     .map((e) => {
-      const isPrivate = e.description?.startsWith("[PRIVATE]") ?? false;
-      const desc = isPrivate
-        ? e.description?.replace(/^\[PRIVATE\]\s*/, "") ?? null
-        : e.description;
+      const visibility = (e as any).visibility as
+        | "family"
+        | "parents_only"
+        | "private"
+        | "family_read_only"
+        | null
+        | undefined;
+      const legacyPrivate = e.description?.startsWith("[PRIVATE]") ?? false;
+      const isPrivate =
+        visibility === "private" || (!visibility && legacyPrivate);
+      const desc =
+        !visibility && legacyPrivate
+          ? e.description?.replace(/^\[PRIVATE\]\s*/, "") ?? null
+          : e.description;
       return {
         id: e.id,
         title: e.title,
@@ -141,13 +166,17 @@ export default async function CalendarPage({
         created_at: e.created_at,
         created_by_name: creatorMap[e.created_by] ?? null,
         recurring_rule: e.recurring_rule ?? null,
+        visibility: visibility ?? null,
+        kid_title: (e as any).kid_title ?? null,
       };
     });
 
   const nowIso = new Date().toISOString();
   const { data: upcomingRaw } = await admin
     .from("calendar_events")
-    .select("id, title, event_type, child_id, start_time, swap_status, deleted_at")
+    .select(
+      "id, title, description, event_type, child_id, start_time, end_time, all_day, status, visibility, kid_title, created_by, created_at, recurring_rule, deleted_at"
+    )
     .eq("case_id", caseId)
     .gte("start_time", nowIso)
     .is("deleted_at", null)
@@ -160,19 +189,78 @@ export default async function CalendarPage({
     event_type: e.event_type as string | null,
     child_name: e.child_id ? childMap[e.child_id] ?? null : null,
     start_time: e.start_time as string,
-    status: (e as any).swap_status as string | null,
+    status: (e as any).status as string | null,
   }));
+
+  const eventIdsInMonth = new Set(events.map((e) => e.id));
+  const toEventRow = (e: (typeof eventsRaw)[number]) => {
+    const visibility = (e as any).visibility as
+      | "family"
+      | "parents_only"
+      | "private"
+      | "family_read_only"
+      | null
+      | undefined;
+    const legacyPrivate = e.description?.startsWith("[PRIVATE]") ?? false;
+    const isPrivate =
+      visibility === "private" || (!visibility && legacyPrivate);
+    const desc =
+      !visibility && legacyPrivate
+        ? e.description?.replace(/^\[PRIVATE\]\s*/, "") ?? null
+        : e.description;
+    return {
+      id: e.id,
+      title: e.title,
+      description: desc,
+      event_type: e.event_type,
+      child_id: e.child_id,
+      child_name: e.child_id ? childMap[e.child_id] ?? null : null,
+      start_time: e.start_time,
+      end_time: e.end_time,
+      all_day: e.all_day ?? false,
+      status: (e as any).status ?? null,
+      isPrivate,
+      isMine: e.created_by === user.id,
+      created_at: e.created_at,
+      created_by_name: creatorMap[e.created_by] ?? null,
+      recurring_rule: e.recurring_rule ?? null,
+      visibility: visibility ?? null,
+      kid_title: (e as any).kid_title ?? null,
+    };
+  };
+  const upcomingFullRows: CalendarEventRow[] = (upcomingRaw ?? [])
+    .filter((e) => {
+      const visibility = (e as any).visibility as
+        | "family"
+        | "parents_only"
+        | "private"
+        | "family_read_only"
+        | null
+        | undefined;
+      const legacyPrivate = e.description?.startsWith("[PRIVATE]") ?? false;
+      if (visibility === "private") return e.created_by === user.id;
+      if (!visibility && legacyPrivate) return e.created_by === user.id;
+      return true;
+    })
+    .map((e) => toEventRow(e));
+  const eventsForModal: CalendarEventRow[] = [
+    ...events,
+    ...upcomingFullRows.filter((e) => !eventIdsInMonth.has(e.id)),
+  ];
 
   return (
     <div className="px-3 pt-3 pb-1 md:px-4 md:pt-4 md:pb-2">
-      <h1 className="font-heading text-xl md:text-2xl font-semibold text-foreground mb-1">
-        Calendar
-      </h1>
+      <div className="flex items-center justify-between gap-2 mb-1">
+        <h1 className="font-heading text-xl md:text-2xl font-semibold text-foreground">
+          Calendar
+        </h1>
+        <CalendarInboxButton />
+      </div>
       <p className="text-xs md:text-sm text-foreground-secondary mb-2">
         Shared record of parenting events.
       </p>
       <div className="space-y-2.5">
-        <div className="grid gap-3 lg:grid-cols-[420px_minmax(0,1fr)] items-start">
+        <div className="grid gap-3 lg:grid-cols-[460px_minmax(0,1fr)] items-start">
           <AddEventForm
             caseId={caseId}
             children={children ?? []}
@@ -183,6 +271,7 @@ export default async function CalendarPage({
             caseId={caseId}
             events={events}
             upcoming={upcoming}
+            eventsForModal={eventsForModal}
             children={children ?? []}
           />
         </div>

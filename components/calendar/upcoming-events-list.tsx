@@ -42,6 +42,7 @@ function formatUpcomingDate(iso: string) {
     weekday: "short",
     month: "short",
     day: "numeric",
+    year: "numeric",
   });
 }
 
@@ -72,6 +73,11 @@ export function UpcomingEventsList({
   onEventClick,
 }: UpcomingEventsListProps) {
   const [show, setShow] = useState(true);
+  const [missingEventMessage, setMissingEventMessage] = useState<string | null>(
+    null
+  );
+
+  const resolvableIds = new Set(events.map((e) => e.id));
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -89,8 +95,12 @@ export function UpcomingEventsList({
   }, []);
 
   function handleOpen(eventId: string) {
+    setMissingEventMessage(null);
     const ev = events.find((e) => e.id === eventId) ?? null;
-    if (!ev) return;
+    if (!ev) {
+      setMissingEventMessage("Event not found. Refresh the page.");
+      return;
+    }
     onEventClick?.(ev);
   }
 
@@ -103,7 +113,7 @@ export function UpcomingEventsList({
 
   return (
     <>
-      <div className="space-y-2">
+      <div className="space-y-2 px-6">
         <div className="flex items-center justify-between">
           <h2 className="font-heading text-lg text-foreground">
             Upcoming Events
@@ -111,6 +121,11 @@ export function UpcomingEventsList({
           <div className="ml-4 flex-1 bg-border h-px" />
         </div>
         <div className="rounded-card border border-border bg-background shadow-card">
+          {missingEventMessage && upcoming.length > 0 && (
+            <p className="px-4 py-2 text-sm text-alert" role="alert">
+              {missingEventMessage}
+            </p>
+          )}
           {upcoming.length === 0 ? (
             <p className="px-4 py-4 text-sm text-foreground-secondary">
               No upcoming events.
@@ -119,26 +134,31 @@ export function UpcomingEventsList({
             <div className="overflow-x-auto">
               <table className="min-w-full text-left text-xs md:text-sm">
                 <thead>
-                  <tr className="bg-[#E7EFE8] text-foreground-secondary">
+                  <tr className="bg-[#E7EFE8]/80 text-foreground-secondary">
                     <th className="w-8 px-3 py-2"></th>
-                    <th className="px-3 py-2 font-semibold">event</th>
-                    <th className="px-3 py-2 font-semibold">date</th>
-                    <th className="px-3 py-2 font-semibold">time</th>
-                    <th className="px-3 py-2 font-semibold">child</th>
-                    <th className="px-3 py-2 font-semibold">category</th>
-                    <th className="px-3 py-2 font-semibold">status</th>
+                    <th className="px-3 py-2 font-medium">event</th>
+                    <th className="px-3 py-2 font-medium">date</th>
+                    <th className="px-3 py-2 font-medium">time</th>
+                    <th className="px-3 py-2 font-medium">child</th>
+                    <th className="px-3 py-2 font-medium">category</th>
+                    <th className="px-3 py-2 font-medium">status</th>
                   </tr>
                 </thead>
                 <tbody>
                   {limited.map((e, index) => {
-                    const colorClass =
-                      EVENT_COLORS[e.event_type ?? ""] ?? "bg-primary";
+                    const isCanceled = e.status === "canceled";
+                    const colorClass = isCanceled
+                      ? "bg-gray-400"
+                      : EVENT_COLORS[e.event_type ?? ""] ?? "bg-primary";
                     const label =
                       CATEGORY_LABELS[e.event_type ?? ""] ??
                       e.event_type ??
                       "Event";
-                    const rowBg =
-                      index % 2 === 0 ? "bg-background" : "bg-[#FAF8F5]";
+                    const rowBg = isCanceled
+                      ? "bg-gray-100"
+                      : index % 2 === 0
+                        ? "bg-background"
+                        : "bg-[#FAF8F5]";
 
                     const rawStatus = e.status ?? "scheduled";
                     const statusKey = (
@@ -170,14 +190,25 @@ export function UpcomingEventsList({
                       conflict: "bg-[#C97B7B]/15 text-[#A05555]",
                       canceled: "bg-gray-100 text-gray-400",
                     };
+                    const isResolvable = resolvableIds.has(e.id);
                     return (
                       <tr
                         key={e.id}
                         className={cn(
                           rowBg,
-                          "border-t border-border text-foreground cursor-pointer hover:bg-background-secondary/50"
+                          "border-t border-border",
+                          isCanceled ? "text-gray-500" : "text-foreground",
+                          isResolvable
+                            ? "cursor-pointer hover:bg-background-secondary/50"
+                            : "cursor-default opacity-75"
                         )}
-                        onClick={() => handleOpen(e.id)}
+                        onClick={() =>
+                          isResolvable
+                            ? handleOpen(e.id)
+                            : setMissingEventMessage(
+                                "Event not found. Refresh the page."
+                              )
+                        }
                       >
                         <td className="px-3 py-2 align-middle">
                           <span
@@ -187,7 +218,12 @@ export function UpcomingEventsList({
                             )}
                           />
                         </td>
-                        <td className="px-3 py-2 align-middle font-medium">
+                        <td
+                          className={cn(
+                            "px-3 py-2 align-middle font-medium",
+                            isCanceled && "line-through"
+                          )}
+                        >
                           {e.title}
                         </td>
                         <td className="px-3 py-2 align-middle text-foreground-secondary">

@@ -45,7 +45,7 @@ export async function GET(request: NextRequest) {
 
     const { data: rows, error } = await admin
       .from("calendar_event_history")
-      .select("id, event_id, field_name, new_value, note, changed_by, created_at")
+      .select("id, event_id, field_changed, new_value, note, changed_by, created_at")
       .eq("event_id", eventId)
       .order("created_at", { ascending: true });
 
@@ -82,7 +82,7 @@ export async function GET(request: NextRequest) {
 
     const payload = (rows ?? []).map((r) => ({
       id: r.id,
-      field_name: r.field_name,
+      field_name: (r as { field_changed?: string }).field_changed ?? null,
       new_value: r.new_value,
       note: r.note,
       changed_by_name: nameMap[r.changed_by] ?? null,

@@ -107,11 +107,12 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Insert history entries if provided
+    // Insert history entries if provided (non-blocking: event save succeeds even if this fails)
+    let historyRecorded = true;
     if (Array.isArray(history) && history.length > 0) {
       const rows = history.map((h: any) => ({
         event_id,
-        field_name: h.field_changed,
+        field_changed: h.field_changed,
         old_value: h.old_value ?? null,
         new_value: h.new_value ?? null,
         note: h.note ?? null,
@@ -121,12 +122,11 @@ export async function POST(request: NextRequest) {
         .from("calendar_event_history")
         .insert(rows);
       if (historyError) {
-        return NextResponse.json(
-          {
-            error:
-              historyError.message || "Failed to record event history",
-          },
-          { status: 500 }
+        historyRecorded = false;
+        // eslint-disable-next-line no-console
+        console.warn(
+          "[calendar/event/update] history insert failed:",
+          historyError.message
         );
       }
     }
@@ -147,7 +147,15 @@ export async function POST(request: NextRequest) {
       updatedEvent = data;
     }
 
-    return NextResponse.json({ event: updatedEvent }, { status: 200 });
+    return NextResponse.json(
+      {
+        event: updatedEvent,
+        ...(historyRecorded === false && {
+          warning: "Event saved, but history could not be recorded.",
+        }),
+      },
+      { status: 200 }
+    );
   } catch (e) {
     return NextResponse.json(
       { error: e instanceof Error ? e.message : "Update failed" },

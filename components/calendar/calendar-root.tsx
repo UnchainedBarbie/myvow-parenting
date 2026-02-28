@@ -21,6 +21,8 @@ interface CalendarRootProps {
   caseId: string;
   events: CalendarEventRow[];
   upcoming: UpcomingEvent[];
+  /** Merged list (month + full upcoming) so clicking any upcoming row can resolve the event for the modal. */
+  eventsForModal: CalendarEventRow[];
   children: Child[];
 }
 
@@ -28,6 +30,7 @@ export function CalendarRoot({
   caseId,
   events,
   upcoming,
+  eventsForModal,
   children,
 }: CalendarRootProps) {
   const router = useRouter();
@@ -48,7 +51,7 @@ export function CalendarRoot({
 
   return (
     <>
-      <div className="flex flex-col gap-1.5">
+      <div className="flex w-full min-w-0 flex-col gap-1.5">
         <CalendarMonth
           year={new Date(events[0]?.start_time ?? Date.now()).getFullYear()}
           month={new Date(events[0]?.start_time ?? Date.now()).getMonth() + 1}
@@ -61,7 +64,7 @@ export function CalendarRoot({
         <UpcomingEventsList
           caseId={caseId}
           upcoming={upcoming}
-          events={events}
+          events={eventsForModal}
           children={children}
           onEventClick={handleEventClick}
           onRefresh={() => router.refresh()}

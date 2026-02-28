@@ -46,9 +46,7 @@ export default async function DocumentsPage() {
 
   const { data: docsRaw } = await admin
     .from("documents")
-    .select(
-      "id, file_name, file_size_bytes, mime_type, category, child_id, description, created_at, visibility, related_comm_id"
-    )
+    .select("id, file_name, file_size_bytes, mime_type, category, child_id, description, created_at")
     .eq("case_id", caseId)
     .order("created_at", { ascending: false });
 
@@ -77,7 +75,7 @@ export default async function DocumentsPage() {
     {} as Record<string, string>
   );
 
-  const documents: DocumentRow[] = (docsRaw ?? []).map((d) => ({
+  const documents: DocumentRow[] = (docsRaw ?? []).map((d, index) => ({
     id: d.id,
     file_name: d.file_name,
     file_size_bytes: d.file_size_bytes,
@@ -89,6 +87,8 @@ export default async function DocumentsPage() {
     created_at: d.created_at,
     visibility: (d as { visibility?: string }).visibility ?? "private",
     related_comm_id: (d as { related_comm_id?: string | null }).related_comm_id ?? null,
+    deleted_at: (d as { deleted_at?: string | null }).deleted_at ?? null,
+    document_number: (d as { document_number?: number | null }).document_number ?? index + 1,
   }));
 
   const logEntries = (messagesForLog ?? []).map((m) => ({

@@ -104,18 +104,22 @@ export default async function ExpensesPage() {
           agreement. Approve or dispute expenses from the other parent.
         </p>
       </div>
-      <div className="grid gap-4 lg:grid-cols-[minmax(260px,28%)_minmax(0,1fr)] items-start">
-        <ExpenseForm
-          caseId={caseId}
-          children={children ?? []}
-          custodySplitPercent={custodySplitPercent}
-        />
-        <ExpenseList
-          expenses={expenses}
-          currentUserId={user.id}
-          custodySplitPercent={custodySplitPercent}
-          children={children ?? []}
-        />
+      <div className="flex flex-col lg:flex-row gap-6">
+        <div className="w-full lg:w-[30%]">
+          <ExpenseForm
+            caseId={caseId}
+            children={children ?? []}
+            custodySplitPercent={custodySplitPercent}
+          />
+        </div>
+        <div className="w-full lg:w-[70%]">
+          <ExpenseList
+            expenses={expenses}
+            currentUserId={user.id}
+            custodySplitPercent={custodySplitPercent}
+            children={children ?? []}
+          />
+        </div>
       </div>
     </div>
   );

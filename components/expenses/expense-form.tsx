@@ -1,18 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+import { FileText, Image, Trash2, Camera } from "lucide-react";
+import { ChildMultiSelect } from "@/components/documents/child-multi-select";
 
 const EXPENSE_CATEGORIES = [
   { value: "medical", label: "Medical" },
@@ -25,6 +20,31 @@ const EXPENSE_CATEGORIES = [
   { value: "transportation", label: "Transportation" },
   { value: "other", label: "Other" },
 ] as const;
+
+const EXPENSE_CATEGORY_VALUES = new Set(EXPENSE_CATEGORIES.map((c) => c.value));
+
+const VISIBILITY_OPTIONS = [
+  { value: "family", label: "Family" },
+  { value: "parents_only", label: "Parents only" },
+  { value: "private", label: "Just me" },
+] as const;
+
+const ACCEPT = "image/*,.pdf,application/pdf";
+const ACCEPT_LABEL = "PDF, JPG, PNG";
+
+function formatSize(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/** Map AI category to expense form category (e.g. education -> school). */
+function mapCategory(aiCategory: string | null): string {
+  if (!aiCategory) return "other";
+  const lower = aiCategory.toLowerCase();
+  if (lower === "education") return "school";
+  return EXPENSE_CATEGORY_VALUES.has(lower) ? lower : "other";
+}
 
 type Child = { id: string; first_name: string };
 
@@ -40,13 +60,94 @@ export function ExpenseForm({
   custodySplitPercent,
 }: ExpenseFormProps) {
   const router = useRouter();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("");
   const [category, setCategory] = useState<string>("other");
-  const [childId, setChildId] = useState<string>("");
+  const [selectedChildIds, setSelectedChildIds] = useState<string[]>([]);
+  const [visibility, setVisibility] = useState<string>("parents_only");
   const [receiptFile, setReceiptFile] = useState<File | null>(null);
+  const [dragActive, setDragActive] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [classifyLoading, setClassifyLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [fileError, setFileError] = useState<string | null>(null);
+  const [descriptionTouched, setDescriptionTouched] = useState(false);
+  const [amountTouched, setAmountTouched] = useState(false);
+  const [categoryTouched, setCategoryTouched] = useState(false);
+  const [childTouched, setChildTouched] = useState(false);
+  const [fieldsSuggested, setFieldsSuggested] = useState(false);
+
+  function handleDrag(e: React.DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragActive(e.type === "dragenter" || e.type === "dragover");
+  }
+
+  function handleDrop(e: React.DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragActive(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) handleFileSelect(file);
+  }
+
+  async function handleFileSelect(file: File | null) {
+    setFileError(null);
+    if (!file) {
+      setReceiptFile(null);
+      setFieldsSuggested(false);
+      return;
+    }
+    const allowed = ["image/jpeg", "image/png", "image/gif", "image/webp", "application/pdf"];
+    if (!allowed.some((t) => file.type === t || file.type.startsWith("image/"))) {
+      setFileError(`Accepted: ${ACCEPT_LABEL}.`);
+      return;
+    }
+    setReceiptFile(file);
+    setClassifyLoading(true);
+    setError(null);
+    try {
+      const formData = new FormData();
+      formData.set("file", file);
+      const res = await fetch("/api/inbox/classify", { method: "POST", body: formData });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Classification failed");
+      const payload = data as {
+        type?: string;
+        title?: string;
+        description?: string;
+        category?: string;
+        child_names?: string[];
+        amount?: number | null;
+      };
+      const isExpense = payload.type === "expense";
+      if (isExpense || payload.title || payload.description || payload.amount != null || payload.category || (payload.child_names?.length)) {
+        if (!descriptionTouched && (payload.title || payload.description)) {
+          const desc = [payload.title, payload.description].filter(Boolean).join(" — ").trim();
+          if (desc) setDescription(desc);
+        }
+        if (!amountTouched && payload.amount != null && Number.isFinite(payload.amount)) {
+          setAmount(String(payload.amount));
+        }
+        if (!categoryTouched && payload.category) {
+          setCategory(mapCategory(payload.category));
+        }
+        if (!childTouched && payload.child_names?.length && children.length > 0) {
+          const ids = payload.child_names
+            .map((name) => children.find((c) => c.first_name.toLowerCase() === String(name).toLowerCase())?.id)
+            .filter(Boolean) as string[];
+          if (ids.length) setSelectedChildIds(ids);
+        }
+        setFieldsSuggested(true);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not analyze file");
+    } finally {
+      setClassifyLoading(false);
+    }
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -72,6 +173,7 @@ export function ExpenseForm({
         if (!uploadRes.ok) throw new Error(uploadData.message || "Receipt upload failed");
         receiptFileId = uploadData.document_id;
       }
+      const childId = selectedChildIds.length > 0 ? selectedChildIds[0] : undefined;
       const res = await fetch("/api/expenses/submit", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -89,8 +191,15 @@ export function ExpenseForm({
       setDescription("");
       setAmount("");
       setCategory("other");
-      setChildId("");
+      setSelectedChildIds([]);
+      setVisibility("parents_only");
       setReceiptFile(null);
+      setFieldsSuggested(false);
+      setDescriptionTouched(false);
+      setAmountTouched(false);
+      setCategoryTouched(false);
+      setChildTouched(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
@@ -99,56 +208,184 @@ export function ExpenseForm({
     }
   }
 
-  const otherShare = amount && !isNaN(parseFloat(amount))
-    ? (parseFloat(amount) * (custodySplitPercent / 100)).toFixed(2)
-    : "—";
+  const otherShare =
+    amount && !isNaN(parseFloat(amount))
+      ? (parseFloat(amount) * (custodySplitPercent / 100)).toFixed(2)
+      : "—";
 
   return (
-    <Card className="shadow-card">
-      <CardHeader>
-        <CardTitle className="font-heading text-lg">Add expense</CardTitle>
-        <CardDescription>
-          Split is based on your case custody agreement ({custodySplitPercent}% other parent’s share).
-        </CardDescription>
+    <Card className="shadow-card border-border rounded-card">
+      <CardHeader className="pb-2 px-4 pt-4">
+        <CardTitle className="font-heading text-lg text-foreground">Add expense</CardTitle>
+        <p className="text-[11px] text-foreground-secondary mt-0.5">
+          Split based on case custody ({custodySplitPercent}% other parent’s share).
+        </p>
       </CardHeader>
-      <CardContent>
+      <CardContent className="px-4 pb-4 space-y-4">
         <form onSubmit={handleSubmit} className="space-y-4">
           {error && (
-            <p className="text-sm text-alert" role="alert">
+            <p className="text-xs text-alert" role="alert">
               {error}
             </p>
           )}
           <div className="space-y-2">
-            <Label htmlFor="description">Description</Label>
-            <Input
-              id="description"
+            <Label className="text-xs font-medium">Receipt / File</Label>
+            {!receiptFile ? (
+              <>
+                <div
+                  onDragEnter={handleDrag}
+                  onDragLeave={handleDrag}
+                  onDragOver={handleDrag}
+                  onDrop={handleDrop}
+                  className={cn(
+                    "rounded-card border border-dashed transition-colors flex flex-col items-center justify-center min-h-[80px] py-6 px-4 text-center",
+                    dragActive ? "border-primary bg-primary/5" : "border-border bg-background-secondary/30"
+                  )}
+                >
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept={ACCEPT}
+                    className="hidden"
+                    onChange={(e) => {
+                      handleFileSelect(e.target.files?.[0] ?? null);
+                      e.target.value = "";
+                    }}
+                  />
+                  <input
+                    ref={cameraInputRef}
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    className="hidden"
+                    onChange={(e) => {
+                      handleFileSelect(e.target.files?.[0] ?? null);
+                      e.target.value = "";
+                    }}
+                  />
+                  <p className="text-sm text-foreground-secondary">Drop file or click to browse</p>
+                  <p className="text-[11px] text-foreground-secondary mt-1">{ACCEPT_LABEL}</p>
+                  <div className="mt-2 flex items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-xs rounded-full"
+                      onClick={() => fileInputRef.current?.click()}
+                    >
+                      Choose file
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-xs rounded-full gap-1.5"
+                      onClick={() => cameraInputRef.current?.click()}
+                      disabled={classifyLoading}
+                    >
+                      <Camera className="h-3.5 w-3.5" aria-hidden />
+                      {classifyLoading ? "Analyzing…" : "Take photo"}
+                    </Button>
+                  </div>
+                </div>
+                {fileError && <p className="text-xs text-alert">{fileError}</p>}
+              </>
+            ) : (
+              <div className="rounded-card border border-border bg-background p-2 flex items-center gap-2">
+                {receiptFile.type.startsWith("image/") ? (
+                  <Image className="h-8 w-8 text-foreground-secondary shrink-0" aria-hidden />
+                ) : (
+                  <FileText className="h-8 w-8 text-foreground-secondary shrink-0" aria-hidden />
+                )}
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs text-foreground truncate" title={receiptFile.name}>
+                    {receiptFile.name}
+                  </p>
+                  <p className="text-[11px] text-foreground-secondary">
+                    {formatSize(receiptFile.size)} · {receiptFile.type.split("/")[1] || "file"}
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 text-xs shrink-0"
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  Replace
+                </Button>
+                <button
+                  type="button"
+                  onClick={() => handleFileSelect(null)}
+                  className="p-1.5 rounded hover:bg-muted text-foreground-secondary"
+                  aria-label="Remove file"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              </div>
+            )}
+          </div>
+          {fieldsSuggested && (
+            <p className="text-xs text-muted-foreground">Fields auto-filled based on your file. Review before saving.</p>
+          )}
+          <div className="space-y-2">
+            <Label htmlFor="exp-description" className="text-xs font-medium">
+              Description
+            </Label>
+            <input
+              id="exp-description"
+              type="text"
               value={description}
-              onChange={(e) => setDescription(e.target.value)}
+              onChange={(e) => {
+                setDescriptionTouched(true);
+                setFieldsSuggested(false);
+                setDescription(e.target.value);
+              }}
               placeholder="e.g. Pediatrician visit"
               required
-            />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="amount">Amount ($)</Label>
-            <Input
-              id="amount"
-              type="number"
-              min="0"
-              step="0.01"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              placeholder="0.00"
-              required
-            />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="category">Category</Label>
-            <select
-              id="category"
-              value={category}
-              onChange={(e) => setCategory(e.target.value)}
               className={cn(
-                "flex h-10 w-full rounded-card border border-input bg-background px-3 py-2 text-sm ring-offset-background",
+                "flex h-8 w-full rounded-card border border-input bg-background px-3 py-1 text-xs",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+              )}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="exp-amount" className="text-xs font-medium">
+              Amount
+            </Label>
+            <div className="flex h-8 w-full rounded-card border border-input bg-background overflow-hidden focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2">
+              <span className="flex items-center pl-3 text-xs text-foreground-secondary">$</span>
+              <input
+                id="exp-amount"
+                type="number"
+                min="0"
+                step="0.01"
+                value={amount}
+                onChange={(e) => {
+                  setAmountTouched(true);
+                  setFieldsSuggested(false);
+                  setAmount(e.target.value);
+                }}
+                placeholder="0.00"
+                required
+                className="flex-1 min-w-0 h-full px-2 py-1 text-xs bg-transparent border-0 focus:outline-none"
+              />
+            </div>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="exp-category" className="text-xs font-medium">
+              Category
+            </Label>
+            <select
+              id="exp-category"
+              value={category}
+              onChange={(e) => {
+                setCategoryTouched(true);
+                setFieldsSuggested(false);
+                setCategory(e.target.value);
+              }}
+              className={cn(
+                "flex h-8 w-full rounded-card border border-input bg-background px-2 py-1 text-xs",
                 "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
               )}
             >
@@ -161,40 +398,48 @@ export function ExpenseForm({
           </div>
           {children.length > 0 && (
             <div className="space-y-2">
-              <Label htmlFor="child">Child (optional)</Label>
-              <select
-                id="child"
-                value={childId}
-                onChange={(e) => setChildId(e.target.value)}
-                className={cn(
-                  "flex h-10 w-full rounded-card border border-input bg-background px-3 py-2 text-sm ring-offset-background",
-                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-                )}
-              >
-                <option value="">None</option>
-                {children.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.first_name}
-                  </option>
-                ))}
-              </select>
+              <Label className="text-xs font-medium">Child</Label>
+              <ChildMultiSelect
+                children={children}
+                value={selectedChildIds}
+                onChange={(ids) => {
+                  setChildTouched(true);
+                  setFieldsSuggested(false);
+                  setSelectedChildIds(ids);
+                }}
+              />
             </div>
           )}
           <div className="space-y-2">
-            <Label htmlFor="receipt">Receipt (optional)</Label>
-            <Input
-              id="receipt"
-              type="file"
-              accept="image/*,.pdf"
-              onChange={(e) => setReceiptFile(e.target.files?.[0] ?? null)}
-            />
+            <Label htmlFor="exp-visibility" className="text-xs font-medium">
+              Who can see this?
+            </Label>
+            <select
+              id="exp-visibility"
+              value={visibility}
+              onChange={(e) => setVisibility(e.target.value)}
+              className={cn(
+                "flex h-8 w-full rounded-card border border-input bg-background px-2 py-1 text-xs",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+              )}
+            >
+              {VISIBILITY_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
           </div>
           {amount && !isNaN(parseFloat(amount)) && (
-            <p className="text-sm text-foreground-secondary">
+            <p className="text-xs text-foreground-secondary">
               Other parent’s share ({custodySplitPercent}%): ${otherShare}
             </p>
           )}
-          <Button type="submit" disabled={loading} className="rounded-full">
+          <Button
+            type="submit"
+            disabled={loading}
+            className="rounded-full h-8 text-xs bg-[#7B9E87] hover:bg-[#6A8A78] text-white"
+          >
             {loading ? "Submitting…" : "Submit expense"}
           </Button>
         </form>

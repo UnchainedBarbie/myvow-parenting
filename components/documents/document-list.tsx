@@ -623,7 +623,11 @@ export function DocumentList({ documents, children = [] }: DocumentListProps) {
                       <span>Visibility</span>
                       <ColumnFilterPopover
                         title="Visibility"
-                        options={visibilities.map((v) => ({ value: v, label: VISIBILITY_LABELS[v] ?? v }))}
+                        options={[
+                          { value: "family", label: "Family" },
+                          { value: "parents_only", label: "Parents only" },
+                          { value: "private", label: "Just me" },
+                        ]}
                         selected={filterVisibilities}
                         onApply={setFilterVisibilities}
                         onClear={() => setFilterVisibilities([])}

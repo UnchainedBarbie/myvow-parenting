@@ -110,9 +110,9 @@ export function ExpenseList({
     exp.submitted_by !== currentUserId && exp.status === "submitted";
 
   return (
-    <Card className="shadow-card">
+    <Card className="shadow-card border-border rounded-card">
       <CardHeader>
-        <CardTitle className="font-heading text-lg">Expenses by month</CardTitle>
+        <CardTitle className="font-heading text-lg">All expenses</CardTitle>
       </CardHeader>
       <CardContent>
         {expenses.length === 0 ? (

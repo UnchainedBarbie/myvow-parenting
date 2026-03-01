@@ -1,12 +1,69 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+import { FileText, Image, Trash2, Camera } from "lucide-react";
+
+const MAX_FILE_BYTES = 25 * 1024 * 1024; // 25MB
+const ACCEPT = "image/*,.pdf,application/pdf,.doc,.docx";
+const ACCEPT_LABEL = "PDF, JPG, PNG, DOCX, max 25MB";
+const TITLE_MAX = 120;
+const DESCRIPTION_MAX = 250;
+
+function formatSize(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function fileNameWithoutExt(name: string) {
+  const last = name.lastIndexOf(".");
+  return last > 0 ? name.slice(0, last) : name;
+}
+
+function toTitleCase(s: string) {
+  return s
+    .split(/\s+/)
+    .map((w) => (w.length === 0 ? w : w[0].toUpperCase() + w.slice(1).toLowerCase()))
+    .join(" ")
+    .trim();
+}
+
+/** Suggest event type from filename keywords (event types: medical, school, extracurricular, custody_exchange, therapy, other). */
+function suggestEventTypeFromFileName(fileName: string): string {
+  const lower = fileName.toLowerCase();
+  const keywordMap: Array<{ keys: string[]; value: string }> = [
+    { keys: ["medical", "doctor", "rx", "health", "pediatric"], value: "medical" },
+    { keys: ["school", "report", "grade", "teacher", "parent-teacher"], value: "school" },
+    { keys: ["therapy", "counsel", "counseling"], value: "therapy" },
+    { keys: ["custody", "exchange", "handoff", "pickup", "dropoff"], value: "custody_exchange" },
+    { keys: ["soccer", "dance", "sport", "extracurricular", "practice"], value: "extracurricular" },
+  ];
+  for (const { keys, value } of keywordMap) {
+    if (keys.some((k) => lower.includes(k))) return value;
+  }
+  return "other";
+}
+
+function getEventSuggestionsFromFile(f: File) {
+  const baseName = fileNameWithoutExt(f.name);
+  const cleanTitle = toTitleCase(
+    baseName.replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim()
+  ).slice(0, TITLE_MAX);
+  const suggestedTitle = cleanTitle || "Untitled event";
+  const suggestedEventType = suggestEventTypeFromFileName(f.name);
+  const today = new Date().toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+  const suggestedDescription = `Uploaded ${f.name} on ${today}`.slice(0, DESCRIPTION_MAX);
+  return { suggestedTitle, suggestedEventType, suggestedDescription };
+}
 
 const EVENT_TYPES = [
   { value: "medical", label: "Medical" },
@@ -56,7 +113,17 @@ export function AddEventForm({
   const [visibilityTouched, setVisibilityTouched] = useState(false);
   const [sourceMessageId, setSourceMessageId] = useState<string | null>(null);
   const [photoUploading, setPhotoUploading] = useState(false);
-  const photoInputRef = useRef<HTMLInputElement>(null);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [fileError, setFileError] = useState<string | null>(null);
+  const [dragActive, setDragActive] = useState(false);
+  const [titleTouched, setTitleTouched] = useState(false);
+  const [categoryTouched, setCategoryTouched] = useState(false);
+  const [descriptionTouched, setDescriptionTouched] = useState(false);
+  const [titleSuggested, setTitleSuggested] = useState(false);
+  const [categorySuggested, setCategorySuggested] = useState(false);
+  const [descriptionSuggested, setDescriptionSuggested] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
 
   function timeToHHmm(s: string | null): string {
     if (!s || !s.trim()) return "09:00";
@@ -73,36 +140,86 @@ export function AddEventForm({
     return "09:00";
   }
 
-  async function handlePhotoUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    e.target.value = "";
-    if (!file || !file.type.startsWith("image/")) return;
-    setPhotoUploading(true);
-    setError(null);
-    try {
-      const form = new FormData();
-      form.set("file", file);
-      form.set("case_id", caseId);
-      const res = await fetch("/api/calendar/inbox/photo", { method: "POST", body: form });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Upload failed");
-      const d = data.draft ?? {};
-      if (d.title) setTitle(d.title);
-      if (d.date) setDate(d.date.slice(0, 10));
-      if (d.start_time) setStartTime(timeToHHmm(d.start_time));
-      if (d.end_time) setEndTime(timeToHHmm(d.end_time));
-      setDescription(d.notes ?? (d.title ? "From photo" : ""));
-      if (d.category && EVENT_TYPES.some((t) => t.value === d.category)) setEventType(d.category);
-      if (d.child_name && children.length) {
-        const child = children.find((c) => c.first_name.toLowerCase() === String(d.child_name).toLowerCase());
-        if (child) setChildId(child.id);
-      }
-      setSourceMessageId(data.message_id ?? null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Upload failed");
-    } finally {
-      setPhotoUploading(false);
+  function validateFile(f: File): string | null {
+    const allowed = ["image/jpeg", "image/png", "image/gif", "image/webp", "application/pdf", "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"];
+    if (!allowed.some((t) => f.type === t || f.type.startsWith("image/"))) return `Accepted: ${ACCEPT_LABEL}.`;
+    if (f.size > MAX_FILE_BYTES) return `Max size 25MB. This file is ${formatSize(f.size)}.`;
+    return null;
+  }
+
+  const applySuggestions = useCallback((f: File) => {
+    const { suggestedTitle, suggestedEventType, suggestedDescription } = getEventSuggestionsFromFile(f);
+    if (!titleTouched) {
+      setTitle(suggestedTitle);
+      setTitleSuggested(true);
     }
+    if (!categoryTouched) {
+      setEventType(suggestedEventType);
+      setCategorySuggested(true);
+    }
+    if (!descriptionTouched) {
+      setDescription(suggestedDescription);
+      setDescriptionSuggested(true);
+    }
+  }, [titleTouched, categoryTouched, descriptionTouched]);
+
+  function handleFileSelect(f: File | null) {
+    setFileError(null);
+    if (!f) {
+      setSelectedFile(null);
+      return;
+    }
+    const err = validateFile(f);
+    if (err) {
+      setFileError(err);
+      setSelectedFile(null);
+      return;
+    }
+    setSelectedFile(f);
+    applySuggestions(f);
+    if (f.type.startsWith("image/")) {
+      setPhotoUploading(true);
+      setError(null);
+      const form = new FormData();
+      form.set("file", f);
+      form.set("case_id", caseId);
+      fetch("/api/calendar/inbox/photo", { method: "POST", body: form })
+        .then(async (res) => {
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error ?? "Upload failed");
+          return data;
+        })
+        .then((data) => {
+          const d = data.draft ?? {};
+          if (d.title && !titleTouched) setTitle(d.title);
+          if (d.date) setDate(d.date.slice(0, 10));
+          if (d.start_time) setStartTime(timeToHHmm(d.start_time));
+          if (d.end_time) setEndTime(timeToHHmm(d.end_time));
+          if (d.notes && !descriptionTouched) setDescription(d.notes);
+          if (d.category && EVENT_TYPES.some((t) => t.value === d.category) && !categoryTouched) setEventType(d.category);
+          if (d.child_name && children.length) {
+            const child = children.find((c) => c.first_name.toLowerCase() === String(d.child_name).toLowerCase());
+            if (child) setChildId(child.id);
+          }
+          setSourceMessageId(data.message_id ?? null);
+        })
+        .catch((err) => setError(err instanceof Error ? err.message : "Upload failed"))
+        .finally(() => setPhotoUploading(false));
+    }
+  }
+
+  function handleDrag(e: React.DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragActive(e.type === "dragenter" || e.type === "dragover");
+  }
+
+  function handleDrop(e: React.DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragActive(false);
+    const f = e.dataTransfer.files?.[0];
+    if (f) handleFileSelect(f);
   }
 
   function getDefaultVisibilityForType(
@@ -162,6 +279,14 @@ export function AddEventForm({
       setDescription("");
       setKidTitle("");
       setSourceMessageId(null);
+      setSelectedFile(null);
+      setTitleTouched(false);
+      setCategoryTouched(false);
+      setDescriptionTouched(false);
+      setTitleSuggested(false);
+      setCategorySuggested(false);
+      setDescriptionSuggested(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
@@ -171,59 +296,143 @@ export function AddEventForm({
   }
 
   return (
-    <Card className="shadow-card">
-      <CardHeader className="pb-2">
-        <CardTitle className="font-heading text-sm md:text-base">Add event</CardTitle>
-        <CardDescription className="text-[11px] md:text-xs">
+    <Card className="shadow-card border-border rounded-card">
+      <CardHeader className="pb-2 px-4 pt-4">
+        <CardTitle className="font-heading text-lg text-foreground">Add event</CardTitle>
+        <p className="text-sm text-foreground-secondary mt-0.5">
           Medical, school, extracurricular, custody exchange, therapy, or other.
-        </CardDescription>
+        </p>
       </CardHeader>
-      <CardContent className="pt-2">
-        <form onSubmit={handleSubmit} className="space-y-3">
-          <input
-            ref={photoInputRef}
-            type="file"
-            accept="image/*"
-            className="hidden"
-            onChange={handlePhotoUpload}
-          />
+      <CardContent className="px-4 pb-4 pt-0 space-y-4">
+        <form onSubmit={handleSubmit} className="space-y-4">
           {error && (
             <p className="text-xs text-alert" role="alert">
               {error}
             </p>
           )}
-          <div className="flex items-center gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={photoUploading}
-              onClick={() => photoInputRef.current?.click()}
-              className="text-xs"
-            >
-              {photoUploading ? "Extracting…" : "Add event via photo"}
-            </Button>
-            {sourceMessageId && (
-              <span className="text-[11px] text-foreground-secondary">Draft from photo — edit and save</span>
+          <div className="space-y-2">
+            <Label className="text-xs font-medium">Photo / File</Label>
+            {!selectedFile ? (
+              <>
+                <div
+                  onDragEnter={handleDrag}
+                  onDragLeave={handleDrag}
+                  onDragOver={handleDrag}
+                  onDrop={handleDrop}
+                  className={cn(
+                    "rounded-card border border-dashed transition-colors flex flex-col items-center justify-center min-h-[80px] py-4 px-3 text-center",
+                    dragActive ? "border-primary bg-primary/5" : "border-border bg-background-secondary/30"
+                  )}
+                >
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept={ACCEPT}
+                    className="hidden"
+                    onChange={(e) => {
+                      handleFileSelect(e.target.files?.[0] ?? null);
+                      e.target.value = "";
+                    }}
+                  />
+                  <input
+                    ref={cameraInputRef}
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    className="hidden"
+                    onChange={(e) => {
+                      handleFileSelect(e.target.files?.[0] ?? null);
+                      e.target.value = "";
+                    }}
+                  />
+                  <p className="text-xs text-foreground-secondary">Drop file or click to browse</p>
+                  <p className="text-[11px] text-foreground-secondary mt-1">{ACCEPT_LABEL}</p>
+                  <div className="mt-2 flex items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-xs"
+                      onClick={() => fileInputRef.current?.click()}
+                    >
+                      Choose file
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-xs gap-1.5"
+                      onClick={() => cameraInputRef.current?.click()}
+                      disabled={photoUploading}
+                    >
+                      <Camera className="h-3.5 w-3.5" aria-hidden />
+                      {photoUploading ? "Extracting…" : "Take photo"}
+                    </Button>
+                  </div>
+                </div>
+                {fileError && <p className="text-xs text-alert">{fileError}</p>}
+              </>
+            ) : (
+              <div className="rounded-card border border-border bg-background p-2 flex items-center gap-2">
+                {selectedFile.type.startsWith("image/") ? (
+                  <Image className="h-8 w-8 text-foreground-secondary shrink-0" aria-hidden />
+                ) : (
+                  <FileText className="h-8 w-8 text-foreground-secondary shrink-0" aria-hidden />
+                )}
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs text-foreground truncate" title={selectedFile.name}>
+                    {selectedFile.name}
+                  </p>
+                  <p className="text-[11px] text-foreground-secondary">
+                    {formatSize(selectedFile.size)} · {selectedFile.type.split("/")[1] || "file"}
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 text-xs shrink-0"
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  Replace
+                </Button>
+                <button
+                  type="button"
+                  onClick={() => handleFileSelect(null)}
+                  className="p-1.5 rounded hover:bg-muted text-foreground-secondary"
+                  aria-label="Remove file"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              </div>
             )}
           </div>
-          <div className="space-y-1">
-            <Label htmlFor="title" className="text-xs">
+          {(titleSuggested || categorySuggested || descriptionSuggested) && (
+            <p className="text-xs text-muted-foreground">Fields auto-filled based on your file. Review before saving.</p>
+          )}
+          <div className="space-y-2">
+            <Label htmlFor="title" className="text-xs font-medium">
               Title
             </Label>
-            <Input
+            <input
               id="title"
+              type="text"
               value={title}
               onChange={(e) => {
-                const next = e.target.value;
-                setTitle(next);
+                setTitleTouched(true);
+                setTitleSuggested(false);
+                setTitle(e.target.value);
               }}
               placeholder="e.g. Pediatrician visit"
               required
+              className={cn(
+                "flex h-8 w-full rounded-card border border-input bg-background px-2 py-1 text-xs",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+              )}
             />
           </div>
-          <div className="space-y-1">
-            <Label htmlFor="event_type" className="text-xs">
+          <div className="space-y-2">
+            <Label htmlFor="event_type" className="text-xs font-medium">
               Category
             </Label>
             <select
@@ -231,6 +440,8 @@ export function AddEventForm({
               value={eventType}
               onChange={(e) => {
                 const next = e.target.value;
+                setCategoryTouched(true);
+                setCategorySuggested(false);
                 setEventType(next);
                 if (!visibilityTouched) {
                   const v = getDefaultVisibilityForType(next);
@@ -239,7 +450,7 @@ export function AddEventForm({
                 }
               }}
               className={cn(
-                "flex h-8 w-full rounded-card border border-input bg-background px-2 py-1 text-xs ring-offset-background",
+                "flex h-8 w-full rounded-card border border-input bg-background px-2 py-1 text-xs",
                 "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
               )}
             >
@@ -250,8 +461,8 @@ export function AddEventForm({
               ))}
             </select>
           </div>
-          <div className="space-y-1">
-            <Label htmlFor="child" className="text-xs">
+          <div className="space-y-2">
+            <Label htmlFor="child" className="text-xs font-medium">
               Child
             </Label>
             <select
@@ -259,7 +470,7 @@ export function AddEventForm({
               value={childId}
               onChange={(e) => setChildId(e.target.value)}
               className={cn(
-                "flex h-8 w-full rounded-card border border-input bg-background px-2 py-1 text-xs ring-offset-background",
+                "flex h-8 w-full rounded-card border border-input bg-background px-2 py-1 text-xs",
                 "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
               )}
             >
@@ -271,29 +482,30 @@ export function AddEventForm({
               ))}
             </select>
           </div>
-          <div className="space-y-1">
-            <Label htmlFor="description" className="text-xs">
+          <div className="space-y-2">
+            <Label htmlFor="description" className="text-xs font-medium">
               Description
             </Label>
             <textarea
               id="description"
               value={description}
               onChange={(e) => {
-                const next = e.target.value;
-                setDescription(next);
+                setDescriptionTouched(true);
+                setDescriptionSuggested(false);
+                setDescription(e.target.value);
               }}
               placeholder="Notes"
               required
               rows={4}
               className={cn(
-                "flex w-full rounded-card border border-input bg-background px-3 py-2 text-sm ring-offset-background",
+                "flex w-full rounded-card border border-input bg-background px-2 py-1 text-xs",
                 "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
                 "min-h-[80px] resize-y"
               )}
             />
           </div>
-          <div className="space-y-1">
-            <Label htmlFor="visibility" className="text-xs">
+          <div className="space-y-2">
+            <Label htmlFor="visibility" className="text-xs font-medium">
               Who can see this?
             </Label>
             <select
@@ -310,7 +522,7 @@ export function AddEventForm({
                 setAutoParentsOnlyHint(value === "parents_only");
               }}
               className={cn(
-                "flex h-8 w-full rounded-card border border-input bg-background px-2 py-1 text-xs ring-offset-background",
+                "flex h-8 w-full rounded-card border border-input bg-background px-2 py-1 text-xs",
                 "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
               )}
             >
@@ -325,18 +537,23 @@ export function AddEventForm({
             </p>
           </div>
           {(visibility === "family" || visibility === "family_read_only") && (
-            <div className="space-y-0.5">
+            <div className="space-y-2">
               <Label
                 htmlFor="kid_title"
-                className="text-xs text-foreground-secondary"
+                className="text-xs font-medium text-foreground-secondary"
               >
                 Kid-friendly title (optional)
               </Label>
-              <Input
+              <input
                 id="kid_title"
+                type="text"
                 value={kidTitle}
                 onChange={(e) => setKidTitle(e.target.value)}
                 placeholder="e.g. Parent appointment"
+                className={cn(
+                  "flex h-8 w-full rounded-card border border-input bg-background px-2 py-1 text-xs",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                )}
               />
               <p className="text-[11px] text-foreground-secondary">
                 Optional — a simpler title your children will see
@@ -344,47 +561,56 @@ export function AddEventForm({
             </div>
           )}
           <div className="space-y-2">
-            <div className="space-y-1">
-              <Label htmlFor="date" className="text-xs">
+            <div className="space-y-2">
+              <Label htmlFor="date" className="text-xs font-medium">
                 Date
               </Label>
-              <Input
+              <input
                 id="date"
                 type="date"
                 value={date}
                 onChange={(e) => setDate(e.target.value)}
                 required
-                className="w-full h-8 px-2 py-1 text-xs"
+                className={cn(
+                  "flex h-8 w-full rounded-card border border-input bg-background px-2 py-1 text-xs",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                )}
               />
             </div>
             <div className="grid grid-cols-2 gap-2">
-              <div className="space-y-1">
-                <Label htmlFor="start_time" className="text-xs">
+              <div className="space-y-2">
+                <Label htmlFor="start_time" className="text-xs font-medium">
                   Start time
                 </Label>
-                <Input
+                <input
                   id="start_time"
                   type="time"
                   value={startTime}
                   onChange={(e) => setStartTime(e.target.value)}
-                  className="w-full min-w-[120px] h-8 px-2 py-1 text-xs"
+                  className={cn(
+                    "flex h-8 w-full min-w-[120px] rounded-card border border-input bg-background px-2 py-1 text-xs",
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                  )}
                 />
               </div>
-              <div className="space-y-1">
-                <Label htmlFor="end_time" className="text-xs">
+              <div className="space-y-2">
+                <Label htmlFor="end_time" className="text-xs font-medium">
                   End time
                 </Label>
-                <Input
+                <input
                   id="end_time"
                   type="time"
                   value={endTime}
                   onChange={(e) => setEndTime(e.target.value)}
-                  className="w-full min-w-[120px] h-8 px-2 py-1 text-xs"
+                  className={cn(
+                    "flex h-8 w-full min-w-[120px] rounded-card border border-input bg-background px-2 py-1 text-xs",
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                  )}
                 />
               </div>
             </div>
           </div>
-          <div className="space-y-1">
+          <div className="space-y-2">
             <div className="flex items-center gap-2">
               <input
                 type="checkbox"
@@ -393,13 +619,13 @@ export function AddEventForm({
                 onChange={(e) => setIsRepeating(e.target.checked)}
                 className="rounded border-border"
               />
-              <Label htmlFor="repeating" className="font-normal text-xs">
+              <Label htmlFor="repeating" className="font-normal text-xs font-medium">
                 Repeating event
               </Label>
             </div>
             {isRepeating && (
               <>
-                <Label htmlFor="repeat" className="text-xs">
+                <Label htmlFor="repeat" className="text-xs font-medium">
                   Frequency
                 </Label>
                 <select
@@ -421,7 +647,7 @@ export function AddEventForm({
           <Button
             type="submit"
             disabled={loading}
-            className="rounded-full h-8 px-4 text-xs"
+            className="rounded-full h-8 px-4 text-xs bg-[#7B9E87] hover:bg-[#6A8A78] text-white"
           >
             {loading ? "Adding…" : "Add event"}
           </Button>

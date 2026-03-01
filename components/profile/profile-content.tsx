@@ -130,6 +130,8 @@ export function ProfileContent({
   const [detailAttachFile, setDetailAttachFile] = useState<File | null>(null);
   const [detailAttachSaving, setDetailAttachSaving] = useState(false);
   const detailAttachFileRef = useRef<HTMLInputElement>(null);
+  const [deleteCourtOrderConfirm, setDeleteCourtOrderConfirm] = useState<string | null>(null);
+  const [deletingCourtOrderId, setDeletingCourtOrderId] = useState<string | null>(null);
   const [showAddCourtOrder, setShowAddCourtOrder] = useState(false);
   const [addFormFile, setAddFormFile] = useState<File | null>(null);
   const [addFormDragActive, setAddFormDragActive] = useState(false);
@@ -353,6 +355,26 @@ export function ProfileContent({
     }
   }
 
+  async function confirmDeleteCourtOrder() {
+    const id = deleteCourtOrderConfirm;
+    if (!id) return;
+    setDeletingCourtOrderId(id);
+    try {
+      const res = await fetch(`/api/profile/court-orders/${id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        window.alert((data as { error?: string }).error ?? "Failed to delete court order");
+        return;
+      }
+      setDeleteCourtOrderConfirm(null);
+      setCourtOrderDetailOpen(false);
+      setSelectedCourtOrder(null);
+      router.refresh();
+    } finally {
+      setDeletingCourtOrderId(null);
+    }
+  }
+
   const allSectionsOpen = openYourInfo && openChildren && openCaseDetails && openCourtOrders;
 
   return (
@@ -491,6 +513,10 @@ export function ProfileContent({
                                 type="button"
                                 className="p-1 rounded text-foreground-secondary hover:text-destructive"
                                 aria-label="Delete"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setDeleteCourtOrderConfirm(order.id);
+                                }}
                               >
                                 <Trash2 className="h-3.5 w-3.5" />
                               </button>
@@ -671,10 +697,6 @@ export function ProfileContent({
           <div>
             <label className="text-xs font-medium text-foreground-secondary">Custody split</label>
             <p className="text-sm text-foreground mt-0.5">{custodySplit}% / {100 - custodySplit}%</p>
-          </div>
-          <div>
-            <label className="text-xs font-medium text-foreground-secondary">Mode</label>
-            <p className="text-sm text-foreground mt-0.5">—</p>
           </div>
         </div>
       </CollapsibleCard>
@@ -967,7 +989,15 @@ export function ProfileContent({
                   </div>
 
                   {detailEditMode && (
-                    <div className="p-4 border-t border-border flex gap-2 justify-end shrink-0">
+                    <div className="p-4 border-t border-border flex gap-2 justify-between items-center shrink-0">
+                      <button
+                        type="button"
+                        className="text-xs text-destructive hover:underline cursor-pointer bg-transparent border-none p-0"
+                        onClick={() => setDeleteCourtOrderConfirm(selectedCourtOrder?.id ?? null)}
+                      >
+                        Delete
+                      </button>
+                      <div className="flex gap-2">
                       <Button
                         type="button"
                         variant="outline"
@@ -1043,6 +1073,7 @@ export function ProfileContent({
                       >
                         {detailSaving ? "Saving…" : "Save"}
                       </Button>
+                      </div>
                     </div>
                   )}
                 </>
@@ -1343,6 +1374,38 @@ export function ProfileContent({
                 disabled={deletingChildId === deleteChildConfirm.id}
               >
                 {deletingChildId === deleteChildConfirm.id ? "Removing…" : "Remove"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {deleteCourtOrderConfirm !== null && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="delete-court-order-title"
+          onClick={(e) => e.target === e.currentTarget && setDeleteCourtOrderConfirm(null)}
+        >
+          <div className="bg-background border border-border rounded-card shadow-card max-w-sm w-full mx-4 p-4">
+            <h3 id="delete-court-order-title" className="font-heading text-base font-semibold text-foreground mb-2">
+              Delete court order?
+            </h3>
+            <p className="text-sm text-foreground-secondary mb-4">
+              Are you sure you want to delete this court order?
+            </p>
+            <div className="flex gap-2 justify-end">
+              <Button variant="outline" size="sm" className="rounded-full" onClick={() => setDeleteCourtOrderConfirm(null)}>
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                className="rounded-full bg-alert hover:bg-alert/90"
+                onClick={confirmDeleteCourtOrder}
+                disabled={deletingCourtOrderId === deleteCourtOrderConfirm}
+              >
+                {deletingCourtOrderId === deleteCourtOrderConfirm ? "Deleting…" : "Delete"}
               </Button>
             </div>
           </div>

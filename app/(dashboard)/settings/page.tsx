@@ -3,6 +3,7 @@ import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CreateCaseButton } from "@/components/create-case-button";
 import { Button } from "@/components/ui/button";
+import { AppAndBehavioralSettings } from "@/components/settings/app-and-behavioral-settings";
 
 export default async function SettingsPage() {
   const supabase = await createClient();
@@ -32,9 +33,10 @@ export default async function SettingsPage() {
         Settings
       </h1>
       <p className="text-foreground-secondary mb-8">
-        Account, case, messaging window, and subscription.
+        Account, case, app mode, and subscription.
       </p>
       <div className="space-y-6">
+        <AppAndBehavioralSettings />
         <Card className="shadow-card">
           <CardHeader>
             <CardTitle className="font-heading text-lg">Profile</CardTitle>

@@ -50,6 +50,7 @@ export default async function DocumentsPage() {
     .from("documents")
     .select("id, title, file_name, file_size_bytes, mime_type, category, child_id, description, created_at, visibility")
     .eq("case_id", caseId)
+    .is("deleted_at", null)
     .order("created_at", { ascending: false });
 
   const docIds = (docsRaw ?? []).map((d) => d.id);

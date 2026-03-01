@@ -22,13 +22,15 @@ export default async function ExpensesPage() {
 
   if (!caseId) {
     return (
-      <div className="p-6 md:p-8">
-        <h1 className="font-heading text-2xl font-semibold text-foreground mb-2">
-          Expenses
-        </h1>
-        <p className="text-foreground-secondary mb-8">
-          Submit expenses with receipt upload, auto-split, and approve or dispute.
-        </p>
+      <div className="px-3 pt-3 pb-1 md:px-4 md:pt-4 md:pb-2">
+        <div className="mb-4">
+          <h1 className="font-heading text-xl md:text-2xl font-semibold text-foreground mb-1">
+            Expenses
+          </h1>
+          <p className="text-xs md:text-sm text-foreground-secondary leading-snug">
+            Submit expenses with receipt upload, auto-split, and approve or dispute.
+          </p>
+        </div>
         <div className="rounded-card border border-border bg-background-secondary p-8 text-center">
           <p className="text-foreground-secondary">
             Create or join a case in Settings to track expenses.
@@ -55,9 +57,10 @@ export default async function ExpensesPage() {
   const { data: expensesRaw } = await admin
     .from("expenses")
     .select(
-      "id, description, amount, category, child_id, amount_owed, status, created_at, submitted_by, receipt_file_id"
+      "id, description, amount, category, child_id, amount_owed, status, created_at, submitted_by, receipt_file_id, deleted_at"
     )
     .eq("case_id", caseId)
+    .is("deleted_at", null)
     .order("created_at", { ascending: false });
 
   const childIds = [...new Set((expensesRaw ?? []).map((e) => e.child_id).filter(Boolean))] as string[];
@@ -91,15 +94,17 @@ export default async function ExpensesPage() {
   }));
 
   return (
-    <div className="p-6 md:p-8">
-      <h1 className="font-heading text-2xl font-semibold text-foreground mb-2">
-        Expenses
-      </h1>
-      <p className="text-foreground-secondary mb-8">
-        Submit expenses with receipt upload. Split is based on your case custody
-        agreement. Approve or dispute expenses from the other parent.
-      </p>
-      <div className="space-y-8">
+    <div className="px-3 pt-3 pb-1 md:px-4 md:pt-4 md:pb-2">
+      <div className="mb-4">
+        <h1 className="font-heading text-xl md:text-2xl font-semibold text-foreground mb-1">
+          Expenses
+        </h1>
+        <p className="text-xs md:text-sm text-foreground-secondary leading-snug">
+          Submit expenses with receipt upload. Split is based on your case custody
+          agreement. Approve or dispute expenses from the other parent.
+        </p>
+      </div>
+      <div className="grid gap-4 lg:grid-cols-[minmax(260px,28%)_minmax(0,1fr)] items-start">
         <ExpenseForm
           caseId={caseId}
           children={children ?? []}
@@ -109,6 +114,7 @@ export default async function ExpensesPage() {
           expenses={expenses}
           currentUserId={user.id}
           custodySplitPercent={custodySplitPercent}
+          children={children ?? []}
         />
       </div>
     </div>

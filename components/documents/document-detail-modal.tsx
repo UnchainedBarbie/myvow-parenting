@@ -324,10 +324,10 @@ export function DocumentDetailModal({
             <button
               type="button"
               onClick={onClose}
-              className="rounded-full p-1 text-gray-600 hover:text-gray-800 hover:bg-gray-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="w-9 h-9 flex items-center justify-center rounded-full p-2 bg-gray-100 text-gray-600 hover:bg-gray-200 hover:text-gray-900 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               aria-label="Close"
             >
-              <span className="inline-flex h-5 w-5 items-center justify-center text-[20px] leading-none">×</span>
+              <span className="inline-flex h-6 w-6 items-center justify-center text-2xl leading-none">×</span>
             </button>
           </div>
         </div>

@@ -10,6 +10,7 @@ import {
   FileText,
   Calendar,
   FileBarChart,
+  User,
   Settings,
   LogOut,
 } from "lucide-react";
@@ -19,12 +20,13 @@ import { createClient } from "@/lib/supabase/client";
 import { Separator } from "@/components/ui/separator";
 
 const navItems = [
-  { href: "/dashboard", label: "Overview", icon: LayoutDashboard },
+  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/messages", label: "Messages", icon: MessageSquare },
   { href: "/expenses", label: "Expenses", icon: Receipt },
   { href: "/documents", label: "Documents", icon: FileText },
   { href: "/calendar", label: "Calendar", icon: Calendar },
   { href: "/reports", label: "Reports", icon: FileBarChart },
+  { href: "/profile", label: "Profile", icon: User },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 

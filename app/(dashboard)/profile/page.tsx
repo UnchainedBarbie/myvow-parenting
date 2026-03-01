@@ -36,6 +36,7 @@ export default async function ProfilePage() {
       .eq("case_id", caseId)
       .is("deleted_at", null)
       .order("first_name");
+    console.log("PROFILE CHILDREN QUERY:", { data: childrenResult.data, error: childrenResult.error });
     children = (childrenResult.data ?? []).map((c) => ({
       id: (c as { id: string }).id,
       first_name: (c as { first_name: string }).first_name,
@@ -63,6 +64,8 @@ export default async function ProfilePage() {
 
   const custodySplit = caseRow?.custody_split_percent != null ? Number(caseRow.custody_split_percent) : 50;
 
+  console.log("PASSING CHILDREN TO PROFILE:", children);
+
   if (!caseId) {
     return (
       <div className="px-3 pt-3 pb-1 md:px-4 md:pt-4 md:pb-2">
@@ -86,12 +89,10 @@ export default async function ProfilePage() {
       <h1 className="font-heading text-xl md:text-2xl font-semibold text-foreground mb-1">
         Profile
       </h1>
-      <p className="text-xs md:text-sm text-foreground-secondary mb-4">
-        Your family, case details, and parenting plan.
-      </p>
       <ProfileContent
         profile={profile}
         userEmail={user.email ?? null}
+        userId={user.id}
         children={children}
         custodySplit={custodySplit}
         courtOrders={courtOrders}

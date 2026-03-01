@@ -10,8 +10,6 @@ import {
   FileText,
   Calendar,
   FileBarChart,
-  User,
-  Settings,
   LogOut,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -26,8 +24,6 @@ const navItems = [
   { href: "/documents", label: "Documents", icon: FileText },
   { href: "/calendar", label: "Calendar", icon: Calendar },
   { href: "/reports", label: "Reports", icon: FileBarChart },
-  { href: "/profile", label: "Profile", icon: User },
-  { href: "/settings", label: "Settings", icon: Settings },
 ];
 
 export function DashboardSidebar() {

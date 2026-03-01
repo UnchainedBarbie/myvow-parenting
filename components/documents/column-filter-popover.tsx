@@ -27,6 +27,8 @@ interface ColumnFilterPopoverProps {
   noneLabel?: string;
   /** Optional: label for the "select all" option (default: All) */
   allLabel?: string;
+  /** Optional: Tailwind dot class (e.g. bg-red-400) per option value for a colored dot before the label */
+  getOptionDotClass?: (value: string) => string | undefined;
 }
 
 export function ColumnFilterPopover({
@@ -42,6 +44,7 @@ export function ColumnFilterPopover({
   noneValue,
   noneLabel,
   allLabel = "All",
+  getOptionDotClass,
 }: ColumnFilterPopoverProps) {
   const [local, setLocal] = useState<string[]>(selected);
 
@@ -127,20 +130,30 @@ export function ColumnFilterPopover({
                 {noneLabel}
               </label>
             )}
-            {options.map((opt) => (
-              <label
-                key={opt.value}
-                className="flex items-center gap-2 cursor-pointer text-xs"
-              >
-                <input
-                  type="checkbox"
-                  checked={local.includes(opt.value)}
-                  onChange={() => toggle(opt.value)}
-                  className="rounded border-border"
-                />
-                {opt.label}
-              </label>
-            ))}
+            {options.map((opt) => {
+              const dotClass = getOptionDotClass?.(opt.value);
+              return (
+                <label
+                  key={opt.value}
+                  className="flex items-center gap-2 cursor-pointer text-xs"
+                >
+                  <input
+                    type="checkbox"
+                    checked={local.includes(opt.value)}
+                    onChange={() => toggle(opt.value)}
+                    className="rounded border-border"
+                  />
+                  {dotClass != null ? (
+                    <>
+                      <span className={cn("h-2.5 w-2.5 shrink-0 rounded-full", dotClass)} aria-hidden />
+                      {opt.label}
+                    </>
+                  ) : (
+                    opt.label
+                  )}
+                </label>
+              );
+            })}
           </div>
           <div className="flex justify-end gap-2">
             <Button

@@ -6,7 +6,12 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
-import { FileText, Image, Trash2, Shield, Clock, FileCheck, Camera } from "lucide-react";
+import { FileText, Image, Trash2, Shield, Clock, FileCheck, Camera, ChevronDown } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 const DOCUMENT_CATEGORIES = [
   { value: "court_order", label: "Court Order" },
@@ -109,7 +114,7 @@ export function DocumentUploadForm({ caseId, children, logEntries = [] }: Docume
   const [fileError, setFileError] = useState<string | null>(null);
   const [title, setTitle] = useState("");
   const [category, setCategory] = useState<string>("other");
-  const [childId, setChildId] = useState<string>("");
+  const [selectedChildIds, setSelectedChildIds] = useState<string[]>([]);
   const [description, setDescription] = useState("");
   const [visibility, setVisibility] = useState<string>("parents_only");
   const [notifyOtherParent, setNotifyOtherParent] = useState(false);
@@ -203,7 +208,7 @@ export function DocumentUploadForm({ caseId, children, logEntries = [] }: Docume
       formData.set("case_id", caseId);
       formData.set("title", title.trim());
       formData.set("category", category);
-      if (childId && childId !== "__none__") formData.set("child_id", childId);
+      if (selectedChildIds.length === 1) formData.set("child_id", selectedChildIds[0]);
       formData.set("description", description.trim());
       formData.set("visibility", visibility);
       if (notifyOtherParent) formData.set("notify_other_parent", "1");
@@ -214,7 +219,7 @@ export function DocumentUploadForm({ caseId, children, logEntries = [] }: Docume
       setSuccess(true);
       setFile(null);
       setTitle("");
-      setChildId("");
+      setSelectedChildIds([]);
       setDescription("");
       setRelatedCommId("");
       setNotifyOtherParent(false);
@@ -327,11 +332,11 @@ export function DocumentUploadForm({ caseId, children, logEntries = [] }: Docume
           </div>
 
           <div className="space-y-2">
+            {(titleSuggested || categorySuggested || descriptionSuggested) && (
+              <p className="text-xs text-muted-foreground">Fields auto-filled based on your file. Review before saving.</p>
+            )}
             <div className="flex items-center gap-2">
               <Label htmlFor="document-title" className="text-xs font-medium">Document title</Label>
-              {titleSuggested && (
-                <span className="text-[11px] text-foreground-secondary italic">Auto-suggested</span>
-              )}
             </div>
             <input
               id="document-title"
@@ -342,7 +347,7 @@ export function DocumentUploadForm({ caseId, children, logEntries = [] }: Docume
                 setTitleSuggested(false);
                 setTitle(e.target.value.slice(0, TITLE_MAX));
               }}
-              placeholder="Human-readable name for this document"
+              placeholder="Name this document"
               required
               maxLength={TITLE_MAX}
               aria-required="true"
@@ -351,6 +356,7 @@ export function DocumentUploadForm({ caseId, children, logEntries = [] }: Docume
                 "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
               )}
             />
+            <p className="text-xs text-muted-foreground">Short, clear name for this document</p>
             <p className="text-[11px] text-foreground-secondary tabular-nums">
               {title.length} / {TITLE_MAX}
             </p>
@@ -359,9 +365,6 @@ export function DocumentUploadForm({ caseId, children, logEntries = [] }: Docume
           <div className="space-y-2">
             <div className="flex items-center gap-2">
               <Label htmlFor="description" className="text-xs font-medium">Description</Label>
-              {descriptionSuggested && (
-                <span className="text-[11px] text-foreground-secondary italic">Auto-suggested</span>
-              )}
             </div>
             <textarea
               id="description"
@@ -371,7 +374,7 @@ export function DocumentUploadForm({ caseId, children, logEntries = [] }: Docume
                 setDescriptionSuggested(false);
                 setDescription(e.target.value.slice(0, DESCRIPTION_MAX));
               }}
-              placeholder="Example: Photo of lunch contents sent with Avery on 2/26/26"
+              placeholder="Brief description"
               required
               maxLength={DESCRIPTION_MAX}
               rows={3}
@@ -390,9 +393,6 @@ export function DocumentUploadForm({ caseId, children, logEntries = [] }: Docume
           <div className="space-y-2">
             <div className="flex items-center gap-2">
               <Label htmlFor="category" className="text-xs font-medium">Category</Label>
-              {categorySuggested && (
-                <span className="text-[11px] text-foreground-secondary italic">Auto-suggested</span>
-              )}
             </div>
             <select
               id="category"
@@ -415,22 +415,65 @@ export function DocumentUploadForm({ caseId, children, logEntries = [] }: Docume
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="child" className="text-xs font-medium">Child</Label>
-            <select
-              id="child"
-              value={childId}
-              onChange={(e) => setChildId(e.target.value)}
-              className={cn(
-                "flex h-8 w-full rounded-card border border-input bg-background px-2 py-1 text-xs",
-                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-              )}
-            >
-              <option value="">All children</option>
-              <option value="__none__">No child</option>
-              {children.map((c) => (
-                <option key={c.id} value={c.id}>{c.first_name}</option>
-              ))}
-            </select>
+            <Label className="text-xs font-medium">Child</Label>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  className={cn(
+                    "flex h-8 w-full items-center justify-between rounded-card border border-input bg-background px-3 py-1 text-xs text-left",
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                  )}
+                >
+                  <span className="truncate">
+                    {selectedChildIds.length === 0
+                      ? "No child"
+                      : selectedChildIds.length === children.length
+                        ? "All children"
+                        : children
+                            .filter((c) => selectedChildIds.includes(c.id))
+                            .map((c) => c.first_name)
+                            .join(", ")}
+                  </span>
+                  <ChevronDown className="h-3.5 w-3.5 shrink-0 text-foreground-secondary" aria-hidden />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="w-56 p-2" sideOffset={4}>
+                <label className="flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-xs hover:bg-muted">
+                  <input
+                    type="checkbox"
+                    checked={children.length > 0 && selectedChildIds.length === children.length}
+                    onChange={() => {
+                      if (selectedChildIds.length === children.length) {
+                        setSelectedChildIds([]);
+                      } else {
+                        setSelectedChildIds(children.map((c) => c.id));
+                      }
+                    }}
+                    className="rounded border-border"
+                  />
+                  All children
+                </label>
+                {children.map((c) => (
+                  <label
+                    key={c.id}
+                    className="flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-xs hover:bg-muted"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedChildIds.includes(c.id)}
+                      onChange={() => {
+                        setSelectedChildIds((prev) =>
+                          prev.includes(c.id) ? prev.filter((id) => id !== c.id) : [...prev, c.id]
+                        );
+                      }}
+                      className="rounded border-border"
+                    />
+                    {c.first_name}
+                  </label>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
 
           <div className="space-y-2">
@@ -497,7 +540,7 @@ export function DocumentUploadForm({ caseId, children, logEntries = [] }: Docume
             <div className="flex flex-col gap-0.5">
               <span className="flex items-center gap-1.5"><Clock className="h-3 w-3 shrink-0" aria-hidden /> Time-stamped on upload</span>
               <span className="flex items-center gap-1.5"><Shield className="h-3 w-3 shrink-0" aria-hidden /> Access history logged</span>
-              <span className="flex items-center gap-1.5"><FileCheck className="h-3 w-3 shrink-0" aria-hidden /> Exportable for court</span>
+              <span className="flex items-center gap-1.5"><FileCheck className="h-3 w-3 shrink-0" aria-hidden /> Exportable</span>
             </div>
           </div>
         </form>

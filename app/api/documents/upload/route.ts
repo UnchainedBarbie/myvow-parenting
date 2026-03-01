@@ -20,7 +20,8 @@ export async function POST(request: NextRequest) {
     const case_id = formData.get("case_id") as string | null;
     const title = formData.get("title") as string | null;
     const category = formData.get("category") as string | null;
-    const child_id = formData.get("child_id") as string | null;
+    const childIdsRaw = formData.getAll("child_ids");
+    const child_ids = Array.isArray(childIdsRaw) ? (childIdsRaw as string[]).filter(Boolean) : [];
     const description = formData.get("description") as string | null;
     const visibility = formData.get("visibility") as string | null;
 
@@ -74,7 +75,7 @@ export async function POST(request: NextRequest) {
       mime_type: file.type,
       storage_path: path,
       category: category ?? "other",
-      child_id: child_id || null,
+      child_id: null,
       description: descTrimmed,
       content_hash: "pending",
       visibility: visibilityValue,
@@ -89,6 +90,15 @@ export async function POST(request: NextRequest) {
     if (docError) {
       return NextResponse.json({ message: docError.message }, { status: 500 });
     }
+
+    if (child_ids.length > 0) {
+      const rows = child_ids.map((child_id) => ({ document_id: doc.id, child_id }));
+      const { error: juncError } = await admin.from("document_children").insert(rows);
+      if (juncError) {
+        console.warn("[documents/upload] document_children insert failed:", juncError.message);
+      }
+    }
+
     return NextResponse.json({ document_id: doc.id });
   } catch (e) {
     return NextResponse.json(

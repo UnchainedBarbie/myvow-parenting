@@ -50,6 +50,26 @@ export default async function DocumentsPage() {
     .eq("case_id", caseId)
     .order("created_at", { ascending: false });
 
+  const docIds = (docsRaw ?? []).map((d) => d.id);
+  const { data: docChildrenRows } =
+    docIds.length > 0
+      ? await admin
+          .from("document_children")
+          .select("document_id, child_id")
+          .in("document_id", docIds)
+      : { data: [] };
+
+  const docToChildIds = (docChildrenRows ?? []).reduce(
+    (acc, row) => {
+      const id = (row as { document_id: string; child_id: string }).document_id;
+      const cid = (row as { document_id: string; child_id: string }).child_id;
+      if (!acc[id]) acc[id] = [];
+      acc[id].push(cid);
+      return acc;
+    },
+    {} as Record<string, string[]>
+  );
+
   const { data: messagesForLog } = await admin
     .from("messages")
     .select("id, external_comm_id, created_at")
@@ -58,14 +78,12 @@ export default async function DocumentsPage() {
     .order("created_at", { ascending: false })
     .limit(100);
 
-  const childIds = [
-    ...new Set(
-      (docsRaw ?? []).map((d) => d.child_id).filter(Boolean)
-    ),
-  ] as string[];
+  const childIdsFromJunction = [
+    ...new Set((docChildrenRows ?? []).map((r) => (r as { child_id: string }).child_id)),
+  ];
   const { data: childRows } =
-    childIds.length > 0
-      ? await admin.from("children").select("id, first_name").in("id", childIds)
+    childIdsFromJunction.length > 0
+      ? await admin.from("children").select("id, first_name").in("id", childIdsFromJunction)
       : { data: [] };
   const childMap = (childRows ?? []).reduce(
     (acc, c) => {
@@ -91,6 +109,11 @@ export default async function DocumentsPage() {
     deleted_at?: string | null;
     document_number?: number | null;
   };
+  const linkedChildIds = docToChildIds[row.id] ?? [];
+  const child_name =
+    linkedChildIds.length === 0
+      ? "All children"
+      : linkedChildIds.map((cid) => childMap[cid] ?? cid).join(", ");
   return {
     id: row.id,
     title: row.title ?? null,
@@ -99,7 +122,7 @@ export default async function DocumentsPage() {
     mime_type: row.mime_type ?? null,
     category: row.category,
     child_id: row.child_id ?? null,
-    child_name: row.child_id ? childMap[row.child_id] ?? null : null,
+    child_name,
     description: row.description ?? null,
     created_at: row.created_at,
     visibility: row.visibility ?? "private",

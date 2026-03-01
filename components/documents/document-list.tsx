@@ -15,33 +15,57 @@ import { TitleFilterPopover } from "@/components/documents/title-filter-popover"
 import { Filter, Pencil, Download } from "lucide-react";
 
 const CHILD_NONE_VALUE = "__none__";
+/** Value for "All children" filter (documents where child_id is null). */
+const CHILD_ALL_VALUE = "__all__";
 
 const CATEGORY_LABELS: Record<string, string> = {
   court_order: "Court Order",
-  medical: "Medical",
   school: "School",
-  legal: "Legal",
-  therapy: "Therapy",
-  financial: "Financial",
+  medical: "Medical",
   expenses: "Expenses",
-  messages: "Messages",
-  photos: "Photos",
+  therapy: "Therapy",
+  legal: "Legal",
   custody: "Custody",
+  photos: "Photos",
   communication: "Communication",
   incident: "Incident",
   other: "Other",
+  financial: "Expenses",
 };
 
 /** Full list of category options for the filter (show all, not just those in current documents). */
 const ALL_CATEGORY_OPTIONS = [
-  { value: "medical", label: "Medical" },
+  { value: "court_order", label: "Court Order" },
   { value: "school", label: "School" },
-  { value: "legal", label: "Legal" },
+  { value: "medical", label: "Medical" },
+  { value: "expenses", label: "Expenses" },
   { value: "therapy", label: "Therapy" },
-  { value: "financial", label: "Financial" },
+  { value: "legal", label: "Legal" },
   { value: "custody", label: "Custody" },
+  { value: "photos", label: "Photos" },
+  { value: "communication", label: "Communication" },
+  { value: "incident", label: "Incident" },
   { value: "other", label: "Other" },
 ] as const;
+
+/** Category color dots — every category has a visible dot. Same map for table rows and Category filter popup. */
+const DOCUMENT_CATEGORY_DOT: Record<string, string> = {
+  court_order: "bg-slate-500",
+  school: "bg-emerald-500",
+  medical: "bg-blue-500",
+  expenses: "bg-amber-400",
+  therapy: "bg-purple-500",
+  legal: "bg-slate-400",
+  custody: "bg-orange-400",
+  photos: "bg-teal-500",
+  communication: "bg-indigo-400",
+  incident: "bg-rose-400",
+  other: "bg-gray-400",
+};
+function getDocumentCategoryDot(category: string | null | undefined): string {
+  const key = category != null && String(category).trim() !== "" ? String(category) : "other";
+  return DOCUMENT_CATEGORY_DOT[key] ?? "bg-gray-400";
+}
 
 const VISIBILITY_LABELS: Record<string, string> = {
   private: "Just me",
@@ -59,6 +83,8 @@ export type DocumentRow = {
   mime_type: string | null;
   category: string;
   child_id: string | null;
+  /** From document_children join; empty = "All children". */
+  child_ids?: string[];
   child_name: string | null;
   description: string | null;
   created_at: string;
@@ -85,6 +111,12 @@ function formatDate(createdAt: string) {
 
 function docIdFromNumber(n: number) {
   return `DOC-${String(n).padStart(3, "0")}`;
+}
+
+/** Escape a value for CSV (quote if needed, escape " as ""). */
+function csvEscape(value: string): string {
+  const s = String(value ?? "").replace(/"/g, '""');
+  return /[",\r\n]/.test(s) ? `"${s}"` : s;
 }
 
 function formatSize(bytes: number | null) {
@@ -225,8 +257,11 @@ export function DocumentList({ documents, children = [] }: DocumentListProps) {
     if (filterVisibilities.length > 0) list = list.filter((d) => filterVisibilities.includes(d.visibility));
     if (filterChildren.length > 0) {
       list = list.filter((d) => {
-        const key = d.child_id ?? CHILD_NONE_VALUE;
-        return filterChildren.includes(key);
+        const ids = d.child_ids ?? (d.child_id ? [d.child_id] : []);
+        if (ids.length === 0) {
+          return filterChildren.includes(CHILD_ALL_VALUE) || filterChildren.includes(CHILD_NONE_VALUE);
+        }
+        return ids.some((id) => filterChildren.includes(id));
       });
     }
     if (startDate) {
@@ -329,21 +364,81 @@ export function DocumentList({ documents, children = [] }: DocumentListProps) {
     setDeleteConfirm(null);
   }
 
+  function handleExportCSV() {
+    const headers = ["Doc ID", "Title", "File name", "Category", "Child", "Date uploaded", "Visibility", "Description"];
+    const rows = filteredAndSorted.map((doc, idx) => {
+      const docId = doc.document_number != null ? docIdFromNumber(doc.document_number) : docIdFromNumber(idx + 1);
+      return [
+        docId,
+        doc.title?.trim() ?? doc.file_name ?? "",
+        doc.file_name ?? "",
+        CATEGORY_LABELS[doc.category] ?? doc.category,
+        doc.child_name ?? "All children",
+        formatDate(doc.created_at),
+        VISIBILITY_LABELS[doc.visibility] ?? doc.visibility,
+        doc.description ?? "",
+      ].map(csvEscape).join(",");
+    });
+    const csv = [headers.map(csvEscape).join(","), ...rows].join("\r\n");
+    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `MyVow_Documents_${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  const anyFilterActive =
+    searchInput.trim().length > 0 ||
+    filterTitle.trim().length > 0 ||
+    filterCategories.length > 0 ||
+    filterChildren.length > 0 ||
+    filterVisibilities.length > 0;
+
+  function clearAllFilters() {
+    setSearchInput("");
+    setFilterTitle("");
+    setFilterCategories([]);
+    setFilterChildren([]);
+    setFilterVisibilities([]);
+    setSort("date_desc");
+  }
+
   return (
     <Card className="shadow-card border-border rounded-card">
       <CardHeader className="pb-2 px-4 pt-4">
         <CardTitle className="font-heading text-lg text-foreground">All documents</CardTitle>
       </CardHeader>
       <CardContent className="px-4 pb-4 space-y-3">
-        <div>
+        <div className="flex flex-wrap items-center gap-2">
           <Input
             type="search"
-            placeholder="Search title, filename, category, child…"
+            placeholder="Search title, description, filename…"
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
             className="h-9 w-full max-w-[280px] rounded-card border-border text-sm"
             aria-label="Search documents"
           />
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-9 rounded-full text-xs shrink-0"
+            onClick={handleExportCSV}
+            disabled={filteredAndSorted.length === 0}
+          >
+            Export
+          </Button>
+          {anyFilterActive && (
+            <button
+              type="button"
+              onClick={clearAllFilters}
+              className="text-xs text-foreground-secondary hover:text-foreground hover:underline shrink-0"
+            >
+              Clear filters
+            </button>
+          )}
         </div>
 
         {selectedIds.size > 0 && (
@@ -439,6 +534,7 @@ export function DocumentList({ documents, children = [] }: DocumentListProps) {
                         open={categoryFilterOpen}
                         onOpenChange={setCategoryFilterOpen}
                         active={categoryFilterActive}
+                        getOptionDotClass={getDocumentCategoryDot}
                       />
                     </span>
                   </th>
@@ -447,16 +543,18 @@ export function DocumentList({ documents, children = [] }: DocumentListProps) {
                       <span>Child</span>
                       <ColumnFilterPopover
                         title="Child"
-                        options={children.map((c) => ({ value: c.id, label: c.first_name }))}
+                        options={[
+                          { value: CHILD_ALL_VALUE, label: "All children" },
+                          { value: CHILD_NONE_VALUE, label: "No child" },
+                          ...(children ?? []).map((c) => ({ value: c.id, label: c.first_name })),
+                        ]}
                         selected={filterChildren}
                         onApply={setFilterChildren}
                         onClear={() => setFilterChildren([])}
                         open={childFilterOpen}
                         onOpenChange={setChildFilterOpen}
                         active={childFilterActive}
-                        noneValue={CHILD_NONE_VALUE}
-                        noneLabel="No child"
-                        allLabel="All children"
+                        allLabel="All"
                       />
                     </span>
                   </th>
@@ -559,10 +657,16 @@ export function DocumentList({ documents, children = [] }: DocumentListProps) {
                         </div>
                       </td>
                       <td className={cn("px-3 py-1.5 align-middle", isDeleted && "line-through")}>
-                        <CategoryPill
-                          category={doc.category}
-                          label={CATEGORY_LABELS[doc.category] ?? doc.category}
-                        />
+                        <span className="inline-flex items-center gap-2">
+                          <span
+                            className={cn("h-2.5 w-2.5 shrink-0 rounded-full", getDocumentCategoryDot(doc.category))}
+                            aria-hidden
+                          />
+                          <CategoryPill
+                            category={doc.category}
+                            label={CATEGORY_LABELS[doc.category] ?? doc.category}
+                          />
+                        </span>
                       </td>
                       <td className={cn("px-3 py-1.5 text-foreground-secondary align-middle", isDeleted && "line-through")}>
                         {doc.child_name ?? "All children"}

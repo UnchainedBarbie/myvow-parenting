@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { ChevronRight, ChevronDown, FileText, Image, Trash2, Pencil, X, Download } from "lucide-react";
+import { ChevronRight, ChevronDown, FileText, Image, Trash2, Pencil, X } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
@@ -448,8 +448,7 @@ export function ProfileContent({
               <p className="text-sm text-foreground-secondary py-2">No court orders uploaded yet.</p>
             ) : (
               <div className="rounded-card border border-border bg-background overflow-hidden">
-                <div className="grid grid-cols-5 gap-2 text-xs font-medium text-foreground-secondary border-b border-border py-1.5 px-2">
-                  <span>Case #</span>
+                <div className="grid grid-cols-[2fr_1fr_1fr_1fr] gap-2 text-xs font-medium text-foreground-secondary border-b border-border py-1.5 px-2">
                   <span className="text-left">Title</span>
                   <span className="text-left">Type</span>
                   <span className="text-left">Date</span>
@@ -462,11 +461,11 @@ export function ProfileContent({
                       const id = String(order.id ?? order);
                       const docType = (order.custody_type ?? order.document_type) as string | undefined;
                       const typeLabel = COURT_ORDER_TYPES.find((t) => t.value === docType)?.label ?? docType ?? "Court Order";
-                      const caseNum = (order.court_case_number as string) ?? "—";
+                      const orderTitle = (order.title as string) ?? "—";
                       return (
                         <li key={id} className="border-b border-border last:border-b-0">
                           <div
-                            className="grid grid-cols-5 gap-2 items-center py-2 px-2 min-w-0 cursor-pointer hover:bg-muted/50 transition-colors"
+                            className="grid grid-cols-[2fr_1fr_1fr_1fr] gap-2 items-center py-2 px-2 min-w-0 cursor-pointer hover:bg-muted/50 transition-colors"
                             role="button"
                             tabIndex={0}
                             onClick={() => {
@@ -476,8 +475,9 @@ export function ProfileContent({
                             }}
                             onKeyDown={(e) => e.key === "Enter" && (setOpenDetailInEditMode(false), setSelectedCourtOrder(order), setCourtOrderDetailOpen(true))}
                           >
-                            <span className="min-w-0 truncate text-xs font-medium text-foreground">{caseNum}</span>
-                            <span className="min-w-0 truncate text-xs text-foreground">{(order.title as string) ?? "—"}</span>
+                            <span className="min-w-0 text-xs text-foreground break-words" title={orderTitle !== "—" ? orderTitle : undefined}>
+                              {orderTitle}
+                            </span>
                             <span className="min-w-0 truncate rounded-full bg-muted px-2 py-0.5 text-xs text-foreground-secondary">{typeLabel}</span>
                             <span className="min-w-0 truncate text-xs text-foreground-secondary">{formatDate(order.effective_date as string | null)}</span>
                             <div className="flex items-center justify-end gap-0.5 min-w-0" onClick={(e) => e.stopPropagation()}>
@@ -493,22 +493,6 @@ export function ProfileContent({
                               >
                                 <Pencil className="h-3.5 w-3.5" />
                               </button>
-                              {(order.file_path as string) ? (
-                                <button
-                                  type="button"
-                                  className="p-1 rounded text-foreground-secondary hover:text-foreground"
-                                  aria-label="Download"
-                                  onClick={async () => {
-                                    const res = await fetch(`/api/profile/court-orders/${order.id}/download`).catch(() => null);
-                                    if (res?.ok) {
-                                      const data = await res.json().catch(() => ({}));
-                                      if (data?.url) window.open(data.url, "_blank");
-                                    }
-                                  }}
-                                >
-                                  <Download className="h-3.5 w-3.5" />
-                                </button>
-                              ) : null}
                               <button
                                 type="button"
                                 className="p-1 rounded text-foreground-secondary hover:text-destructive"
@@ -988,11 +972,23 @@ export function ProfileContent({
                     </section>
                   </div>
 
+                  {!detailEditMode && (
+                    <div className="p-4 border-t border-border flex justify-end shrink-0">
+                      <Button
+                        type="button"
+                        size="sm"
+                        className="rounded-full h-8 text-xs bg-[#7B9E87] hover:bg-[#6A8A78] text-white"
+                        onClick={() => setDetailEditMode(true)}
+                      >
+                        Edit
+                      </Button>
+                    </div>
+                  )}
                   {detailEditMode && (
                     <div className="p-4 border-t border-border flex gap-2 justify-between items-center shrink-0">
                       <button
                         type="button"
-                        className="text-xs text-destructive hover:underline cursor-pointer bg-transparent border-none p-0"
+                        className="text-xs text-red-600 hover:text-red-700 hover:underline cursor-pointer bg-transparent border-none p-0"
                         onClick={() => setDeleteCourtOrderConfirm(selectedCourtOrder?.id ?? null)}
                       >
                         Delete

@@ -12,7 +12,7 @@ import { getCategoryColor } from "@/lib/categoryColors";
 import { DateFilterPopover, type DateFilterValue } from "@/components/documents/date-filter-popover";
 import { ColumnFilterPopover } from "@/components/documents/column-filter-popover";
 import { TitleFilterPopover } from "@/components/documents/title-filter-popover";
-import { Filter, Pencil, Download } from "lucide-react";
+import { Filter, Pencil, Download, Trash2 } from "lucide-react";
 
 const CHILD_NONE_VALUE = "__none__";
 /** Value for "All children" filter (documents where child_id is null). */
@@ -328,23 +328,47 @@ export function DocumentList({ documents, children = [] }: DocumentListProps) {
     const ids = [...selectedIds];
     if (ids.length === 0) return;
     setDownloadingZip(true);
+    const timeoutMs = 30_000;
+    const timeoutId = setTimeout(() => {
+      setDownloadingZip(false);
+    }, timeoutMs);
     try {
       const res = await fetch("/api/documents/download-selected", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ids }),
       });
-      if (!res.ok) throw new Error("Download failed");
+      if (!res.ok) {
+        const text = await res.text();
+        let message = "Download failed.";
+        try {
+          const json = JSON.parse(text);
+          if (json?.error) message = json.error;
+        } catch {
+          if (text) message = text;
+        }
+        console.error("[bulk-download] Server error:", res.status, message);
+        console.error("[bulk-download] Full server response:", text);
+        alert(message);
+        return;
+      }
       const blob = await res.blob();
+      if (!blob || blob.size === 0) {
+        console.error("[bulk-download] Empty ZIP received");
+        alert("Download failed: no files could be included in the ZIP.");
+        return;
+      }
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
       a.download = "documents.zip";
       a.click();
       URL.revokeObjectURL(url);
-    } catch {
-      // no-op
+    } catch (e) {
+      console.error("[bulk-download] Download error:", e);
+      alert("Download failed. Check the console for details.");
     } finally {
+      clearTimeout(timeoutId);
       setDownloadingZip(false);
     }
   }
@@ -353,15 +377,29 @@ export function DocumentList({ documents, children = [] }: DocumentListProps) {
     setDeleteConfirm({ ids: [...selectedIds] });
   }
 
-  function confirmDelete() {
+  async function confirmDelete() {
+    console.log("[bulk-delete] confirmDelete called, deleteConfirm:", deleteConfirm);
     if (!deleteConfirm) return;
-    // Stub: call API to delete; then clear selection and close modal
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      deleteConfirm.ids.forEach((id) => next.delete(id));
-      return next;
-    });
-    setDeleteConfirm(null);
+    console.log("[bulk-delete] Calling /api/documents/delete with ids:", deleteConfirm.ids);
+    try {
+      const res = await fetch("/api/documents/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: deleteConfirm.ids }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        console.error("[bulk-delete] Server error:", res.status, data);
+        alert(data?.error ?? "Failed to delete documents.");
+        return;
+      }
+      setSelectedIds(new Set());
+      setDeleteConfirm(null);
+      router.refresh();
+    } catch (e) {
+      console.error("[bulk-delete] Error:", e);
+      alert("Failed to delete documents.");
+    }
   }
 
   function handleExportCSV() {
@@ -709,6 +747,14 @@ export function DocumentList({ documents, children = [] }: DocumentListProps) {
                           >
                             <Pencil className="h-3.5 w-3.5" />
                           </button>
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); setDeleteConfirm({ ids: [doc.id] }); }}
+                            className="p-1.5 rounded text-gray-400 hover:text-red-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            aria-label="Delete document"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
                         </span>
                       </td>
                     </tr>
@@ -732,15 +778,15 @@ export function DocumentList({ documents, children = [] }: DocumentListProps) {
       />
 
       {deleteConfirm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" role="dialog" aria-modal="true" aria-labelledby="delete-title" onClick={() => setDeleteConfirm(null)}>
-          <div className="bg-background border border-border rounded-card shadow-card max-w-sm w-full mx-4 p-4" onClick={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" role="dialog" aria-modal="true" aria-labelledby="delete-title">
+          <div className="bg-background border border-border rounded-card shadow-card max-w-sm w-full mx-4 p-4">
             <h3 id="delete-title" className="font-heading text-base font-semibold text-foreground mb-2">Delete document{deleteConfirm.ids.length > 1 ? "s" : ""}?</h3>
             <p className="text-sm text-foreground-secondary mb-4">
-              This action is permanent. {deleteConfirm.ids.length > 1 ? "Selected documents will be removed." : "This document will be removed."}
+              Documents will be moved to trash. {deleteConfirm.ids.length > 1 ? "Selected documents will be removed from the list." : "This document will be removed from the list."}
             </p>
             <div className="flex gap-2 justify-end">
               <Button variant="outline" size="sm" className="rounded-full" onClick={() => setDeleteConfirm(null)}>Cancel</Button>
-              <Button size="sm" className="rounded-full bg-alert hover:bg-alert/90" onClick={confirmDelete}>Delete</Button>
+              <Button size="sm" className="rounded-full bg-alert hover:bg-alert/90" onClick={() => confirmDelete()}>Delete</Button>
             </div>
           </div>
         </div>

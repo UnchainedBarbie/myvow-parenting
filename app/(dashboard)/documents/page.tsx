@@ -38,11 +38,13 @@ export default async function DocumentsPage() {
     );
   }
 
-  const { data: children } = await admin
+  const { data: childrenData, error: childrenError } = await admin
     .from("children")
     .select("id, first_name")
     .eq("case_id", caseId)
     .order("first_name");
+  console.log("CHILDREN QUERY:", { data: childrenData, error: childrenError });
+  const children = childrenData ?? [];
 
   const { data: docsRaw } = await admin
     .from("documents")
@@ -122,6 +124,7 @@ export default async function DocumentsPage() {
     mime_type: row.mime_type ?? null,
     category: row.category,
     child_id: row.child_id ?? null,
+    child_ids: linkedChildIds,
     child_name,
     description: row.description ?? null,
     created_at: row.created_at,
@@ -137,6 +140,8 @@ export default async function DocumentsPage() {
     external_comm_id: (m as { external_comm_id?: string | null }).external_comm_id ?? null,
     created_at: (m as { created_at: string }).created_at,
   }));
+
+  console.log("CHILDREN DATA (documents page, passing to form):", children);
 
   return (
     <div className="px-3 pt-3 pb-1 md:px-4 md:pt-4 md:pb-2">

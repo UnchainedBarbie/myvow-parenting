@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import { Pencil } from "lucide-react";
+import { ChildMultiSelect } from "@/components/documents/child-multi-select";
 
 type DocumentHistoryEntry = {
   id: string;
@@ -58,6 +59,8 @@ export type DocumentRow = {
   category: string;
   child_id: string | null;
   child_name: string | null;
+  /** From document_children; when present used to init multi-select. */
+  child_ids?: string[];
   description: string | null;
   created_at: string;
   visibility: string;
@@ -131,7 +134,7 @@ export function DocumentDetailModal({
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [category, setCategory] = useState("other");
-  const [childId, setChildId] = useState("");
+  const [selectedChildIds, setSelectedChildIds] = useState<string[]>([]);
   const [visibility, setVisibility] = useState("family");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -145,7 +148,13 @@ export function DocumentDetailModal({
       setTitle((doc.title ?? "").trim());
       setDescription((doc.description ?? "").trim());
       setCategory(doc.category ?? "other");
-      setChildId(doc.child_id ?? "");
+      setSelectedChildIds(
+        (doc.child_ids && doc.child_ids.length > 0)
+          ? doc.child_ids
+          : doc.child_id
+            ? [doc.child_id]
+            : []
+      );
       setVisibility(doc.visibility === "private" ? "private" : doc.visibility === "parents_only" ? "parents_only" : "family");
       setSaveError(null);
     }
@@ -176,7 +185,13 @@ export function DocumentDetailModal({
       setTitle((doc.title ?? "").trim());
       setDescription((doc.description ?? "").trim());
       setCategory(doc.category ?? "other");
-      setChildId(doc.child_id ?? "");
+      setSelectedChildIds(
+        (doc.child_ids && doc.child_ids.length > 0)
+          ? doc.child_ids
+          : doc.child_id
+            ? [doc.child_id]
+            : []
+      );
       setVisibility(doc.visibility === "private" ? "private" : doc.visibility === "parents_only" ? "parents_only" : "family");
     }
     setIsEditing(false);
@@ -203,11 +218,14 @@ export function DocumentDetailModal({
       setSaveError(`Description must be ${DESCRIPTION_MAX} characters or fewer.`);
       return;
     }
-    const newChildId = (childId && childId !== "__none__") ? childId : null;
+    const origChildIds = (doc.child_ids && doc.child_ids.length > 0)
+      ? doc.child_ids
+      : doc.child_id
+        ? [doc.child_id]
+        : [];
     const origTitle = (doc.title ?? "").trim();
     const origDesc = (doc.description ?? "").trim();
     const origCategory = doc.category ?? "other";
-    const origChildId = doc.child_id ?? null;
     const origVisibility = doc.visibility === "private" ? "private" : doc.visibility === "parents_only" ? "parents_only" : "family";
 
     const historyEntries: { field_changed: string; old_value: string | null; new_value: string }[] = [];
@@ -224,9 +242,18 @@ export function DocumentDetailModal({
         new_value: CATEGORY_LABELS[category] ?? category,
       });
     }
-    if (newChildId !== origChildId) {
-      const newChildLabel = !newChildId ? "All children" : childOptions.find((c) => c.id === newChildId)?.first_name ?? newChildId;
-      const oldChildLabel = !origChildId ? "All children" : doc.child_name ?? origChildId;
+    const childIdsChanged =
+      selectedChildIds.length !== origChildIds.length ||
+      selectedChildIds.some((id) => !origChildIds.includes(id)) ||
+      origChildIds.some((id) => !selectedChildIds.includes(id));
+    if (childIdsChanged) {
+      const newChildLabel =
+        selectedChildIds.length === 0
+          ? "No child"
+          : selectedChildIds.length === childOptions.length
+            ? "All children"
+            : childOptions.filter((c) => selectedChildIds.includes(c.id)).map((c) => c.first_name).join(", ");
+      const oldChildLabel = doc.child_name ?? (origChildIds.length === 0 ? "No child" : "All children");
       historyEntries.push({ field_changed: "child_id", old_value: oldChildLabel, new_value: newChildLabel });
     }
     if (visibility !== origVisibility) {
@@ -247,7 +274,8 @@ export function DocumentDetailModal({
           title: titleTrim,
           description: descTrim,
           category,
-          child_id: newChildId,
+          child_id: selectedChildIds.length === 0 ? null : selectedChildIds[0],
+          child_ids: selectedChildIds,
           visibility,
           ...(historyEntries.length > 0 ? { history: historyEntries } : {}),
         }),
@@ -296,10 +324,10 @@ export function DocumentDetailModal({
             <button
               type="button"
               onClick={onClose}
-              className="p-2 rounded-full hover:bg-muted text-foreground-secondary focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="rounded-full p-1 text-gray-600 hover:text-gray-800 hover:bg-gray-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               aria-label="Close"
             >
-              ×
+              <span className="inline-flex h-5 w-5 items-center justify-center text-[20px] leading-none">×</span>
             </button>
           </div>
         </div>
@@ -359,22 +387,13 @@ export function DocumentDetailModal({
                 </select>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="doc-modal-child" className="text-xs font-medium">Child</Label>
-                <select
+                <Label className="text-xs font-medium">Child</Label>
+                <ChildMultiSelect
                   id="doc-modal-child"
-                  value={childId}
-                  onChange={(e) => setChildId(e.target.value)}
-                  className={cn(
-                    "flex h-9 w-full rounded-card border border-input bg-background px-2 text-sm",
-                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  )}
-                >
-                  <option value="">All children</option>
-                  <option value="__none__">No child</option>
-                  {childOptions.map((c) => (
-                    <option key={c.id} value={c.id}>{c.first_name}</option>
-                  ))}
-                </select>
+                  children={childOptions}
+                  value={selectedChildIds}
+                  onChange={setSelectedChildIds}
+                />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="doc-modal-visibility" className="text-xs font-medium">Visibility</Label>

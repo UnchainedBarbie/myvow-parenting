@@ -6,12 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
-import { FileText, Image, Trash2, Shield, Clock, FileCheck, Camera, ChevronDown } from "lucide-react";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import { FileText, Image, Trash2, Shield, Clock, FileCheck, Camera } from "lucide-react";
+import { ChildMultiSelect } from "@/components/documents/child-multi-select";
 
 const DOCUMENT_CATEGORIES = [
   { value: "court_order", label: "Court Order" },
@@ -115,6 +111,14 @@ export function DocumentUploadForm({ caseId, children, logEntries = [] }: Docume
   const [title, setTitle] = useState("");
   const [category, setCategory] = useState<string>("other");
   const [selectedChildIds, setSelectedChildIds] = useState<string[]>([]);
+  const childrenDefaultAppliedRef = useRef(false);
+
+  useEffect(() => {
+    if (children?.length && !childrenDefaultAppliedRef.current) {
+      childrenDefaultAppliedRef.current = true;
+      setSelectedChildIds(children.map((c) => c.id));
+    }
+  }, [children]);
   const [description, setDescription] = useState("");
   const [visibility, setVisibility] = useState<string>("parents_only");
   const [notifyOtherParent, setNotifyOtherParent] = useState(false);
@@ -208,7 +212,9 @@ export function DocumentUploadForm({ caseId, children, logEntries = [] }: Docume
       formData.set("case_id", caseId);
       formData.set("title", title.trim());
       formData.set("category", category);
-      if (selectedChildIds.length === 1) formData.set("child_id", selectedChildIds[0]);
+      if (selectedChildIds.length > 0 && selectedChildIds.length < children.length) {
+        selectedChildIds.forEach((id) => formData.append("child_ids", id));
+      }
       formData.set("description", description.trim());
       formData.set("visibility", visibility);
       if (notifyOtherParent) formData.set("notify_other_parent", "1");
@@ -219,7 +225,7 @@ export function DocumentUploadForm({ caseId, children, logEntries = [] }: Docume
       setSuccess(true);
       setFile(null);
       setTitle("");
-      setSelectedChildIds([]);
+      setSelectedChildIds(children?.length ? children.map((c) => c.id) : []);
       setDescription("");
       setRelatedCommId("");
       setNotifyOtherParent(false);
@@ -240,6 +246,8 @@ export function DocumentUploadForm({ caseId, children, logEntries = [] }: Docume
 
   const commOptions = logEntries.filter((e) => e.external_comm_id).filter((e, i, arr) => arr.findIndex((x) => (x.external_comm_id ?? x.id) === (e.external_comm_id ?? e.id)) === i);
   const descLen = description.length;
+
+  console.log("CHILDREN DATA:", children);
 
   return (
     <Card className="shadow-card border-border rounded-card">
@@ -416,64 +424,11 @@ export function DocumentUploadForm({ caseId, children, logEntries = [] }: Docume
 
           <div className="space-y-2">
             <Label className="text-xs font-medium">Child</Label>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <button
-                  type="button"
-                  className={cn(
-                    "flex h-8 w-full items-center justify-between rounded-card border border-input bg-background px-3 py-1 text-xs text-left",
-                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-                  )}
-                >
-                  <span className="truncate">
-                    {selectedChildIds.length === 0
-                      ? "No child"
-                      : selectedChildIds.length === children.length
-                        ? "All children"
-                        : children
-                            .filter((c) => selectedChildIds.includes(c.id))
-                            .map((c) => c.first_name)
-                            .join(", ")}
-                  </span>
-                  <ChevronDown className="h-3.5 w-3.5 shrink-0 text-foreground-secondary" aria-hidden />
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" className="w-56 p-2" sideOffset={4}>
-                <label className="flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-xs hover:bg-muted">
-                  <input
-                    type="checkbox"
-                    checked={children.length > 0 && selectedChildIds.length === children.length}
-                    onChange={() => {
-                      if (selectedChildIds.length === children.length) {
-                        setSelectedChildIds([]);
-                      } else {
-                        setSelectedChildIds(children.map((c) => c.id));
-                      }
-                    }}
-                    className="rounded border-border"
-                  />
-                  All children
-                </label>
-                {children.map((c) => (
-                  <label
-                    key={c.id}
-                    className="flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-xs hover:bg-muted"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={selectedChildIds.includes(c.id)}
-                      onChange={() => {
-                        setSelectedChildIds((prev) =>
-                          prev.includes(c.id) ? prev.filter((id) => id !== c.id) : [...prev, c.id]
-                        );
-                      }}
-                      className="rounded border-border"
-                    />
-                    {c.first_name}
-                  </label>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <ChildMultiSelect
+              children={children}
+              value={selectedChildIds}
+              onChange={setSelectedChildIds}
+            />
           </div>
 
           <div className="space-y-2">

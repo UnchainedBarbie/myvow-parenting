@@ -113,6 +113,7 @@ export function ProfileContent({
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
   const [selectedCourtOrder, setSelectedCourtOrder] = useState<CourtOrderRow | null>(null);
   const [courtOrderDetailOpen, setCourtOrderDetailOpen] = useState(false);
+  const [openDetailInEditMode, setOpenDetailInEditMode] = useState(false);
   const [detailEditMode, setDetailEditMode] = useState(false);
   const [detailTitle, setDetailTitle] = useState("");
   const [detailCaseNumber, setDetailCaseNumber] = useState("");
@@ -155,11 +156,11 @@ export function ProfileContent({
       setDetailEffectiveDate((o.effective_date as string)?.slice(0, 10) ?? "");
       setDetailStatus((o.is_active as boolean) === true ? "active" : "superseded");
       setDetailDescription((o.schedule_description ?? o.description) as string ?? "");
-      setDetailEditMode(false);
+      setDetailEditMode(openDetailInEditMode);
       setDetailSaveError(null);
       setDetailAttachFile(null);
     }
-  }, [courtOrderDetailOpen, selectedCourtOrder]);
+  }, [courtOrderDetailOpen, selectedCourtOrder, openDetailInEditMode]);
 
   useEffect(() => {
     const orderId = selectedCourtOrder?.id;
@@ -357,7 +358,7 @@ export function ProfileContent({
   return (
     <div className="space-y-6">
       <p className="text-xs md:text-sm text-foreground-secondary mb-4">Your family, case details, and parenting plan.</p>
-      <div className="flex justify-end">
+      <div className="flex justify-start">
         <button
           type="button"
           className="text-xs text-foreground-secondary hover:text-foreground underline cursor-pointer bg-transparent border-none p-0"
@@ -442,17 +443,28 @@ export function ProfileContent({
                       const caseNum = (order.court_case_number as string) ?? "—";
                       return (
                         <li key={id} className="border-b border-border last:border-b-0">
-                          <div className="grid grid-cols-5 gap-2 items-center py-2 px-2 min-w-0">
+                          <div
+                            className="grid grid-cols-5 gap-2 items-center py-2 px-2 min-w-0 cursor-pointer hover:bg-muted/50 transition-colors"
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => {
+                              setOpenDetailInEditMode(false);
+                              setSelectedCourtOrder(order);
+                              setCourtOrderDetailOpen(true);
+                            }}
+                            onKeyDown={(e) => e.key === "Enter" && (setOpenDetailInEditMode(false), setSelectedCourtOrder(order), setCourtOrderDetailOpen(true))}
+                          >
                             <span className="min-w-0 truncate text-xs font-medium text-foreground">{caseNum}</span>
                             <span className="min-w-0 truncate text-xs text-foreground">{(order.title as string) ?? "—"}</span>
                             <span className="min-w-0 truncate rounded-full bg-muted px-2 py-0.5 text-xs text-foreground-secondary">{typeLabel}</span>
                             <span className="min-w-0 truncate text-xs text-foreground-secondary">{formatDate(order.effective_date as string | null)}</span>
-                            <div className="flex items-center justify-end gap-0.5 min-w-0">
+                            <div className="flex items-center justify-end gap-0.5 min-w-0" onClick={(e) => e.stopPropagation()}>
                               <button
                                 type="button"
                                 className="p-1 rounded text-foreground-secondary hover:text-foreground"
                                 aria-label="Edit"
                                 onClick={() => {
+                                  setOpenDetailInEditMode(true);
                                   setSelectedCourtOrder(order);
                                   setCourtOrderDetailOpen(true);
                                 }}
@@ -692,8 +704,8 @@ export function ProfileContent({
               const caseNum = (o.court_case_number as string) ?? "—";
               const statusLabel = (o.is_active as boolean) === true ? "Active" : "Superseded";
               const filePath = (o.file_path as string) ?? null;
-              const fileName = (o.file_name as string) ?? (filePath ? filePath.split("/").pop() ?? null : null);
-              const hasFile = !!(filePath || fileName);
+              const fileDisplayName = filePath ? filePath.split("/").pop() ?? null : null;
+              const hasFile = !!filePath;
 
               function historyFieldLabel(field: string): string {
                 const m: Record<string, string> = {
@@ -752,7 +764,7 @@ export function ProfileContent({
                             }
                           }}
                         >
-                          {fileName ?? filePath ?? "View / download"}
+                          {fileDisplayName ?? "View / download"}
                         </button>
                       ) : (
                         <>
@@ -796,7 +808,7 @@ export function ProfileContent({
                                       window.alert((data as { error?: string }).error ?? "Failed to attach file");
                                       return;
                                     }
-                                    setSelectedCourtOrder({ ...o, file_path: (data as { file_path?: string }).file_path ?? null, file_name: (data as { file_name?: string }).file_name ?? null });
+                                    setSelectedCourtOrder({ ...o, file_path: (data as { file_path?: string }).file_path ?? null });
                                     setDetailAttachFile(null);
                                     router.refresh();
                                   } finally {
@@ -841,17 +853,6 @@ export function ProfileContent({
                           <p className="text-xs text-foreground-secondary mb-0.5">Description</p>
                           <p className="text-sm text-foreground whitespace-pre-wrap">{(o.schedule_description ?? o.description) as string || "—"}</p>
                         </div>
-                    <div className="pt-2">
-                      <Button
-                        type="button"
-                        size="sm"
-                        className="rounded-full h-8 text-xs bg-[#7B9E87] hover:bg-[#6A8A78] text-white"
-                        onClick={() => setDetailEditMode(true)}
-                      >
-                        <Pencil className="h-3.5 w-3.5 mr-1.5" />
-                        Edit
-                      </Button>
-                    </div>
                       </>
                     ) : (
                       <>

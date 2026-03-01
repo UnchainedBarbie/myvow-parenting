@@ -268,7 +268,6 @@ export function DocumentUploadForm({ caseId, children, logEntries = [] }: Docume
           )}
 
           <div className="space-y-2">
-            <Label className="text-xs font-medium">File</Label>
             {!file ? (
               <>
                 <div

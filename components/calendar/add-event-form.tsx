@@ -311,7 +311,6 @@ export function AddEventForm({
             </p>
           )}
           <div className="space-y-2">
-            <Label className="text-xs font-medium">Photo / File</Label>
             {!selectedFile ? (
               <>
                 <div

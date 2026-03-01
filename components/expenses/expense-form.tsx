@@ -24,7 +24,6 @@ const EXPENSE_CATEGORIES = [
 const EXPENSE_CATEGORY_VALUES = new Set(EXPENSE_CATEGORIES.map((c) => c.value));
 
 const VISIBILITY_OPTIONS = [
-  { value: "family", label: "Family" },
   { value: "parents_only", label: "Parents only" },
   { value: "private", label: "Just me" },
 ] as const;
@@ -65,6 +64,7 @@ export function ExpenseForm({
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("");
   const [category, setCategory] = useState<string>("other");
+  const [categoryDescription, setCategoryDescription] = useState("");
   const [selectedChildIds, setSelectedChildIds] = useState<string[]>([]);
   const [visibility, setVisibility] = useState<string>("parents_only");
   const [receiptFile, setReceiptFile] = useState<File | null>(null);
@@ -77,7 +77,10 @@ export function ExpenseForm({
   const [amountTouched, setAmountTouched] = useState(false);
   const [categoryTouched, setCategoryTouched] = useState(false);
   const [childTouched, setChildTouched] = useState(false);
-  const [fieldsSuggested, setFieldsSuggested] = useState(false);
+  const [descriptionSuggested, setDescriptionSuggested] = useState(false);
+  const [amountSuggested, setAmountSuggested] = useState(false);
+  const [categorySuggested, setCategorySuggested] = useState(false);
+  const [childSuggested, setChildSuggested] = useState(false);
 
   function handleDrag(e: React.DragEvent) {
     e.preventDefault();
@@ -97,7 +100,10 @@ export function ExpenseForm({
     setFileError(null);
     if (!file) {
       setReceiptFile(null);
-      setFieldsSuggested(false);
+      setDescriptionSuggested(false);
+      setAmountSuggested(false);
+      setCategorySuggested(false);
+      setChildSuggested(false);
       return;
     }
     const allowed = ["image/jpeg", "image/png", "image/gif", "image/webp", "application/pdf"];
@@ -122,25 +128,29 @@ export function ExpenseForm({
         child_names?: string[];
         amount?: number | null;
       };
-      const isExpense = payload.type === "expense";
-      if (isExpense || payload.title || payload.description || payload.amount != null || payload.category || (payload.child_names?.length)) {
-        if (!descriptionTouched && (payload.title || payload.description)) {
-          const desc = [payload.title, payload.description].filter(Boolean).join(" — ").trim();
-          if (desc) setDescription(desc);
+      if (!descriptionTouched && (payload.title || payload.description)) {
+        const desc = [payload.title, payload.description].filter(Boolean).join(" — ").trim();
+        if (desc) {
+          setDescription(desc);
+          setDescriptionSuggested(true);
         }
-        if (!amountTouched && payload.amount != null && Number.isFinite(payload.amount)) {
-          setAmount(String(payload.amount));
+      }
+      if (!amountTouched && payload.amount != null && Number.isFinite(payload.amount)) {
+        setAmount(String(payload.amount));
+        setAmountSuggested(true);
+      }
+      if (!categoryTouched && payload.category) {
+        setCategory(mapCategory(payload.category));
+        setCategorySuggested(true);
+      }
+      if (!childTouched && payload.child_names?.length && children.length > 0) {
+        const ids = payload.child_names
+          .map((name) => children.find((c) => c.first_name.toLowerCase() === String(name).toLowerCase())?.id)
+          .filter(Boolean) as string[];
+        if (ids.length) {
+          setSelectedChildIds(ids);
+          setChildSuggested(true);
         }
-        if (!categoryTouched && payload.category) {
-          setCategory(mapCategory(payload.category));
-        }
-        if (!childTouched && payload.child_names?.length && children.length > 0) {
-          const ids = payload.child_names
-            .map((name) => children.find((c) => c.first_name.toLowerCase() === String(name).toLowerCase())?.id)
-            .filter(Boolean) as string[];
-          if (ids.length) setSelectedChildIds(ids);
-        }
-        setFieldsSuggested(true);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not analyze file");
@@ -182,6 +192,7 @@ export function ExpenseForm({
           description: description.trim(),
           amount: amt,
           category,
+          ...(category === "other" && categoryDescription.trim() ? { category_description: categoryDescription.trim() } : {}),
           child_id: childId || undefined,
           receipt_file_id: receiptFileId,
         }),
@@ -191,10 +202,14 @@ export function ExpenseForm({
       setDescription("");
       setAmount("");
       setCategory("other");
+      setCategoryDescription("");
       setSelectedChildIds([]);
       setVisibility("parents_only");
       setReceiptFile(null);
-      setFieldsSuggested(false);
+      setDescriptionSuggested(false);
+      setAmountSuggested(false);
+      setCategorySuggested(false);
+      setChildSuggested(false);
       setDescriptionTouched(false);
       setAmountTouched(false);
       setCategoryTouched(false);
@@ -229,7 +244,6 @@ export function ExpenseForm({
             </p>
           )}
           <div className="space-y-2">
-            <Label className="text-xs font-medium">Receipt / File</Label>
             {!receiptFile ? (
               <>
                 <div
@@ -325,7 +339,7 @@ export function ExpenseForm({
               </div>
             )}
           </div>
-          {fieldsSuggested && (
+          {(descriptionSuggested || amountSuggested || categorySuggested || childSuggested) && (
             <p className="text-xs text-muted-foreground">Fields auto-filled based on your file. Review before saving.</p>
           )}
           <div className="space-y-2">
@@ -338,7 +352,7 @@ export function ExpenseForm({
               value={description}
               onChange={(e) => {
                 setDescriptionTouched(true);
-                setFieldsSuggested(false);
+                setDescriptionSuggested(false);
                 setDescription(e.target.value);
               }}
               placeholder="e.g. Pediatrician visit"
@@ -363,7 +377,7 @@ export function ExpenseForm({
                 value={amount}
                 onChange={(e) => {
                   setAmountTouched(true);
-                  setFieldsSuggested(false);
+                  setAmountSuggested(false);
                   setAmount(e.target.value);
                 }}
                 placeholder="0.00"
@@ -380,9 +394,11 @@ export function ExpenseForm({
               id="exp-category"
               value={category}
               onChange={(e) => {
+                const next = e.target.value;
                 setCategoryTouched(true);
-                setFieldsSuggested(false);
-                setCategory(e.target.value);
+                setCategorySuggested(false);
+                setCategory(next);
+                if (next !== "other") setCategoryDescription("");
               }}
               className={cn(
                 "flex h-8 w-full rounded-card border border-input bg-background px-2 py-1 text-xs",
@@ -395,6 +411,25 @@ export function ExpenseForm({
                 </option>
               ))}
             </select>
+            {category === "other" && (
+              <div className="space-y-2 pt-1">
+                <Label htmlFor="exp-category-desc" className="text-xs font-medium">
+                  Category description
+                </Label>
+                <input
+                  id="exp-category-desc"
+                  type="text"
+                  value={categoryDescription}
+                  onChange={(e) => setCategoryDescription(e.target.value.slice(0, 100))}
+                  placeholder="e.g., School supplies, Birthday party"
+                  maxLength={100}
+                  className={cn(
+                    "flex h-8 w-full rounded-card border border-input bg-background px-2 py-1 text-xs",
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                  )}
+                />
+              </div>
+            )}
           </div>
           {children.length > 0 && (
             <div className="space-y-2">
@@ -404,7 +439,7 @@ export function ExpenseForm({
                 value={selectedChildIds}
                 onChange={(ids) => {
                   setChildTouched(true);
-                  setFieldsSuggested(false);
+                  setChildSuggested(false);
                   setSelectedChildIds(ids);
                 }}
               />

@@ -22,9 +22,11 @@ interface ColumnFilterPopoverProps {
   onOpenChange: (open: boolean) => void;
   active: boolean;
   triggerClassName?: string;
-  /** Optional: value to use for "no selection" (e.g. — No child) */
+  /** Optional: value to use for "no selection" (e.g. No child) */
   noneValue?: string;
   noneLabel?: string;
+  /** Optional: label for the "select all" option (default: All) */
+  allLabel?: string;
 }
 
 export function ColumnFilterPopover({
@@ -39,6 +41,7 @@ export function ColumnFilterPopover({
   triggerClassName,
   noneValue,
   noneLabel,
+  allLabel = "All",
 }: ColumnFilterPopoverProps) {
   const [local, setLocal] = useState<string[]>(selected);
 
@@ -111,7 +114,7 @@ export function ColumnFilterPopover({
                 onChange={toggleAll}
                 className="rounded border-border"
               />
-              All
+              {allLabel}
             </label>
             {noneValue != null && noneLabel != null && (
               <label className="flex items-center gap-2 cursor-pointer text-xs">

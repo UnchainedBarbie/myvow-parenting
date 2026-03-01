@@ -1,25 +1,18 @@
 "use client";
 
 import { useState, useMemo, useEffect, useCallback } from "react";
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { MoreHorizontal, FileText, Image, Download, Eye, Pencil, FolderInput, Lock, FileOutput, Trash2 } from "lucide-react";
-import { DocumentPreviewDrawer } from "@/components/documents/document-preview-drawer";
+import { DocumentDetailModal } from "@/components/documents/document-detail-modal";
 import { CategoryPill } from "@/components/documents/category-pill";
 import { getCategoryColor } from "@/lib/categoryColors";
 import { DateFilterPopover, type DateFilterValue } from "@/components/documents/date-filter-popover";
 import { ColumnFilterPopover } from "@/components/documents/column-filter-popover";
-import { DescriptionFilterPopover } from "@/components/documents/description-filter-popover";
+import { TitleFilterPopover } from "@/components/documents/title-filter-popover";
+import { Filter, Pencil, Download } from "lucide-react";
 
 const CHILD_NONE_VALUE = "__none__";
 
@@ -39,17 +32,28 @@ const CATEGORY_LABELS: Record<string, string> = {
   other: "Other",
 };
 
+/** Full list of category options for the filter (show all, not just those in current documents). */
+const ALL_CATEGORY_OPTIONS = [
+  { value: "medical", label: "Medical" },
+  { value: "school", label: "School" },
+  { value: "legal", label: "Legal" },
+  { value: "therapy", label: "Therapy" },
+  { value: "financial", label: "Financial" },
+  { value: "custody", label: "Custody" },
+  { value: "other", label: "Other" },
+] as const;
+
 const VISIBILITY_LABELS: Record<string, string> = {
-  private: "Private",
-  shared: "Shared",
-  family: "Shared",
+  private: "Just me",
+  family: "Family",
   parents_only: "Parents only",
-  family_read_only: "Shared + AI",
-  shared_ai_review: "Shared + AI review",
+  family_read_only: "Family",
+  shared_ai_review: "Parents only",
 };
 
 export type DocumentRow = {
   id: string;
+  title: string | null;
   file_name: string;
   file_size_bytes: number | null;
   mime_type: string | null;
@@ -91,17 +95,17 @@ function formatSize(bytes: number | null) {
 }
 
 /** Truncate to roughly one line (~60 chars) with ellipsis. */
-function truncateDescription(text: string | null, maxLen = 60) {
+function truncateTitle(text: string | null, maxLen = 60) {
   const t = text?.trim() ?? "";
   if (t.length <= maxLen) return t || "—";
   return t.slice(0, maxLen - 1).trim() + "…";
 }
 
 const SORT_OPTIONS = [
-  { value: "date_desc", label: "Date uploaded (newest)" },
-  { value: "date_asc", label: "Date uploaded (oldest)" },
-  { value: "desc_asc", label: "Description (A–Z)" },
-  { value: "desc_desc", label: "Description (Z–A)" },
+  { value: "date_desc", label: "Date (newest)" },
+  { value: "date_asc", label: "Date (oldest)" },
+  { value: "title_asc", label: "Title (A–Z)" },
+  { value: "title_desc", label: "Title (Z–A)" },
 ] as const;
 
 
@@ -120,24 +124,26 @@ function parseMultiParam(s: string | null): string[] {
 }
 
 export function DocumentList({ documents, children = [] }: DocumentListProps) {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const [searchInput, setSearchInput] = useState(() => searchParams.get("q") ?? "");
   const debouncedSearch = useDebounce(searchInput.trim(), 300);
   const [filterCategories, setFilterCategories] = useState<string[]>(() => parseMultiParam(searchParams.get("cat")));
   const [filterChildren, setFilterChildren] = useState<string[]>(() => parseMultiParam(searchParams.get("child")));
   const [filterVisibilities, setFilterVisibilities] = useState<string[]>(() => parseMultiParam(searchParams.get("vis")));
-  const [filterDescription, setFilterDescription] = useState(() => searchParams.get("desc") ?? "");
   const [startDate, setStartDate] = useState(() => searchParams.get("startDate") ?? "");
   const [endDate, setEndDate] = useState(() => searchParams.get("endDate") ?? "");
   const [sort, setSort] = useState(() => searchParams.get("sort") ?? "date_desc");
+  const [filterTitle, setFilterTitle] = useState(() => searchParams.get("tit") ?? "");
   const [dateFilterOpen, setDateFilterOpen] = useState(false);
   const [categoryFilterOpen, setCategoryFilterOpen] = useState(false);
   const [childFilterOpen, setChildFilterOpen] = useState(false);
   const [visibilityFilterOpen, setVisibilityFilterOpen] = useState(false);
-  const [descriptionFilterOpen, setDescriptionFilterOpen] = useState(false);
+  const [titleFilterOpen, setTitleFilterOpen] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [detailDoc, setDetailDoc] = useState<DocumentRow | null>(null);
-  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [detailOpen, setDetailOpen] = useState(false);
+  const [detailEditMode, setDetailEditMode] = useState(false);
   const [downloadingZip, setDownloadingZip] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<{ ids: string[]; doc?: DocumentRow } | null>(null);
 
@@ -168,19 +174,21 @@ export function DocumentList({ documents, children = [] }: DocumentListProps) {
       cat: filterCategories,
       child: filterChildren,
       vis: filterVisibilities,
-      desc: filterDescription,
+      tit: filterTitle,
       startDate,
       endDate,
       sort,
     });
-  }, [debouncedSearch, filterCategories, filterChildren, filterVisibilities, filterDescription, startDate, endDate, sort, setParams]);
+  }, [debouncedSearch, filterCategories, filterChildren, filterVisibilities, filterTitle, startDate, endDate, sort, setParams]);
 
   const dateFilterActive = !!(startDate || endDate);
   const categoryFilterActive = filterCategories.length > 0;
   const childFilterActive = filterChildren.length > 0;
   const visibilityFilterActive = filterVisibilities.length > 0;
-  const descriptionFilterActive = filterDescription.trim().length > 0;
-
+  const titleFilterActive =
+    filterTitle.trim().length > 0 ||
+    sort === "title_asc" ||
+    sort === "title_desc";
   function applyDateFilter({ startDate: s, endDate: e }: DateFilterValue) {
     setStartDate(s);
     setEndDate(e);
@@ -202,18 +210,16 @@ export function DocumentList({ documents, children = [] }: DocumentListProps) {
       const q = debouncedSearch.toLowerCase();
       list = list.filter(
         (d) =>
+          (d.title ?? "").toLowerCase().includes(q) ||
           (d.file_name ?? "").toLowerCase().includes(q) ||
           (d.category ?? "").toLowerCase().includes(q) ||
           (d.child_name ?? "").toLowerCase().includes(q) ||
           (d.description ?? "").toLowerCase().includes(q)
       );
     }
-    if (filterDescription.trim()) {
-      const words = filterDescription.trim().toLowerCase().split(/\s+/).filter(Boolean);
-      list = list.filter((d) => {
-        const desc = (d.description ?? "").toLowerCase();
-        return words.every((w) => desc.includes(w));
-      });
+    if (filterTitle.trim()) {
+      const q = filterTitle.trim().toLowerCase();
+      list = list.filter((d) => (d.title ?? "").toLowerCase().includes(q));
     }
     if (filterCategories.length > 0) list = list.filter((d) => filterCategories.includes(d.category));
     if (filterVisibilities.length > 0) list = list.filter((d) => filterVisibilities.includes(d.visibility));
@@ -235,19 +241,18 @@ export function DocumentList({ documents, children = [] }: DocumentListProps) {
       case "date_asc":
         list.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
         break;
-      case "desc_asc":
-        list.sort((a, b) => (a.description ?? "").toLowerCase().localeCompare((b.description ?? "").toLowerCase()));
+      case "title_asc":
+        list.sort((a, b) => (a.title ?? "").toLowerCase().localeCompare((b.title ?? "").toLowerCase()));
         break;
-      case "desc_desc":
-        list.sort((a, b) => (b.description ?? "").toLowerCase().localeCompare((a.description ?? "").toLowerCase()));
+      case "title_desc":
+        list.sort((a, b) => (b.title ?? "").toLowerCase().localeCompare((a.title ?? "").toLowerCase()));
         break;
       default:
         list.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
     }
     return list;
-  }, [documents, debouncedSearch, filterDescription, filterCategories, filterVisibilities, filterChildren, startDate, endDate, sort]);
+  }, [documents, debouncedSearch, filterTitle, filterCategories, filterVisibilities, filterChildren, startDate, endDate, sort]);
 
-  const categories = useMemo(() => [...new Set(documents.map((d) => d.category))], [documents]);
   const visibilities = useMemo(() => [...new Set(documents.map((d) => d.visibility))], [documents]);
 
   const visibleIds = useMemo(() => new Set(filteredAndSorted.map((d) => d.id)), [filteredAndSorted]);
@@ -278,9 +283,10 @@ export function DocumentList({ documents, children = [] }: DocumentListProps) {
     });
   }
 
-  function openDetail(doc: DocumentRow) {
+  function openDetail(doc: DocumentRow, editMode = false) {
     setDetailDoc(doc);
-    setDrawerOpen(true);
+    setDetailEditMode(editMode);
+    setDetailOpen(true);
   }
 
   async function handleDownloadSelected() {
@@ -329,10 +335,10 @@ export function DocumentList({ documents, children = [] }: DocumentListProps) {
         <CardTitle className="font-heading text-lg text-foreground">All documents</CardTitle>
       </CardHeader>
       <CardContent className="px-4 pb-4 space-y-3">
-        <div className="flex items-center gap-2">
+        <div>
           <Input
             type="search"
-            placeholder="Search description, filename, category, child…"
+            placeholder="Search title, filename, category, child…"
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
             className="h-9 w-full max-w-[280px] rounded-card border-border text-sm"
@@ -343,19 +349,20 @@ export function DocumentList({ documents, children = [] }: DocumentListProps) {
         {selectedIds.size > 0 && (
           <div className="flex flex-wrap items-center gap-2 py-2 px-3 rounded-card border border-border bg-background-secondary/60">
             <span className="text-xs text-foreground-secondary">{selectedIds.size} selected</span>
-            <Button size="sm" variant="outline" className="rounded-full h-8 text-xs" onClick={handleDownloadSelected} disabled={downloadingZip}>
+            <Button
+              size="sm"
+              className="rounded-full h-8 text-xs bg-[#7B9E87] hover:bg-[#6A8A78] text-white"
+              onClick={handleDownloadSelected}
+              disabled={downloadingZip}
+            >
               {downloadingZip ? "Preparing…" : "Download"}
             </Button>
-            <Button size="sm" variant="outline" className="rounded-full h-8 text-xs" onClick={() => {}}>
-              Export
-            </Button>
-            <Button size="sm" variant="outline" className="rounded-full h-8 text-xs" onClick={() => {}}>
-              Change visibility
-            </Button>
-            <Button size="sm" variant="outline" className="rounded-full h-8 text-xs" onClick={() => {}}>
-              Change category
-            </Button>
-            <Button size="sm" variant="outline" className="rounded-full h-8 text-xs text-alert hover:text-alert" onClick={handleBulkDelete}>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="rounded-full h-8 text-xs text-red-600/90 hover:text-red-700 hover:bg-red-50"
+              onClick={handleBulkDelete}
+            >
               Delete
             </Button>
           </div>
@@ -367,22 +374,23 @@ export function DocumentList({ documents, children = [] }: DocumentListProps) {
             <p className="text-xs text-foreground-secondary">Upload your first document using the form on the left.</p>
           </div>
         ) : (
-          <div className="overflow-x-auto rounded-card border border-border bg-background-secondary/40">
-            <table className="w-full text-sm table-fixed" style={{ tableLayout: "fixed", minWidth: 900 }}>
+          <>
+          <p className="text-[11px] text-foreground-secondary mb-1.5">Select documents to download multiple files</p>
+          <div className="overflow-x-auto rounded-card border border-border bg-background">
+            <table className="min-w-full table-fixed text-left text-xs md:text-sm">
               <colgroup>
                 <col style={{ width: 40 }} />
-                <col style={{ width: 80 }} />
-                <col style={{ width: 36 }} />
-                <col />
-                <col style={{ width: 140 }} />
-                <col style={{ width: 140 }} />
-                <col style={{ width: 150 }} />
-                <col style={{ width: 130 }} />
-                <col style={{ width: 140 }} />
+                <col style={{ width: 76 }} />
+                <col style={{ width: "40%" }} />
+                <col style={{ width: 120 }} />
+                <col style={{ width: 100 }} />
+                <col style={{ width: 100 }} />
+                <col style={{ width: 100 }} />
+                <col style={{ width: 72 }} />
               </colgroup>
-              <thead className="bg-background-secondary/80 text-foreground-secondary sticky top-0 z-10">
-                <tr>
-                  <th className="px-3 py-2.5 w-10">
+              <thead>
+                <tr className="bg-[#E7EFE8]/80 text-foreground-secondary">
+                  <th className="w-10 px-3 py-2">
                     <input
                       type="checkbox"
                       checked={allVisibleSelected}
@@ -391,27 +399,40 @@ export function DocumentList({ documents, children = [] }: DocumentListProps) {
                       className="rounded border-border"
                     />
                   </th>
-                  <th className="px-3 py-2.5 text-left font-medium w-20">Doc ID</th>
-                  <th className="px-3 py-2.5 text-left font-medium w-8" title="File type"><span className="sr-only">Type</span></th>
-                  <th className="px-3 py-2.5 text-left font-medium min-w-[140px]">
+                  <th className="px-3 py-2 font-medium">Doc ID</th>
+                  <th className="px-3 py-2 font-medium">
                     <span className="inline-flex items-center gap-1">
-                      <span>Description</span>
-                      <DescriptionFilterPopover
-                        open={descriptionFilterOpen}
-                        onOpenChange={setDescriptionFilterOpen}
-                        value={filterDescription}
-                        onApply={setFilterDescription}
-                        onClear={() => setFilterDescription("")}
-                        active={descriptionFilterActive}
+                      <button
+                        type="button"
+                        onClick={() => setSort((prev) => (prev === "title_asc" ? "title_desc" : "title_asc"))}
+                        className="hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded text-left"
+                        aria-label={sort === "title_asc" ? "Title (A–Z), click for Z–A" : sort === "title_desc" ? "Title (Z–A), click for A–Z" : "Sort by title"}
+                      >
+                        Title
+                      </button>
+                      <TitleFilterPopover
+                        open={titleFilterOpen}
+                        onOpenChange={setTitleFilterOpen}
+                        value={filterTitle}
+                        currentSort={sort}
+                        onApply={(value, titleSort) => {
+                          setFilterTitle(value);
+                          setSort(titleSort);
+                        }}
+                        onClear={() => {
+                          setFilterTitle("");
+                          setSort("date_desc");
+                        }}
+                        active={titleFilterActive}
                       />
                     </span>
                   </th>
-                  <th className="px-3 py-2.5 text-left font-medium">
+                  <th className="px-3 py-2 font-medium">
                     <span className="inline-flex items-center gap-1">
                       <span>Category</span>
                       <ColumnFilterPopover
                         title="Category"
-                        options={categories.map((c) => ({ value: c, label: CATEGORY_LABELS[c] ?? c }))}
+                        options={[...ALL_CATEGORY_OPTIONS]}
                         selected={filterCategories}
                         onApply={setFilterCategories}
                         onClear={() => setFilterCategories([])}
@@ -421,7 +442,7 @@ export function DocumentList({ documents, children = [] }: DocumentListProps) {
                       />
                     </span>
                   </th>
-                  <th className="px-3 py-2.5 text-left font-medium">
+                  <th className="px-3 py-2 font-medium">
                     <span className="inline-flex items-center gap-1">
                       <span>Child</span>
                       <ColumnFilterPopover
@@ -434,11 +455,12 @@ export function DocumentList({ documents, children = [] }: DocumentListProps) {
                         onOpenChange={setChildFilterOpen}
                         active={childFilterActive}
                         noneValue={CHILD_NONE_VALUE}
-                        noneLabel="— No child"
+                        noneLabel="No child"
+                        allLabel="All children"
                       />
                     </span>
                   </th>
-                  <th className="px-3 py-2.5 text-left font-medium whitespace-nowrap">
+                  <th className="px-3 py-2 font-medium whitespace-nowrap">
                     <span className="inline-flex items-center gap-1">
                       <button
                         type="button"
@@ -460,7 +482,7 @@ export function DocumentList({ documents, children = [] }: DocumentListProps) {
                       </span>
                     </span>
                   </th>
-                  <th className="px-3 py-2.5 text-left font-medium">
+                  <th className="px-3 py-2 font-medium">
                     <span className="inline-flex items-center gap-1">
                       <span>Visibility</span>
                       <ColumnFilterPopover
@@ -475,24 +497,13 @@ export function DocumentList({ documents, children = [] }: DocumentListProps) {
                       />
                     </span>
                   </th>
-                  <th className="px-3 py-2.5 w-[140px]">
-                    <select
-                      value={sort}
-                      onChange={(e) => setSort(e.target.value)}
-                      className="h-8 w-full rounded-card border border-border bg-background px-2 text-xs text-foreground-secondary"
-                      aria-label="Sort by"
-                    >
-                      {SORT_OPTIONS.map((opt) => (
-                        <option key={opt.value} value={opt.value}>{opt.label}</option>
-                      ))}
-                    </select>
-                  </th>
+                  <th className="w-[72px] px-2 py-2 font-medium" aria-label="Actions" />
                 </tr>
               </thead>
               <tbody>
                 {filteredAndSorted.length === 0 ? (
                   <tr>
-                    <td colSpan={9} className="px-3 py-6 text-sm text-foreground-secondary text-center">
+                    <td colSpan={8} className="px-3 py-6 text-sm text-foreground-secondary text-center">
                       No documents match your filters.
                     </td>
                   </tr>
@@ -500,123 +511,101 @@ export function DocumentList({ documents, children = [] }: DocumentListProps) {
                 filteredAndSorted.map((doc, idx) => {
                   const docIdLabel = doc.document_number != null ? docIdFromNumber(doc.document_number) : docIdFromNumber(idx + 1);
                   const isDeleted = !!doc.deleted_at;
-                  const isImage = doc.mime_type?.startsWith("image/");
                   const categoryColors = getCategoryColor(doc.category);
+                  const rowBg = isDeleted
+                    ? "bg-gray-50"
+                    : idx % 2 === 0
+                      ? "bg-background"
+                      : "bg-[#FAF8F5]";
                   return (
                     <tr
                       key={doc.id}
                       className={cn(
                         "border-t border-border cursor-pointer border-l-4",
                         categoryColors.stripeClass,
-                        idx % 2 === 0 ? "bg-background" : "bg-background-secondary/40",
+                        rowBg,
                         isDeleted && "opacity-60",
-                        "hover:bg-primary/5"
+                        "hover:bg-background-secondary/50"
                       )}
                       onClick={(e) => {
-                        if ((e.target as HTMLElement).closest('input[type="checkbox"]') || (e.target as HTMLElement).closest("[data-dropdown]")) return;
-                        openDetail(doc);
+                        if ((e.target as HTMLElement).closest('input[type="checkbox"]')) return;
+                        openDetail(doc, false);
                       }}
                     >
-                      <td className="px-3 py-2.5 w-10" onClick={(e) => e.stopPropagation()}>
+                      <td className="px-3 py-1.5 w-10 align-middle" onClick={(e) => e.stopPropagation()}>
                         <input
                           type="checkbox"
                           checked={selectedIds.has(doc.id)}
                           onChange={() => toggleSelect(doc.id)}
-                          aria-label={`Select ${doc.description ?? doc.file_name}`}
+                          aria-label={`Select ${doc.title ?? doc.file_name}`}
                           className="rounded border-border"
                         />
                       </td>
-                      <td className={cn("px-3 py-2.5 font-mono text-xs", isDeleted && "line-through text-foreground-secondary")}>
+                      <td className={cn("px-3 py-1.5 text-xs align-middle", isDeleted && "line-through text-foreground-secondary")}>
                         {docIdLabel}
                       </td>
-                      <td className="px-3 py-2.5" title={doc.file_name}>
-                        {isImage ? (
-                          <Image className="h-4 w-4 text-foreground-secondary" aria-hidden />
-                        ) : (
-                          <FileText className="h-4 w-4 text-foreground-secondary" aria-hidden />
-                        )}
-                      </td>
-                      <td className={cn("px-3 py-2.5 min-w-[140px]", isDeleted && "line-through")}>
-                        <div className="flex flex-col gap-0.5">
+                      <td className={cn("px-3 py-1.5 align-middle min-w-0", isDeleted && "line-through")}>
+                        <div className="flex flex-col gap-0.5 min-w-0">
                           <span
-                            className="text-foreground line-clamp-1"
-                            title={doc.description ?? undefined}
+                            className="font-semibold text-foreground overflow-hidden text-ellipsis whitespace-nowrap block"
+                            title={doc.title?.trim() || doc.file_name || undefined}
                           >
-                            {truncateDescription(doc.description)}
+                            {doc.title?.trim() || doc.file_name || "—"}
                           </span>
-                          <span className="text-[11px] text-foreground-secondary truncate">
+                          <span className="text-[11px] text-foreground-secondary overflow-hidden text-ellipsis whitespace-nowrap block">
                             {doc.file_name ?? "—"}
                             {doc.file_size_bytes != null && ` • ${formatSize(doc.file_size_bytes)}`}
                           </span>
                         </div>
                       </td>
-                      <td className={cn("px-3 py-2.5", isDeleted && "line-through")}>
+                      <td className={cn("px-3 py-1.5 align-middle", isDeleted && "line-through")}>
                         <CategoryPill
                           category={doc.category}
                           label={CATEGORY_LABELS[doc.category] ?? doc.category}
                         />
                       </td>
-                      <td className={cn("px-3 py-2.5 text-foreground-secondary", isDeleted && "line-through")}>
-                        {doc.child_name ?? "—"}
+                      <td className={cn("px-3 py-1.5 text-foreground-secondary align-middle", isDeleted && "line-through")}>
+                        {doc.child_name ?? "All children"}
                       </td>
-                      <td className={cn("px-3 py-2.5 text-foreground-secondary whitespace-nowrap", isDeleted && "line-through")}>
+                      <td className={cn("px-3 py-1.5 text-foreground-secondary whitespace-nowrap align-middle", isDeleted && "line-through")}>
                         {formatDate(doc.created_at)}
                       </td>
-                      <td className="px-3 py-2.5">
+                      <td className="px-3 py-1.5 align-middle">
                         <span
                           className={cn(
                             "inline-block px-2 py-0.5 rounded-full text-xs font-medium",
-                            doc.visibility === "private" ? "bg-gray-200 text-gray-800" : "bg-primary/15 text-primary"
+                            doc.visibility === "private"
+                              ? "bg-gray-200 text-gray-800"
+                              : "bg-[#7B9E87]/15 text-[#5A7A63]"
                           )}
                         >
                           {VISIBILITY_LABELS[doc.visibility] ?? doc.visibility}
                         </span>
                       </td>
-                      <td className="px-3 py-2.5 w-10" onClick={(e) => e.stopPropagation()} data-dropdown>
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <button
-                              type="button"
-                              className="p-1.5 rounded hover:bg-muted text-foreground-secondary focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                              aria-label="Row actions"
-                            >
-                              <MoreHorizontal className="h-4 w-4" />
-                            </button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuItem onClick={() => openDetail(doc)}>
-                              <Eye className="h-3.5 w-3.5 mr-2" /> Preview
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              onClick={async () => {
-                                const res = await fetch(`/api/documents/${doc.id}/download`);
-                                const data = await res.json();
-                                if (data?.url) window.open(data.url, "_blank");
-                              }}
-                            >
-                              <Download className="h-3.5 w-3.5 mr-2" /> Download
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => openDetail(doc)}>
-                              <Pencil className="h-3.5 w-3.5 mr-2" /> Edit metadata
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => {}}>
-                              <FolderInput className="h-3.5 w-3.5 mr-2" /> Move category
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => {}}>
-                              <Lock className="h-3.5 w-3.5 mr-2" /> Change visibility
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => {}}>
-                              <FileOutput className="h-3.5 w-3.5 mr-2" /> Export
-                            </DropdownMenuItem>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem
-                              className="text-alert focus:text-alert"
-                              onClick={() => setDeleteConfirm({ ids: [doc.id], doc })}
-                            >
-                              <Trash2 className="h-3.5 w-3.5 mr-2" /> Delete
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
+                      <td className="px-2 py-1.5 align-middle" onClick={(e) => e.stopPropagation()}>
+                        <span className="inline-flex items-center gap-0.5">
+                          <button
+                            type="button"
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              const res = await fetch(`/api/documents/${doc.id}/download`);
+                              const data = await res.json();
+                              if (data?.url) window.open(data.url, "_blank");
+                            }}
+                            className="p-1.5 rounded text-foreground-secondary hover:text-foreground hover:bg-muted/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            aria-label="Download document"
+                          >
+                            <Download className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); openDetail(doc, true); }}
+                            className="p-1.5 rounded text-foreground-secondary hover:text-foreground hover:bg-muted/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            aria-label="Edit document"
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </button>
+                        </span>
                       </td>
                     </tr>
                   );
@@ -625,13 +614,17 @@ export function DocumentList({ documents, children = [] }: DocumentListProps) {
               </tbody>
             </table>
           </div>
+          </>
         )}
       </CardContent>
 
-      <DocumentPreviewDrawer
-        open={drawerOpen}
-        onClose={() => { setDrawerOpen(false); setDetailDoc(null); }}
+      <DocumentDetailModal
+        open={detailOpen}
+        onClose={() => { setDetailOpen(false); setDetailDoc(null); }}
         document={detailDoc}
+        initialEditMode={detailEditMode}
+        onSaved={() => router.refresh()}
+        children={children}
       />
 
       {deleteConfirm && (

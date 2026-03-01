@@ -4,7 +4,7 @@ import { getServiceRoleClient } from "@/lib/supabase/server";
 
 const TITLE_MAX = 120;
 const DESCRIPTION_MAX = 250;
-const VISIBILITY_VALUES = ["family", "private"] as const;
+const VISIBILITY_VALUES = ["family", "parents_only", "private"] as const;
 
 /**
  * Upload to Supabase Storage + create document metadata. Court-ready vault.
@@ -23,7 +23,6 @@ export async function POST(request: NextRequest) {
     const child_id = formData.get("child_id") as string | null;
     const description = formData.get("description") as string | null;
     const visibility = formData.get("visibility") as string | null;
-    const related_comm_id = formData.get("related_comm_id") as string | null;
 
     if (!file || !case_id) {
       return NextResponse.json({ message: "Missing file or case_id" }, { status: 400 });
@@ -79,9 +78,7 @@ export async function POST(request: NextRequest) {
       description: descTrimmed,
       content_hash: "pending",
       visibility: visibilityValue,
-      related_comm_id: related_comm_id?.trim() || null,
       ai_processed: false,
-      access_log: [],
     };
 
     const { data: doc, error: docError } = await admin

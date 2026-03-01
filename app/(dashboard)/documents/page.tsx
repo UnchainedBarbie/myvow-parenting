@@ -46,7 +46,7 @@ export default async function DocumentsPage() {
 
   const { data: docsRaw } = await admin
     .from("documents")
-    .select("id, file_name, file_size_bytes, mime_type, category, child_id, description, created_at")
+    .select("id, title, file_name, file_size_bytes, mime_type, category, child_id, description, created_at, visibility")
     .eq("case_id", caseId)
     .order("created_at", { ascending: false });
 
@@ -75,21 +75,39 @@ export default async function DocumentsPage() {
     {} as Record<string, string>
   );
 
-  const documents: DocumentRow[] = (docsRaw ?? []).map((d, index) => ({
-    id: d.id,
-    file_name: d.file_name,
-    file_size_bytes: d.file_size_bytes,
-    mime_type: d.mime_type,
-    category: d.category,
-    child_id: d.child_id,
-    child_name: d.child_id ? childMap[d.child_id] ?? null : null,
-    description: d.description,
-    created_at: d.created_at,
-    visibility: (d as { visibility?: string }).visibility ?? "private",
-    related_comm_id: (d as { related_comm_id?: string | null }).related_comm_id ?? null,
-    deleted_at: (d as { deleted_at?: string | null }).deleted_at ?? null,
-    document_number: (d as { document_number?: number | null }).document_number ?? index + 1,
-  }));
+  const documents: DocumentRow[] = (docsRaw ?? []).map((d, index) => {
+  const row = d as {
+    id: string;
+    title?: string | null;
+    file_name: string;
+    file_size_bytes?: number | null;
+    mime_type?: string | null;
+    category: string;
+    child_id?: string | null;
+    description?: string | null;
+    created_at: string;
+    visibility?: string;
+    related_comm_id?: string | null;
+    deleted_at?: string | null;
+    document_number?: number | null;
+  };
+  return {
+    id: row.id,
+    title: row.title ?? null,
+    file_name: row.file_name,
+    file_size_bytes: row.file_size_bytes ?? null,
+    mime_type: row.mime_type ?? null,
+    category: row.category,
+    child_id: row.child_id ?? null,
+    child_name: row.child_id ? childMap[row.child_id] ?? null : null,
+    description: row.description ?? null,
+    created_at: row.created_at,
+    visibility: row.visibility ?? "private",
+    related_comm_id: row.related_comm_id ?? null,
+    deleted_at: row.deleted_at ?? null,
+    document_number: row.document_number ?? index + 1,
+  };
+});
 
   const logEntries = (messagesForLog ?? []).map((m) => ({
     id: m.id,

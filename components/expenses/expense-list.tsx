@@ -56,7 +56,7 @@ interface ExpenseListProps {
   expenses: ExpenseRow[];
   currentUserId: string;
   custodySplitPercent: number;
-  children: { id: string; first_name: string }[];
+  children: { id: string; first_name: string; profile_image?: string | null }[];
 }
 
 function formatDate(createdAt: string) {
@@ -650,7 +650,30 @@ export function ExpenseList({
                         </span>
                       </td>
                       <td className="px-3 py-1.5 text-foreground-secondary align-middle">
-                        {exp.child_name ?? "—"}
+                        {exp.child_id && exp.child_name ? (
+                          <div className="flex items-center gap-2">
+                            {(() => {
+                              const child = children.find((c) => c.id === exp.child_id);
+                              if (child?.profile_image) {
+                                return (
+                                  <img
+                                    src={child.profile_image}
+                                    alt={child.first_name}
+                                    className="h-6 w-6 rounded-full object-cover border border-border/60 bg-emerald-50"
+                                  />
+                                );
+                              }
+                              return (
+                                <div className="h-6 w-6 rounded-full bg-emerald-50 text-emerald-800 flex items-center justify-center text-[10px] font-medium">
+                                  {exp.child_name?.charAt(0).toUpperCase() ?? ""}
+                                </div>
+                              );
+                            })()}
+                            <span>{exp.child_name}</span>
+                          </div>
+                        ) : (
+                          "—"
+                        )}
                       </td>
                       <td className="px-3 py-1.5 text-foreground-secondary whitespace-nowrap align-middle">
                         {formatDate(exp.created_at)}

@@ -26,55 +26,67 @@ export function MessageBubble({
   showOriginalByDefault = false,
 }: MessageBubbleProps) {
   const [showOriginal, setShowOriginal] = useState(showOriginalByDefault);
-  const displayContent = showOriginal
-    ? message.original_content
-    : (message.ai_rewritten_content ?? message.original_content);
+  const displayContent =
+    message.ai_rewritten_content ?? message.original_content;
   const isOutgoing = message.direction === "outgoing";
 
   return (
     <div
       className={cn(
-        "rounded-card shadow-card p-4 max-w-[85%]",
-        isOutgoing ? "ml-auto bg-primary-light" : "mr-auto bg-background-secondary"
+        "max-w-[82%] md:max-w-[70%] space-y-1",
+        isOutgoing ? "ml-auto items-end text-right" : "mr-auto items-start text-left"
       )}
     >
-      {message.category && (
-        <span className="inline-block rounded-full bg-muted px-2 py-0.5 text-xs text-foreground-secondary mb-2">
-          {message.category}
-          {message.sub_category ? ` · ${message.sub_category}` : ""}
-        </span>
-      )}
-      <p className="text-sm text-foreground whitespace-pre-wrap">{displayContent}</p>
-      {message.flags && message.flags.length > 0 && (
-        <div className="mt-2 flex flex-wrap gap-1">
-          {message.flags.map((f) => (
-            <span
-              key={f.flag_type}
-              className="rounded px-2 py-0.5 text-xs text-alert/90 bg-alert/10 border border-alert/20"
-            >
-              {f.description || f.flag_type}
-            </span>
-          ))}
-        </div>
-      )}
-      <div className="mt-2 flex items-center justify-between gap-2 text-xs text-foreground-secondary">
-        <span>
-          {message.external_comm_id && (
-            <span className="font-mono">Comm #{message.external_comm_id.slice(-8)}</span>
-          )}
-        </span>
+      <div
+        className={cn(
+          "inline-block rounded-2xl px-3 py-2 text-sm whitespace-pre-wrap text-[#3D3D3D]",
+          isOutgoing
+            ? "bg-[#EEF2E9] rounded-br-[4px] rounded-bl-[14px]"
+            : "bg-[#F9F6F0] rounded-bl-[4px] rounded-br-[14px]"
+        )}
+      >
+        {displayContent}
+      </div>
+      <div className="flex items-center justify-between gap-3 text-[11px] text-[#8A8A8A]">
+        {message.external_comm_id ? (
+          <span className="font-mono hidden sm:inline">
+            Comm #{message.external_comm_id.slice(-8)}
+          </span>
+        ) : (
+          <span />
+        )}
         {message.original_content !== (message.ai_rewritten_content ?? "") && (
           <button
             type="button"
             onClick={() => setShowOriginal(!showOriginal)}
-            className="text-info hover:underline"
+            className="inline-flex items-center gap-1 text-[11px] text-[#5B7A52] hover:underline"
           >
-            {showOriginal ? "View mediated" : "View original"}
+            <span role="img" aria-label="View original">
+              👁️
+            </span>
+            <span>{showOriginal ? "Hide original" : "View original"}</span>
           </button>
         )}
       </div>
-      <time className="block text-xs text-foreground-secondary mt-1">
-        {new Date(message.created_at).toLocaleString()}
+      {showOriginal && (
+        <div
+          className={cn(
+            "mt-1 inline-block max-w-full rounded-2xl border border-[#E8E4DC] bg-[#FFF8F0] px-3 py-2 text-[11px] italic text-[#8A8A8A]"
+          )}
+        >
+          <div className="mb-0.5 text-[10px] font-medium uppercase tracking-wide text-[#B0A899]">
+            Original message
+          </div>
+          <div className="whitespace-pre-wrap">{message.original_content}</div>
+        </div>
+      )}
+      <time className="block text-[10px] text-[#8A8A8A]">
+        {new Date(message.created_at).toLocaleString(undefined, {
+          month: "short",
+          day: "numeric",
+          hour: "numeric",
+          minute: "2-digit",
+        })}
       </time>
     </div>
   );

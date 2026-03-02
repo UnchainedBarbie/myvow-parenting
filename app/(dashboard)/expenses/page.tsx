@@ -50,7 +50,7 @@ export default async function ExpensesPage() {
 
   const { data: children } = await admin
     .from("children")
-    .select("id, first_name")
+    .select("id, first_name, profile_image")
     .eq("case_id", caseId)
     .order("first_name");
 
@@ -68,15 +68,18 @@ export default async function ExpensesPage() {
     childIds.length > 0
       ? await admin
           .from("children")
-          .select("id, first_name")
+          .select("id, first_name, profile_image")
           .in("id", childIds)
       : { data: [] };
   const childMap = (childRows ?? []).reduce(
     (acc, c) => {
-      acc[c.id] = c.first_name;
+      acc[c.id] = {
+        first_name: c.first_name as string,
+        profile_image: (c.profile_image as string | null) ?? null,
+      };
       return acc;
     },
-    {} as Record<string, string>
+    {} as Record<string, { first_name: string; profile_image: string | null }>
   );
 
   const receiptIds = [
@@ -108,7 +111,7 @@ export default async function ExpensesPage() {
     amount: String(e.amount),
     category: e.category,
     child_id: e.child_id,
-    child_name: e.child_id ? childMap[e.child_id] ?? null : null,
+    child_name: e.child_id ? childMap[e.child_id]?.first_name ?? null : null,
     amount_owed: e.amount_owed != null ? String(e.amount_owed) : null,
     status: e.status,
     created_at: e.created_at,

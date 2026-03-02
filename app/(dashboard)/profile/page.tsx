@@ -25,7 +25,7 @@ export default async function ProfilePage() {
     .eq("id", user.id)
     .single();
 
-  let children: { id: string; first_name: string; date_of_birth: string | null; member_status: "not_invited" | "invited" | "active"; invited_email: string | null; invited_phone: string | null; case_id?: string | null }[] = [];
+  let children: { id: string; first_name: string; date_of_birth: string | null; member_status: "not_invited" | "invited" | "active"; invited_email: string | null; invited_phone: string | null; case_id?: string | null; profile_image?: string | null }[] = [];
   let courtOrders: CourtOrderRow[] = [];
   let coparent: { id: string | null; name: string; email: string | null; status: "not_invited" | "invited" | "connected" } | null = null;
 
@@ -52,7 +52,7 @@ export default async function ProfilePage() {
     // All children with deleted_at IS NULL; do not filter by member_status — all appear in Family table
     const childrenResult = await admin
       .from("children")
-      .select("*")
+      .select("id, first_name, date_of_birth, member_status, invited_email, invited_phone, case_id, profile_image")
       .eq("case_id", caseId)
       .is("deleted_at", null)
       .order("first_name");
@@ -64,7 +64,7 @@ export default async function ProfilePage() {
       error: childrenResult.error ?? null,
     });
 
-    const rawChildren = (childrenResult.data ?? []) as { id: string; first_name: string; date_of_birth: string | null; member_status?: string | null; invited_email?: string | null; invited_phone?: string | null; case_id?: string | null }[];
+    const rawChildren = (childrenResult.data ?? []) as { id: string; first_name: string; date_of_birth: string | null; member_status?: string | null; invited_email?: string | null; invited_phone?: string | null; case_id?: string | null; profile_image?: string | null }[];
     children = rawChildren.map((c) => ({
       id: c.id,
       first_name: c.first_name,
@@ -73,6 +73,7 @@ export default async function ProfilePage() {
       invited_email: c.invited_email ?? null,
       invited_phone: c.invited_phone ?? null,
       case_id: c.case_id ?? null,
+      profile_image: c.profile_image ?? null,
     }));
 
     try {

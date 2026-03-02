@@ -103,6 +103,7 @@ export type ChildRow = {
   member_status: "not_invited" | "invited" | "active";
   invited_email?: string | null;
   invited_phone?: string | null;
+  profile_image?: string | null;
 };
 
 export type ProfileContentProps = {
@@ -234,6 +235,9 @@ export function ProfileContent({
   // Children section: delete
   const [deletingChildId, setDeletingChildId] = useState<string | null>(null);
   const [deleteChildConfirm, setDeleteChildConfirm] = useState<{ id: string; firstName: string } | null>(null);
+  const [avatarTargetChildId, setAvatarTargetChildId] = useState<string | null>(null);
+  const [avatarUploadingId, setAvatarUploadingId] = useState<string | null>(null);
+  const avatarFileRef = useRef<HTMLInputElement>(null);
   // Co-parent invite
   const [showAddCoparentForm, setShowAddCoparentForm] = useState(false);
   const [coparentInviteEmail, setCoparentInviteEmail] = useState("");
@@ -445,6 +449,30 @@ export function ProfileContent({
     }
   }
 
+  async function handleAvatarFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file || !avatarTargetChildId) return;
+    setAvatarUploadingId(avatarTargetChildId);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await fetch(`/api/children/${avatarTargetChildId}/avatar`, {
+        method: "POST",
+        body: formData,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        window.alert((data as { error?: string }).error ?? "Failed to upload photo.");
+        return;
+      }
+      router.refresh();
+    } finally {
+      setAvatarUploadingId(null);
+      setAvatarTargetChildId(null);
+    }
+  }
+
   async function handleInviteCoparent(e: React.FormEvent) {
     e.preventDefault();
     const email = coparentInviteEmail.trim();
@@ -566,6 +594,13 @@ export function ProfileContent({
 
   return (
     <div className="space-y-6">
+      <input
+        ref={avatarFileRef}
+        type="file"
+        accept="image/jpeg,image/png,image/webp"
+        className="hidden"
+        onChange={handleAvatarFileChange}
+      />
       <p className="text-xs md:text-sm text-foreground-secondary mb-4">Your info, court orders, and family.</p>
 
       <div className="flex justify-start">
@@ -1032,7 +1067,32 @@ export function ProfileContent({
                       </form>
                     ) : (
                       <div className="flex items-center py-2 px-2 gap-2">
-                        <span className="w-28 shrink-0 text-sm font-medium truncate" title={c.first_name}>{c.first_name}</span>
+                        <button
+                          type="button"
+                          className="flex items-center gap-2 w-32 shrink-0 text-left"
+                          onClick={() => {
+                            setAvatarTargetChildId(c.id);
+                            avatarFileRef.current?.click();
+                          }}
+                        >
+                          {c.profile_image ? (
+                            <img
+                              src={c.profile_image}
+                              alt={c.first_name}
+                              className="h-7 w-7 rounded-full object-cover border border-border/60 bg-emerald-50"
+                            />
+                          ) : (
+                            <div className="h-7 w-7 rounded-full bg-emerald-50 text-emerald-800 flex items-center justify-center text-xs font-medium">
+                              {c.first_name?.charAt(0).toUpperCase() ?? ""}
+                            </div>
+                          )}
+                          <span
+                            className="text-sm font-medium truncate text-foreground"
+                            title={c.first_name}
+                          >
+                            {c.first_name}
+                          </span>
+                        </button>
                         <span className="w-20 shrink-0 text-xs text-foreground-secondary">Child</span>
                         <span className="w-16 shrink-0 text-xs text-foreground-secondary">{formatAge(c.date_of_birth)}</span>
                         <span className="w-32 shrink-0 text-xs text-foreground-secondary">{formatDate(c.date_of_birth)}</span>

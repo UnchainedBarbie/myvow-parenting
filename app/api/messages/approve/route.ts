@@ -18,10 +18,12 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const {
       case_id,
+      conversation_id,
       original_content,
       ai_rewritten_content,
     } = body as {
       case_id?: string;
+      conversation_id?: string | null;
       original_content?: string;
       ai_rewritten_content?: string;
     };
@@ -36,10 +38,12 @@ export async function POST(request: NextRequest) {
       .from("messages")
       .insert({
         case_id,
+        conversation_id: conversation_id ?? null,
         direction: "outgoing",
         sender_id: user.id,
         original_content,
         ai_rewritten_content,
+        ai_rewritten: true,
         current_status: "sent",
       })
       .select("id")

@@ -61,7 +61,7 @@ export default async function CalendarPage({
 
   const { data: children } = await admin
     .from("children")
-    .select("id, first_name")
+    .select("id, first_name, profile_image")
     .eq("case_id", caseId)
     .order("first_name");
 
@@ -84,14 +84,17 @@ export default async function CalendarPage({
   ] as string[];
   const { data: childRows } =
     childIds.length > 0
-      ? await admin.from("children").select("id, first_name").in("id", childIds)
+      ? await admin.from("children").select("id, first_name, profile_image").in("id", childIds)
       : { data: [] };
   const childMap = (childRows ?? []).reduce(
     (acc, c) => {
-      acc[c.id] = c.first_name;
+      acc[c.id] = {
+        first_name: c.first_name as string,
+        profile_image: (c.profile_image as string | null) ?? null,
+      };
       return acc;
     },
-    {} as Record<string, string>
+    {} as Record<string, { first_name: string; profile_image: string | null }>
   );
 
   const creatorIds = [
@@ -156,7 +159,7 @@ export default async function CalendarPage({
         description: desc,
         event_type: e.event_type,
         child_id: e.child_id,
-        child_name: e.child_id ? childMap[e.child_id] ?? null : null,
+        child_name: e.child_id ? childMap[e.child_id]?.first_name ?? null : null,
         start_time: e.start_time,
         end_time: e.end_time,
         all_day: e.all_day ?? false,
@@ -187,7 +190,7 @@ export default async function CalendarPage({
     id: e.id,
     title: e.title,
     event_type: e.event_type as string | null,
-    child_name: e.child_id ? childMap[e.child_id] ?? null : null,
+    child_name: e.child_id ? childMap[e.child_id]?.first_name ?? null : null,
     start_time: e.start_time as string,
     status: (e as any).status as string | null,
   }));
@@ -214,7 +217,7 @@ export default async function CalendarPage({
       description: desc,
       event_type: e.event_type,
       child_id: e.child_id,
-      child_name: e.child_id ? childMap[e.child_id] ?? null : null,
+    child_name: e.child_id ? childMap[e.child_id]?.first_name ?? null : null,
       start_time: e.start_time,
       end_time: e.end_time,
       all_day: e.all_day ?? false,

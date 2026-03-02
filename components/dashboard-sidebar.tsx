@@ -11,6 +11,9 @@ import {
   Calendar,
   FileBarChart,
   LogOut,
+  Users,
+  Feather,
+  Leaf,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -19,11 +22,12 @@ import { Separator } from "@/components/ui/separator";
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/my-vow", label: "My Vow", icon: Feather },
   { href: "/messages", label: "Messages", icon: MessageSquare },
   { href: "/expenses", label: "Expenses", icon: Receipt },
-  { href: "/documents", label: "Documents", icon: FileText },
   { href: "/calendar", label: "Calendar", icon: Calendar },
-  { href: "/reports", label: "Reports", icon: FileBarChart },
+  { href: "/contacts", label: "Contacts", icon: Users },
+  { href: "/documents", label: "Documents", icon: FileText },
 ];
 
 export function DashboardSidebar() {
@@ -69,7 +73,19 @@ export function DashboardSidebar() {
         })}
       </nav>
       <Separator className="mx-3" />
-      <div className="p-3">
+      <div className="p-3 space-y-1">
+        <Link
+          href="/sage"
+          className={cn(
+            "flex items-center gap-3 rounded-card px-3 py-2 text-sm font-medium transition-colors",
+            pathname.startsWith("/sage")
+              ? "bg-primary-light text-primary-dark"
+              : "text-foreground-secondary hover:bg-muted hover:text-foreground"
+          )}
+        >
+          <Leaf className="h-5 w-5 shrink-0" />
+          Sage
+        </Link>
         <Button
           variant="ghost"
           className="w-full justify-start gap-3 text-foreground-secondary"

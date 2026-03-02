@@ -1,6 +1,6 @@
 import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
-import { MessagesView } from "@/components/messages/messages-view";
+import { MessagesSplitView } from "@/components/messages/messages-split-view";
 
 export default async function MessagesPage() {
   const supabase = await createClient();
@@ -20,79 +20,67 @@ export default async function MessagesPage() {
 
   const caseId = membership?.case_id ?? null;
 
-  const { data: messages } = caseId
+  const { data: children } = caseId
     ? await admin
-        .from("messages")
-        .select(
-          `
-          id,
-          direction,
-          original_content,
-          ai_rewritten_content,
-          category,
-          sub_category,
-          current_status,
-          external_comm_id,
-          created_at
-        `
-        )
+        .from("children")
+        .select("id, first_name")
         .eq("case_id", caseId)
-        .order("created_at", { ascending: true })
+        .is("deleted_at", null)
+        .order("first_name")
     : { data: [] };
 
-  const { data: flags } =
-    messages && messages.length > 0
-      ? await admin
-          .from("message_flags")
-          .select("message_id, flag_type, description")
-          .in(
-            "message_id",
-            messages.map((m) => m.id)
-          )
-      : { data: [] };
+  let coparentName: string | null = null;
+  if (caseId) {
+    const { data: membersResult } = await admin
+      .from("case_members")
+      .select("id, user_id, display_name, external_email")
+      .eq("case_id", caseId);
+    const members =
+      (membersResult ?? []) as {
+        id: string;
+        user_id: string | null;
+        display_name: string | null;
+        external_email: string | null;
+      }[];
+    const otherMembers = members.filter((m) => m.user_id !== user.id);
+    const connectedRow = otherMembers.find((m) => m.user_id != null);
+    const invitedRow = otherMembers.find((m) => m.user_id == null);
+    if (connectedRow?.user_id) {
+      const { data: userRow } = await admin
+        .from("users")
+        .select("full_name")
+        .eq("id", connectedRow.user_id)
+        .maybeSingle();
+      coparentName =
+        (userRow as { full_name?: string | null } | null)?.full_name ??
+        connectedRow.display_name ??
+        "Co-parent";
+    } else if (invitedRow) {
+      coparentName =
+        invitedRow.display_name ?? invitedRow.external_email ?? "Co-parent";
+    }
+  }
 
-  const flagsByMessage = (flags ?? []).reduce(
-    (acc, f) => {
-      if (!acc[f.message_id]) acc[f.message_id] = [];
-      acc[f.message_id].push({
-        flag_type: f.flag_type,
-        description: f.description,
-      });
-      return acc;
-    },
-    {} as Record<string, Array<{ flag_type: string; description: string | null }>>
-  );
-
-  const messagesWithFlags = (messages ?? []).map((m) => ({
-    ...m,
-    flags: flagsByMessage[m.id] ?? [],
-  }));
+  if (!caseId) {
+    return (
+      <div className="px-3 pt-3 pb-1 md:px-4 md:pt-4 md:pb-2">
+        <div className="rounded-card border border-border bg-background-secondary p-8 text-center">
+          <p className="text-foreground-secondary mb-2">
+            Create or join a case to start messaging.
+          </p>
+          <p className="text-sm text-foreground-secondary">
+            Go to Settings to create a case or invite your co-parent.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="flex flex-col h-full">
-      <header className="border-b border-border bg-background px-4 py-4">
-        <h1 className="font-heading text-xl font-semibold text-foreground">
-          Messages
-        </h1>
-        <p className="text-sm text-foreground-secondary mt-0.5">
-          AI-mediated communication. What you send is rewritten to be calm and
-          child-focused.
-        </p>
-      </header>
-      {caseId ? (
-        <MessagesView messages={messagesWithFlags} caseId={caseId} />
-      ) : (
-        <div className="flex-1 flex items-center justify-center p-6">
-          <div className="text-center max-w-md">
-            <p className="text-foreground-secondary mb-2">
-              Create or join a case to start messaging.
-            </p>
-            <p className="text-sm text-foreground-secondary">
-              Go to Settings to create a case or invite your co-parent.
-            </p>
-          </div>
-        </div>
-      )}
-    </div>
+    <MessagesSplitView
+      caseId={caseId}
+      children={(children ?? []) as { id: string; first_name: string }[]}
+      coparentName={coparentName}
+    />
   );
 }

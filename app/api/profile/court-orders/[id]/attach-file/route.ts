@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getServiceRoleClient } from "@/lib/supabase/server";
+import { runClassify } from "@/lib/ai-classify";
+import { syncChildrenFromExtraction } from "@/lib/sync-children-from-extraction";
 
 const INBOX_BUCKET = "inbox";
 
@@ -73,6 +75,13 @@ export async function POST(
       .eq("id", id);
     if (updateErr) {
       return NextResponse.json({ error: updateErr.message }, { status: 500 });
+    }
+
+    try {
+      const payload = await runClassify(buf, contentType, file.name);
+      await syncChildrenFromExtraction(admin, case_id, payload);
+    } catch (e) {
+      console.warn("[court-orders attach-file] Child extraction/sync failed:", e);
     }
 
     return NextResponse.json({ file_path: storagePath });

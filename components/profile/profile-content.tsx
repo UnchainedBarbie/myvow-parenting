@@ -371,7 +371,6 @@ export function ProfileContent({
       setShowAddChildForm(false);
       setAddChildFirstName("");
       setAddChildDob("");
-      setAddChildMinorNoAccount(false);
       router.refresh();
     } finally {
       setAddChildSaving(false);

@@ -127,8 +127,7 @@ export default async function ExpensesPage() {
           Expenses
         </h1>
         <p className="text-xs md:text-sm text-foreground-secondary leading-snug">
-          Submit expenses with receipt upload. Split is based on your case custody
-          agreement. Approve or dispute expenses from the other parent.
+          Track and split shared parenting expenses.
         </p>
       </div>
       <div className="space-y-2">

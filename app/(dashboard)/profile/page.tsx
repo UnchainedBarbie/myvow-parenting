@@ -25,16 +25,16 @@ export default async function ProfilePage() {
     .eq("id", user.id)
     .single();
 
-  let children: { id: string; first_name: string; date_of_birth: string | null; member_status: "not_invited" | "invited" | "active"; invited_email: string | null; invited_phone: string | null }[] = [];
+  let children: { id: string; first_name: string; date_of_birth: string | null; member_status: "not_invited" | "invited" | "active"; invited_email: string | null; invited_phone: string | null; case_id?: string | null }[] = [];
   let courtOrders: CourtOrderRow[] = [];
   let coparent: { id: string | null; name: string; email: string | null; status: "not_invited" | "invited" | "connected" } | null = null;
 
   if (caseId) {
     const membersResult = await admin
       .from("case_members")
-      .select("id, user_id, display_name, invited_email, invited_name, invitation_status")
+      .select("id, user_id, display_name, external_email, invitation_status")
       .eq("case_id", caseId);
-    const members = (membersResult.data ?? []) as { id: string; user_id: string | null; display_name: string | null; invited_email: string | null; invited_name: string | null; invitation_status: string | null }[];
+    const members = (membersResult.data ?? []) as { id: string; user_id: string | null; display_name: string | null; external_email: string | null; invitation_status: string | null }[];
     const otherMembers = members.filter((m) => m.user_id !== user.id);
     const invitedRow = otherMembers.find((m) => m.user_id == null);
     const connectedRow = otherMembers.find((m) => m.user_id != null);
@@ -43,19 +43,28 @@ export default async function ProfilePage() {
       const fullName = (userRow.data as { full_name?: string | null } | null)?.full_name ?? connectedRow.display_name ?? "Co-Parent";
       coparent = { id: connectedRow.id, name: fullName, email: null, status: "connected" };
     } else if (invitedRow) {
-      const name = invitedRow.invited_name ?? invitedRow.invited_email ?? "Co-Parent";
-      coparent = { id: invitedRow.id, name, email: invitedRow.invited_email, status: "invited" };
+      const name = invitedRow.display_name ?? invitedRow.external_email ?? "Co-Parent";
+      coparent = { id: invitedRow.id, name, email: invitedRow.external_email, status: "invited" };
     } else {
       coparent = { id: null, name: "", email: null, status: "not_invited" };
     }
 
+    // All children with deleted_at IS NULL; do not filter by member_status — all appear in Family table
     const childrenResult = await admin
       .from("children")
-      .select("id, first_name, date_of_birth, member_status, invited_email, invited_phone")
+      .select("*")
       .eq("case_id", caseId)
       .is("deleted_at", null)
       .order("first_name");
-    const rawChildren = (childrenResult.data ?? []) as { id: string; first_name: string; date_of_birth: string | null; member_status?: string | null; invited_email?: string | null; invited_phone?: string | null }[];
+
+    console.log("[profile] children query", {
+      caseId,
+      dataCount: childrenResult.data?.length ?? 0,
+      sample: (childrenResult.data ?? []).slice(0, 3),
+      error: childrenResult.error ?? null,
+    });
+
+    const rawChildren = (childrenResult.data ?? []) as { id: string; first_name: string; date_of_birth: string | null; member_status?: string | null; invited_email?: string | null; invited_phone?: string | null; case_id?: string | null }[];
     children = rawChildren.map((c) => ({
       id: c.id,
       first_name: c.first_name,
@@ -63,6 +72,7 @@ export default async function ProfilePage() {
       member_status: (c.member_status === "invited" || c.member_status === "active" ? c.member_status : "not_invited") as "not_invited" | "invited" | "active",
       invited_email: c.invited_email ?? null,
       invited_phone: c.invited_phone ?? null,
+      case_id: c.case_id ?? null,
     }));
 
     try {

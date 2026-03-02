@@ -63,6 +63,7 @@ export function ExpenseForm({
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("");
+  const [incurredDate, setIncurredDate] = useState("");
   const [category, setCategory] = useState<string>("other");
   const [categoryDescription, setCategoryDescription] = useState("");
   const [selectedChildIds, setSelectedChildIds] = useState<string[]>([]);
@@ -193,6 +194,7 @@ export function ExpenseForm({
           amount: amt,
           category,
           ...(category === "other" && categoryDescription.trim() ? { category_description: categoryDescription.trim() } : {}),
+          incurred_date: incurredDate || undefined,
           child_id: childId || undefined,
           receipt_file_id: receiptFileId,
         }),
@@ -201,6 +203,7 @@ export function ExpenseForm({
       if (!res.ok) throw new Error(data.message || "Submit failed");
       setDescription("");
       setAmount("");
+      setIncurredDate("");
       setCategory("other");
       setCategoryDescription("");
       setSelectedChildIds([]);
@@ -385,6 +388,21 @@ export function ExpenseForm({
                 className="flex-1 min-w-0 h-full px-2 py-1 text-xs bg-transparent border-0 focus:outline-none"
               />
             </div>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="exp-date" className="text-xs font-medium">
+              Date incurred
+            </Label>
+            <input
+              id="exp-date"
+              type="date"
+              value={incurredDate}
+              onChange={(e) => setIncurredDate(e.target.value)}
+              className={cn(
+                "flex h-8 w-full rounded-card border border-input bg-background px-2 py-1 text-xs",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+              )}
+            />
           </div>
           <div className="space-y-2">
             <Label htmlFor="exp-category" className="text-xs font-medium">

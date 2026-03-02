@@ -79,6 +79,29 @@ export default async function ExpensesPage() {
     {} as Record<string, string>
   );
 
+  const receiptIds = [
+    ...new Set(
+      (expensesRaw ?? [])
+        .map((e) => e.receipt_file_id)
+        .filter((id): id is string => typeof id === "string" && id.length > 0)
+    ),
+  ];
+  const { data: receiptDocs } =
+    receiptIds.length > 0
+      ? await admin
+          .from("documents")
+          .select("id, file_name")
+          .in("id", receiptIds)
+      : { data: [] };
+  const receiptNameMap = (receiptDocs ?? []).reduce(
+    (acc, row) => {
+      const r = row as { id: string; file_name: string | null };
+      acc[r.id] = r.file_name ?? null;
+      return acc;
+    },
+    {} as Record<string, string | null>
+  );
+
   const expenses: ExpenseRow[] = (expensesRaw ?? []).map((e) => ({
     id: e.id,
     description: e.description,
@@ -91,6 +114,10 @@ export default async function ExpensesPage() {
     created_at: e.created_at,
     submitted_by: e.submitted_by,
     receipt_file_id: e.receipt_file_id,
+    receipt_file_name:
+      e.receipt_file_id && typeof e.receipt_file_id === "string"
+        ? receiptNameMap[e.receipt_file_id] ?? null
+        : null,
   }));
 
   return (
@@ -104,15 +131,13 @@ export default async function ExpensesPage() {
           agreement. Approve or dispute expenses from the other parent.
         </p>
       </div>
-      <div className="flex flex-col lg:flex-row gap-6">
-        <div className="w-full lg:w-[30%]">
+      <div className="space-y-2">
+        <div className="grid gap-4 lg:grid-cols-[minmax(260px,28%)_minmax(0,1fr)] items-start">
           <ExpenseForm
             caseId={caseId}
             children={children ?? []}
             custodySplitPercent={custodySplitPercent}
           />
-        </div>
-        <div className="w-full lg:w-[70%]">
           <ExpenseList
             expenses={expenses}
             currentUserId={user.id}

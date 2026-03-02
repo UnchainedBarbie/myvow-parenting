@@ -25,30 +25,45 @@ export default async function ProfilePage() {
     .eq("id", user.id)
     .single();
 
-  let children: { id: string; first_name: string; date_of_birth: string | null }[] = [];
-  let caseRow: { id: string; custody_split_percent?: number } | null = null;
+  let children: { id: string; first_name: string; date_of_birth: string | null; member_status: "not_invited" | "invited" | "active"; invited_email: string | null; invited_phone: string | null }[] = [];
   let courtOrders: CourtOrderRow[] = [];
+  let coparent: { id: string | null; name: string; email: string | null; status: "not_invited" | "invited" | "connected" } | null = null;
 
   if (caseId) {
+    const membersResult = await admin
+      .from("case_members")
+      .select("id, user_id, display_name, invited_email, invited_name, invitation_status")
+      .eq("case_id", caseId);
+    const members = (membersResult.data ?? []) as { id: string; user_id: string | null; display_name: string | null; invited_email: string | null; invited_name: string | null; invitation_status: string | null }[];
+    const otherMembers = members.filter((m) => m.user_id !== user.id);
+    const invitedRow = otherMembers.find((m) => m.user_id == null);
+    const connectedRow = otherMembers.find((m) => m.user_id != null);
+    if (connectedRow?.user_id) {
+      const userRow = await admin.from("users").select("full_name").eq("id", connectedRow.user_id).single();
+      const fullName = (userRow.data as { full_name?: string | null } | null)?.full_name ?? connectedRow.display_name ?? "Co-Parent";
+      coparent = { id: connectedRow.id, name: fullName, email: null, status: "connected" };
+    } else if (invitedRow) {
+      const name = invitedRow.invited_name ?? invitedRow.invited_email ?? "Co-Parent";
+      coparent = { id: invitedRow.id, name, email: invitedRow.invited_email, status: "invited" };
+    } else {
+      coparent = { id: null, name: "", email: null, status: "not_invited" };
+    }
+
     const childrenResult = await admin
       .from("children")
-      .select("id, first_name, date_of_birth")
+      .select("id, first_name, date_of_birth, member_status, invited_email, invited_phone")
       .eq("case_id", caseId)
       .is("deleted_at", null)
       .order("first_name");
-    console.log("PROFILE CHILDREN QUERY:", { data: childrenResult.data, error: childrenResult.error });
-    children = (childrenResult.data ?? []).map((c) => ({
-      id: (c as { id: string }).id,
-      first_name: (c as { first_name: string }).first_name,
-      date_of_birth: (c as { date_of_birth: string | null }).date_of_birth,
+    const rawChildren = (childrenResult.data ?? []) as { id: string; first_name: string; date_of_birth: string | null; member_status?: string | null; invited_email?: string | null; invited_phone?: string | null }[];
+    children = rawChildren.map((c) => ({
+      id: c.id,
+      first_name: c.first_name,
+      date_of_birth: c.date_of_birth,
+      member_status: (c.member_status === "invited" || c.member_status === "active" ? c.member_status : "not_invited") as "not_invited" | "invited" | "active",
+      invited_email: c.invited_email ?? null,
+      invited_phone: c.invited_phone ?? null,
     }));
-
-    const caseResult = await admin
-      .from("cases")
-      .select("id, custody_split_percent")
-      .eq("id", caseId)
-      .single();
-    caseRow = caseResult.data as { id: string; custody_split_percent?: number } | null;
 
     try {
       const ordersResult = await admin
@@ -62,27 +77,9 @@ export default async function ProfilePage() {
     }
   }
 
-  const custodySplit = caseRow?.custody_split_percent != null ? Number(caseRow.custody_split_percent) : 50;
-
-  console.log("PASSING CHILDREN TO PROFILE:", children);
-
-  if (!caseId) {
-    return (
-      <div className="px-3 pt-3 pb-1 md:px-4 md:pt-4 md:pb-2">
-        <h1 className="font-heading text-xl md:text-2xl font-semibold text-foreground mb-1">
-          Profile
-        </h1>
-        <p className="text-xs md:text-sm text-foreground-secondary mb-4">
-          Your family, case details, and parenting plan.
-        </p>
-        <div className="rounded-card border border-border bg-background-secondary p-8 text-center">
-          <p className="text-foreground-secondary">
-            Create or join a case in Settings to view your profile and parenting plan.
-          </p>
-        </div>
-      </div>
-    );
-  }
+  const accountNumber = caseId
+    ? `MV-${caseId.replace(/-/g, "").slice(0, 4).toUpperCase()}-${caseId.replace(/-/g, "").slice(4, 8).toUpperCase()}`
+    : null;
 
   return (
     <div className="px-3 pt-3 pb-1 md:px-4 md:pt-4 md:pb-2">
@@ -94,8 +91,9 @@ export default async function ProfilePage() {
         userEmail={user.email ?? null}
         userId={user.id}
         children={children}
-        custodySplit={custodySplit}
         courtOrders={courtOrders}
+        accountNumber={accountNumber}
+        coparent={caseId ? coparent : null}
       />
     </div>
   );

@@ -38,15 +38,25 @@ export async function POST(
             ? null
             : String(body.date_of_birth).slice(0, 10))
         : undefined;
+    const member_status = body.member_status === "invited" || body.member_status === "active" || body.member_status === "not_invited" ? body.member_status : undefined;
+    const invited_email = body.invited_email !== undefined ? (body.invited_email == null || body.invited_email === "" ? null : String(body.invited_email).trim()) : undefined;
+    const invited_phone = body.invited_phone !== undefined ? (body.invited_phone == null || body.invited_phone === "" ? null : String(body.invited_phone).trim()) : undefined;
 
-    const updatePayload: { first_name?: string; date_of_birth?: string | null } = {};
+    const updatePayload: { first_name?: string; date_of_birth?: string | null; member_status?: string; invited_email?: string | null; invited_phone?: string | null } = {};
     if (first_name !== undefined) updatePayload.first_name = first_name;
     if (date_of_birth !== undefined) updatePayload.date_of_birth = date_of_birth;
+    if (member_status !== undefined) updatePayload.member_status = member_status;
+    if (invited_email !== undefined) updatePayload.invited_email = invited_email;
+    if (invited_phone !== undefined) updatePayload.invited_phone = invited_phone;
     if (Object.keys(updatePayload).length === 0) {
       return NextResponse.json({ error: "No fields to update" }, { status: 400 });
     }
     if (updatePayload.first_name !== undefined && !updatePayload.first_name) {
       return NextResponse.json({ error: "First name cannot be empty" }, { status: 400 });
+    }
+    if (updatePayload.member_status === "invited") {
+      const hasContact = (updatePayload.invited_email != null && updatePayload.invited_email !== "") || (updatePayload.invited_phone != null && updatePayload.invited_phone !== "");
+      if (!hasContact) return NextResponse.json({ error: "Email or phone required to send invite" }, { status: 400 });
     }
 
     const { data: row, error } = await admin
@@ -55,7 +65,7 @@ export async function POST(
       .eq("id", id)
       .eq("case_id", membership.case_id)
       .is("deleted_at", null)
-      .select("id, first_name, date_of_birth")
+      .select("id, first_name, date_of_birth, member_status, invited_email, invited_phone")
       .single();
 
     if (error) {

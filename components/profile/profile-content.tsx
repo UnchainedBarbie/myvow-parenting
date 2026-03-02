@@ -2,10 +2,11 @@
 
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { ChevronRight, ChevronDown, FileText, Image, Trash2, Pencil, X } from "lucide-react";
+import { ChevronRight, ChevronDown, FileText, Image, Trash2, Pencil, X, Download, UserPlus, Copy } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
@@ -88,27 +89,59 @@ export type CourtOrderRow = Record<string, unknown> & {
   file_name?: string | null;
 };
 
+export type CoparentRow = {
+  id: string | null;
+  name: string;
+  email: string | null;
+  status: "not_invited" | "invited" | "connected";
+};
+
+export type ChildRow = {
+  id: string;
+  first_name: string;
+  date_of_birth: string | null;
+  member_status: "not_invited" | "invited" | "active";
+  invited_email?: string | null;
+  invited_phone?: string | null;
+};
+
 export type ProfileContentProps = {
   profile: { full_name?: string | null; email?: string | null } | null;
   userEmail: string | null;
   userId: string;
-  children: { id: string; first_name: string; date_of_birth: string | null }[];
-  custodySplit: number;
+  children: ChildRow[];
   courtOrders: CourtOrderRow[];
+  accountNumber: string | null;
+  coparent?: CoparentRow | null;
 };
+
+function formatAge(dateOfBirth: string | null): string {
+  if (!dateOfBirth) return "—";
+  try {
+    const dob = new Date(dateOfBirth);
+    const now = new Date();
+    let years = now.getFullYear() - dob.getFullYear();
+    const m = now.getMonth() - dob.getMonth();
+    if (m < 0 || (m === 0 && now.getDate() < dob.getDate())) years -= 1;
+    if (years < 0) return "—";
+    return `${years} yrs`;
+  } catch {
+    return "—";
+  }
+}
 
 export function ProfileContent({
   profile,
   userEmail,
   userId,
   children,
-  custodySplit,
   courtOrders,
+  accountNumber,
+  coparent = null,
 }: ProfileContentProps) {
   const router = useRouter();
   const [openYourInfo, setOpenYourInfo] = useState(false);
-  const [openChildren, setOpenChildren] = useState(false);
-  const [openCaseDetails, setOpenCaseDetails] = useState(false);
+  const [openFamily, setOpenFamily] = useState(false);
   const [openCourtOrders, setOpenCourtOrders] = useState(false);
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
   const [selectedCourtOrder, setSelectedCourtOrder] = useState<CourtOrderRow | null>(null);
@@ -201,6 +234,62 @@ export function ProfileContent({
   // Children section: delete
   const [deletingChildId, setDeletingChildId] = useState<string | null>(null);
   const [deleteChildConfirm, setDeleteChildConfirm] = useState<{ id: string; firstName: string } | null>(null);
+  // Co-parent invite
+  const [showAddCoparentForm, setShowAddCoparentForm] = useState(false);
+  const [coparentInviteEmail, setCoparentInviteEmail] = useState("");
+  const [coparentInviteName, setCoparentInviteName] = useState("");
+  const [coparentInviteSaving, setCoparentInviteSaving] = useState(false);
+  const [coparentInviteError, setCoparentInviteError] = useState<string | null>(null);
+  // Child invite flow (email/phone or Minor — no account needed)
+  const [childInviteTarget, setChildInviteTarget] = useState<ChildRow | null>(null);
+  const [childInviteEmail, setChildInviteEmail] = useState("");
+  const [childInvitePhone, setChildInvitePhone] = useState("");
+  const [childInviteSaving, setChildInviteSaving] = useState(false);
+  const [childInviteError, setChildInviteError] = useState<string | null>(null);
+
+  type AppMode = "solo" | "partner" | "coparenting" | "solo_coparenting";
+  const [appMode, setAppMode] = useState<AppMode>("partner");
+  const [modeLoading, setModeLoading] = useState(false);
+  const [savingMode, setSavingMode] = useState(false);
+
+  useEffect(() => {
+    if (!accountNumber) return;
+    let cancelled = false;
+    setModeLoading(true);
+    fetch("/api/cases/settings")
+      .then((res) => res.json().catch(() => ({})))
+      .then((data: { mode?: string; app_mode?: string }) => {
+        if (cancelled) return;
+        const mode = (data.mode ?? data.app_mode) as AppMode | undefined;
+        const valid: AppMode = mode && ["solo", "partner", "coparenting", "solo_coparenting"].includes(mode) ? mode : "partner";
+        setAppMode(valid);
+      })
+      .finally(() => { if (!cancelled) setModeLoading(false); });
+    return () => { cancelled = true; };
+  }, [accountNumber]);
+
+  async function saveAppMode(newMode: AppMode) {
+    if (!accountNumber) return;
+    setSavingMode(true);
+    const prev = appMode;
+    setAppMode(newMode);
+    try {
+      const res = await fetch("/api/cases/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: newMode, app_mode: newMode }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        window.alert((err as { error?: string }).error ?? "Failed to save app mode");
+        setAppMode(prev);
+        return;
+      }
+      router.refresh();
+    } finally {
+      setSavingMode(false);
+    }
+  }
 
   async function handleAddFormFileSelect(file: File | null) {
     if (!file) {
@@ -271,6 +360,7 @@ export function ProfileContent({
         body: JSON.stringify({
           first_name: first,
           date_of_birth: addChildDob || null,
+          minor_no_account: false,
         }),
       });
       if (!res.ok) {
@@ -281,13 +371,14 @@ export function ProfileContent({
       setShowAddChildForm(false);
       setAddChildFirstName("");
       setAddChildDob("");
+      setAddChildMinorNoAccount(false);
       router.refresh();
     } finally {
       setAddChildSaving(false);
     }
   }
 
-  function startEditChild(c: { id: string; first_name: string; date_of_birth: string | null }) {
+  function startEditChild(c: ChildRow) {
     setEditingChildId(c.id);
     setEditChildFirstName(c.first_name);
     setEditChildDob(c.date_of_birth ? String(c.date_of_birth).slice(0, 10) : "");
@@ -355,6 +446,94 @@ export function ProfileContent({
     }
   }
 
+  async function handleInviteCoparent(e: React.FormEvent) {
+    e.preventDefault();
+    const email = coparentInviteEmail.trim();
+    if (!email) {
+      setCoparentInviteError("Email is required");
+      return;
+    }
+    setCoparentInviteError(null);
+    setCoparentInviteSaving(true);
+    try {
+      const res = await fetch("/api/cases/invite-coparent", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, name: coparentInviteName.trim() || undefined }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setCoparentInviteError((data as { error?: string }).error ?? "Failed to send invite");
+        return;
+      }
+      setShowAddCoparentForm(false);
+      setCoparentInviteEmail("");
+      setCoparentInviteName("");
+      router.refresh();
+    } finally {
+      setCoparentInviteSaving(false);
+    }
+  }
+
+  async function handleChildInviteSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!childInviteTarget) return;
+    const email = childInviteEmail.trim();
+    const phone = childInvitePhone.trim();
+    if (!email && !phone) {
+      setChildInviteError("Email or phone is required");
+      return;
+    }
+    setChildInviteError(null);
+    setChildInviteSaving(true);
+    try {
+      const res = await fetch(`/api/children/${childInviteTarget.id}/update`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          member_status: "invited",
+          invited_email: email || null,
+          invited_phone: phone || null,
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setChildInviteError((data as { error?: string }).error ?? "Failed to send invite");
+        return;
+      }
+      setChildInviteTarget(null);
+      setChildInviteEmail("");
+      setChildInvitePhone("");
+      router.refresh();
+    } finally {
+      setChildInviteSaving(false);
+    }
+  }
+
+  async function handleChildMinorNoAccount() {
+    if (!childInviteTarget) return;
+    setChildInviteSaving(true);
+    setChildInviteError(null);
+    try {
+      const res = await fetch(`/api/children/${childInviteTarget.id}/update`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ member_status: "active" }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setChildInviteError((data as { error?: string }).error ?? "Failed to update");
+        return;
+      }
+      setChildInviteTarget(null);
+      setChildInviteEmail("");
+      setChildInvitePhone("");
+      router.refresh();
+    } finally {
+      setChildInviteSaving(false);
+    }
+  }
+
   async function confirmDeleteCourtOrder() {
     const id = deleteCourtOrderConfirm;
     if (!id) return;
@@ -375,11 +554,21 @@ export function ProfileContent({
     }
   }
 
-  const allSectionsOpen = openYourInfo && openChildren && openCaseDetails && openCourtOrders;
+  const allSectionsOpen = openYourInfo && openFamily && openCourtOrders;
+
+  async function copyAccountNumber() {
+    if (!accountNumber) return;
+    try {
+      await navigator.clipboard.writeText(accountNumber);
+    } catch {
+      // ignore
+    }
+  }
 
   return (
     <div className="space-y-6">
-      <p className="text-xs md:text-sm text-foreground-secondary mb-4">Your family, case details, and parenting plan.</p>
+      <p className="text-xs md:text-sm text-foreground-secondary mb-4">Your info, court orders, and family.</p>
+
       <div className="flex justify-start">
         <button
           type="button"
@@ -388,13 +577,11 @@ export function ProfileContent({
             if (allSectionsOpen) {
               setOpenYourInfo(false);
               setOpenCourtOrders(false);
-              setOpenChildren(false);
-              setOpenCaseDetails(false);
+              setOpenFamily(false);
             } else {
               setOpenYourInfo(true);
               setOpenCourtOrders(true);
-              setOpenChildren(true);
-              setOpenCaseDetails(true);
+              setOpenFamily(true);
             }
           }}
         >
@@ -415,6 +602,66 @@ export function ProfileContent({
             <label className="text-xs font-medium text-foreground-secondary">Email</label>
             <p className="text-sm text-foreground mt-0.5">{profile?.email ?? userEmail ?? "—"}</p>
           </div>
+          <div>
+            <label className="text-xs font-medium text-foreground-secondary">Account number</label>
+            <div className="flex items-center gap-2 mt-0.5">
+              <p className="text-sm text-foreground">{accountNumber ?? "—"}</p>
+              {accountNumber && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 w-7 p-0 text-foreground-secondary hover:text-foreground"
+                  onClick={copyAccountNumber}
+                  aria-label="Copy account number"
+                >
+                  <Copy className="h-3.5 w-3.5" />
+                </Button>
+              )}
+            </div>
+          </div>
+          <div>
+            <label className="text-xs font-medium text-foreground-secondary">App Mode</label>
+            {!accountNumber ? (
+              <p className="text-sm text-foreground-secondary mt-0.5">Add a court order to set app mode.</p>
+            ) : modeLoading ? (
+              <p className="text-sm text-foreground-secondary mt-0.5">Loading…</p>
+            ) : (
+              <div className="mt-1.5">
+                <select
+                  value={appMode}
+                  onChange={(e) => saveAppMode(e.target.value as AppMode)}
+                  disabled={savingMode}
+                  className="flex h-9 w-full max-w-sm rounded-md border border-input bg-background px-3 py-1 text-sm text-foreground"
+                >
+                  <option value="solo">Solo — Track schedules, expenses, and documents on your own.</option>
+                  <option value="partner">Partner — Shared calendar and messaging with your co-parent.</option>
+                  <option value="coparenting">Coparenting — AI-moderated messaging and court-ready records.</option>
+                  <option value="solo_coparenting">Solo Coparenting — Co-parent emails in; AI organizes and analyzes for you.</option>
+                </select>
+              </div>
+            )}
+          </div>
+          <div className="pt-4 mt-4 border-t border-border space-y-3">
+            <div>
+              <Link
+                href="/settings/change-password"
+                className="text-sm text-primary hover:underline"
+              >
+                Change password
+              </Link>
+            </div>
+            <div>
+              <Button
+                variant="outline"
+                size="sm"
+                className="rounded-full h-8 text-xs text-red-600 border-red-600/70 hover:bg-red-50 hover:text-red-700 hover:border-red-700 dark:text-red-400 dark:border-red-400/70 dark:hover:bg-red-950/30 dark:hover:text-red-300"
+              >
+                Delete account
+              </Button>
+              <p className="text-xs text-foreground-secondary mt-1">Permanently remove your account and data.</p>
+            </div>
+          </div>
         </div>
       </CollapsibleCard>
 
@@ -426,7 +673,7 @@ export function ProfileContent({
         <div className="space-y-4">
           <Button
             size="sm"
-            className="rounded-full h-8 text-xs bg-[#7B9E87] hover:bg-[#6A8A78] text-white"
+            className="w-full sm:w-auto rounded-full h-10 text-sm bg-[#7B9E87] hover:bg-[#6A8A78] text-white gap-2"
             onClick={() => {
               setAddFormFile(null);
               setAddFormTitle("");
@@ -440,6 +687,7 @@ export function ProfileContent({
               setShowAddCourtOrder(true);
             }}
           >
+            <FileText className="h-4 w-4 shrink-0" />
             Add Court Order
           </Button>
 
@@ -448,7 +696,7 @@ export function ProfileContent({
               <p className="text-sm text-foreground-secondary py-2">No court orders uploaded yet.</p>
             ) : (
               <div className="rounded-card border border-border bg-background overflow-hidden">
-                <div className="grid grid-cols-[2fr_1fr_1fr_1fr] gap-2 text-xs font-medium text-foreground-secondary border-b border-border py-1.5 px-2">
+                <div className="grid grid-cols-[2fr_1fr_1fr_1fr] gap-2 text-xs font-medium text-foreground-secondary border-b border-border py-1.5 px-2 bg-muted/40">
                   <span className="text-left">Title</span>
                   <span className="text-left">Type</span>
                   <span className="text-left">Date</span>
@@ -475,8 +723,18 @@ export function ProfileContent({
                             }}
                             onKeyDown={(e) => e.key === "Enter" && (setOpenDetailInEditMode(false), setSelectedCourtOrder(order), setCourtOrderDetailOpen(true))}
                           >
-                            <span className="min-w-0 text-xs text-foreground break-words" title={orderTitle !== "—" ? orderTitle : undefined}>
+                            <span className="min-w-0 text-xs text-foreground break-words flex items-center gap-1.5 flex-wrap" title={orderTitle !== "—" ? orderTitle : undefined}>
                               {orderTitle}
+                              <span
+                                className={cn(
+                                  "shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium",
+                                  (order.is_active as boolean) === true
+                                    ? "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400"
+                                    : "bg-muted text-foreground-secondary"
+                                )}
+                              >
+                                {(order.is_active as boolean) === true ? "Active" : "Superseded"}
+                              </span>
                             </span>
                             <span className="min-w-0 truncate rounded-full bg-muted px-2 py-0.5 text-xs text-foreground-secondary">{typeLabel}</span>
                             <span className="min-w-0 truncate text-xs text-foreground-secondary">{formatDate(order.effective_date as string | null)}</span>
@@ -493,6 +751,23 @@ export function ProfileContent({
                               >
                                 <Pencil className="h-3.5 w-3.5" />
                               </button>
+                              {(order.file_path as string) ? (
+                                <button
+                                  type="button"
+                                  className="p-1 rounded text-foreground-secondary hover:text-foreground"
+                                  aria-label="Download"
+                                  onClick={async (e) => {
+                                    e.stopPropagation();
+                                    const res = await fetch(`/api/profile/court-orders/${order.id}/download`).catch(() => null);
+                                    if (res?.ok) {
+                                      const data = await res.json().catch(() => ({}));
+                                      if (data?.url) window.open(data.url, "_blank");
+                                    }
+                                  }}
+                                >
+                                  <Download className="h-3.5 w-3.5" />
+                                </button>
+                              ) : null}
                               <button
                                 type="button"
                                 className="p-1 rounded text-foreground-secondary hover:text-destructive"
@@ -517,20 +792,78 @@ export function ProfileContent({
       </CollapsibleCard>
 
       <CollapsibleCard
-        open={openChildren}
-        onToggle={() => setOpenChildren((o) => !o)}
-        title="Children"
+        open={openFamily}
+        onToggle={() => setOpenFamily((o) => !o)}
+        title="Family"
       >
         <div className="flex flex-col gap-3">
-          {!showAddChildForm ? (
-            <Button
-              size="sm"
-              className="rounded-full h-8 text-xs bg-[#7B9E87] hover:bg-[#6A8A78] text-white w-fit"
-              onClick={() => setShowAddChildForm(true)}
-            >
-              Add Child
-            </Button>
-          ) : (
+          <div className="flex flex-wrap items-center gap-2">
+            {!showAddCoparentForm && !showAddChildForm && (
+              <>
+                {coparent != null && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="rounded-full h-8 text-xs gap-1.5"
+                    onClick={() => setShowAddCoparentForm(true)}
+                  >
+                    <UserPlus className="h-3.5 w-3.5" />
+                    Add Co-Parent
+                  </Button>
+                )}
+                <Button
+                  size="sm"
+                  className="rounded-full h-8 text-xs bg-[#7B9E87] hover:bg-[#6A8A78] text-white"
+                  onClick={() => setShowAddChildForm(true)}
+                >
+                  Add Child
+                </Button>
+              </>
+            )}
+          </div>
+
+          {showAddCoparentForm && (
+            <form onSubmit={handleInviteCoparent} className="flex flex-col gap-3 p-3 rounded-lg border border-border bg-muted/20 max-w-sm">
+              <div>
+                <Label className="text-xs font-medium">Email *</Label>
+                <Input
+                  type="email"
+                  className="mt-1 h-9"
+                  value={coparentInviteEmail}
+                  onChange={(e) => setCoparentInviteEmail(e.target.value)}
+                  placeholder="Co-parent email"
+                  required
+                />
+              </div>
+              <div>
+                <Label className="text-xs font-medium">Name (optional)</Label>
+                <Input
+                  className="mt-1 h-9"
+                  value={coparentInviteName}
+                  onChange={(e) => setCoparentInviteName(e.target.value)}
+                  placeholder="Display name"
+                />
+              </div>
+              {coparentInviteError && <p className="text-xs text-destructive">{coparentInviteError}</p>}
+              <div className="flex gap-2">
+                <Button type="submit" size="sm" className="rounded-full h-8 text-xs bg-[#7B9E87] hover:bg-[#6A8A78] text-white" disabled={coparentInviteSaving}>
+                  {coparentInviteSaving ? "Sending…" : "Send invite"}
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="rounded-full h-8 text-xs"
+                  onClick={() => { setShowAddCoparentForm(false); setCoparentInviteError(null); setCoparentInviteEmail(""); setCoparentInviteName(""); }}
+                  disabled={coparentInviteSaving}
+                >
+                  Cancel
+                </Button>
+              </div>
+            </form>
+          )}
+
+          {!showAddCoparentForm && showAddChildForm && (
             <form onSubmit={handleAddChildSubmit} className="flex flex-col gap-3 p-3 rounded-lg border border-border bg-muted/20 max-w-sm">
               <div>
                 <Label className="text-xs font-medium">First name *</Label>
@@ -553,12 +886,7 @@ export function ProfileContent({
               </div>
               {addChildError && <p className="text-xs text-destructive">{addChildError}</p>}
               <div className="flex gap-2">
-                <Button
-                  type="submit"
-                  size="sm"
-                  className="rounded-full h-8 text-xs bg-[#7B9E87] hover:bg-[#6A8A78] text-white"
-                  disabled={addChildSaving}
-                >
+                <Button type="submit" size="sm" className="rounded-full h-8 text-xs bg-[#7B9E87] hover:bg-[#6A8A78] text-white" disabled={addChildSaving}>
                   {addChildSaving ? "Saving…" : "Save"}
                 </Button>
                 <Button
@@ -575,74 +903,163 @@ export function ProfileContent({
             </form>
           )}
 
-          {children.length === 0 && !showAddChildForm ? (
-            <div className="rounded-card border border-border bg-background overflow-hidden">
-              <p className="text-sm text-foreground-secondary py-4 px-3">Upload a court order to auto-fill, or add manually.</p>
+          {childInviteTarget && (
+            <div
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="child-invite-title"
+              onClick={(e) => { if (e.target === e.currentTarget) { setChildInviteTarget(null); setChildInviteError(null); } }}
+            >
+              <div
+                className="bg-background border border-border rounded-card shadow-card max-w-sm w-full p-4 space-y-3"
+                onClick={(e) => e.stopPropagation()}
+                onMouseDown={(e) => e.stopPropagation()}
+              >
+                <h3 id="child-invite-title" className="font-heading text-lg font-semibold text-foreground">
+                  Invite {childInviteTarget.first_name}
+                </h3>
+                <form onSubmit={handleChildInviteSubmit} className="space-y-3">
+                  <div>
+                    <Label className="text-xs font-medium">Email</Label>
+                    <Input
+                      type="email"
+                      className="mt-1 h-9"
+                      value={childInviteEmail}
+                      onChange={(e) => setChildInviteEmail(e.target.value)}
+                      placeholder="Email"
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-xs font-medium">Phone (optional)</Label>
+                    <Input
+                      type="tel"
+                      className="mt-1 h-9"
+                      value={childInvitePhone}
+                      onChange={(e) => setChildInvitePhone(e.target.value)}
+                      placeholder="Phone"
+                    />
+                  </div>
+                  {childInviteError && <p className="text-xs text-destructive">{childInviteError}</p>}
+                  <div className="flex gap-2">
+                    <Button type="submit" size="sm" className="rounded-full h-8 text-xs bg-[#7B9E87] hover:bg-[#6A8A78] text-white" disabled={childInviteSaving}>
+                      {childInviteSaving ? "Sending…" : "Send invite"}
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="rounded-full h-8 text-xs"
+                      onClick={() => { setChildInviteTarget(null); setChildInviteError(null); }}
+                      disabled={childInviteSaving}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                </form>
+                <div className="pt-2 border-t border-border">
+                  <button
+                    type="button"
+                    className="text-xs text-primary hover:underline"
+                    onClick={handleChildMinorNoAccount}
+                    disabled={childInviteSaving}
+                  >
+                    Minor — no account needed
+                  </button>
+                  <p className="text-xs text-foreground-secondary mt-0.5">Set status to Active; you manage their info.</p>
+                </div>
+              </div>
             </div>
-          ) : children.length > 0 ? (
-            <div className="max-w-lg rounded-card border border-border bg-background overflow-hidden">
-              <div className="flex items-center py-2 px-2 border-b border-border text-xs font-medium text-foreground-secondary">
-                <span className="w-32 shrink-0">Name</span>
-                <span className="w-36 shrink-0">Date of birth</span>
-                <div className="flex-1" />
+          )}
+
+          {(coparent != null || children.length > 0) ? (
+            <div className="max-w-2xl rounded-card border border-border bg-background overflow-hidden">
+              <div className="flex items-center py-2 px-2 border-b border-border text-xs font-medium text-foreground-secondary bg-muted/40 gap-2">
+                <span className="w-28 shrink-0">Name</span>
+                <span className="w-20 shrink-0">Role</span>
+                <span className="w-16 shrink-0">Age</span>
+                <span className="w-32 shrink-0">Date of birth</span>
+                <span className="w-20 shrink-0">Status</span>
+                <span className="flex-1 text-right">Actions</span>
               </div>
               <ul>
-                {children.map((c) => (
+                {coparent != null && (
+                  <li className="border-b border-border">
+                    <div className="flex items-center py-2 px-2 gap-2">
+                      <span className="w-28 shrink-0 text-sm font-medium truncate" title={coparent.name || "Co-Parent"}>
+                        {coparent.status === "not_invited" ? "—" : coparent.name || "—"}
+                      </span>
+                      <span className="w-20 shrink-0 text-xs text-foreground-secondary">Co-Parent</span>
+                      <span className="w-16 shrink-0 text-xs text-foreground-secondary">—</span>
+                      <span className="w-32 shrink-0 text-xs text-foreground-secondary">—</span>
+                      <span className="w-20 shrink-0">
+                        {coparent.status === "not_invited" && (
+                          <button
+                            type="button"
+                            className="text-xs text-primary hover:underline"
+                            onClick={() => setShowAddCoparentForm(true)}
+                          >
+                            Invite
+                          </button>
+                        )}
+                        {coparent.status === "invited" && (
+                          <span className="text-xs rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200 px-2 py-0.5 font-medium">Pending</span>
+                        )}
+                        {coparent.status === "connected" && (
+                          <span className="text-xs rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200 px-2 py-0.5 font-medium">Active</span>
+                        )}
+                      </span>
+                      <div className="flex-1 min-w-0" />
+                    </div>
+                  </li>
+                )}
+                {[...children].sort((a, b) => a.first_name.localeCompare(b.first_name)).map((c) => (
                   <li key={c.id} className="border-b border-border last:border-b-0">
                     {editingChildId === c.id ? (
-                      <form
-                        onSubmit={(e) => handleEditChildSave(e, c.id)}
-                        className="flex flex-wrap items-end gap-2 py-2 px-2 min-w-0"
-                      >
+                      <form onSubmit={(e) => handleEditChildSave(e, c.id)} className="flex flex-wrap items-end gap-2 py-2 px-2 min-w-0">
                         <div className="flex-1 min-w-[100px]">
                           <Label className="text-xs font-medium">First name *</Label>
-                          <Input
-                            className="mt-1 h-8 text-sm"
-                            value={editChildFirstName}
-                            onChange={(e) => setEditChildFirstName(e.target.value)}
-                            required
-                          />
+                          <Input className="mt-1 h-8 text-sm" value={editChildFirstName} onChange={(e) => setEditChildFirstName(e.target.value)} required />
                         </div>
                         <div className="w-[120px]">
                           <Label className="text-xs font-medium">Date of birth</Label>
-                          <Input
-                            type="date"
-                            className="mt-1 h-8 text-sm"
-                            value={editChildDob}
-                            onChange={(e) => setEditChildDob(e.target.value)}
-                          />
+                          <Input type="date" className="mt-1 h-8 text-sm" value={editChildDob} onChange={(e) => setEditChildDob(e.target.value)} />
                         </div>
                         {editChildError && <p className="text-xs text-destructive w-full">{editChildError}</p>}
                         <div className="flex gap-1">
-                          <Button type="submit" size="sm" className="rounded-full h-8 text-xs bg-[#7B9E87] hover:bg-[#6A8A78] text-white" disabled={editChildSaving}>
-                            Save
-                          </Button>
-                          <Button type="button" size="sm" variant="outline" className="rounded-full h-8 text-xs" onClick={cancelEditChild} disabled={editChildSaving}>
-                            Cancel
-                          </Button>
+                          <Button type="submit" size="sm" className="rounded-full h-8 text-xs bg-[#7B9E87] hover:bg-[#6A8A78] text-white" disabled={editChildSaving}>Save</Button>
+                          <Button type="button" size="sm" variant="outline" className="rounded-full h-8 text-xs" onClick={cancelEditChild} disabled={editChildSaving}>Cancel</Button>
                         </div>
                       </form>
                     ) : (
-                      <div className="flex items-center py-2 px-2">
-                        <span className="w-32 shrink-0 text-sm font-medium truncate" title={c.first_name}>{c.first_name}</span>
-                        <span className="w-36 shrink-0 text-xs text-foreground-secondary">{formatDate(c.date_of_birth)}</span>
+                      <div className="flex items-center py-2 px-2 gap-2">
+                        <span className="w-28 shrink-0 text-sm font-medium truncate" title={c.first_name}>{c.first_name}</span>
+                        <span className="w-20 shrink-0 text-xs text-foreground-secondary">Child</span>
+                        <span className="w-16 shrink-0 text-xs text-foreground-secondary">{formatAge(c.date_of_birth)}</span>
+                        <span className="w-32 shrink-0 text-xs text-foreground-secondary">{formatDate(c.date_of_birth)}</span>
+                        <span className="w-20 shrink-0">
+                          {c.member_status === "not_invited" && (
+                            <button
+                              type="button"
+                              className="text-xs text-primary hover:underline"
+                              onClick={() => { setChildInviteTarget(c); setChildInviteEmail(""); setChildInvitePhone(""); setChildInviteError(null); }}
+                            >
+                              Invite
+                            </button>
+                          )}
+                          {c.member_status === "invited" && (
+                            <span className="text-xs rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200 px-2 py-0.5 font-medium">Pending</span>
+                          )}
+                          {c.member_status === "active" && (
+                            <span className="text-xs rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200 px-2 py-0.5 font-medium">Active</span>
+                          )}
+                        </span>
                         <div className="flex-1 min-w-0" />
                         <div className="flex items-center gap-0.5 shrink-0">
-                          <button
-                            type="button"
-                            onClick={() => startEditChild(c)}
-                            className="p-1 rounded text-gray-400 hover:text-gray-600"
-                            aria-label="Edit child"
-                          >
+                          <button type="button" onClick={() => startEditChild(c)} className="p-1 rounded text-gray-400 hover:text-gray-600" aria-label="Edit child">
                             <Pencil className="h-3.5 w-3.5" />
                           </button>
-                          <button
-                            type="button"
-                            onClick={() => openDeleteChildConfirm(c.id, c.first_name)}
-                            disabled={deletingChildId === c.id}
-                            className="p-1 rounded text-gray-400 hover:text-gray-600"
-                            aria-label="Remove child"
-                          >
+                          <button type="button" onClick={() => openDeleteChildConfirm(c.id, c.first_name)} disabled={deletingChildId === c.id} className="p-1 rounded text-gray-400 hover:text-gray-600" aria-label="Remove child">
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
                         </div>
@@ -652,36 +1069,11 @@ export function ProfileContent({
                 ))}
               </ul>
             </div>
+          ) : !showAddCoparentForm && !showAddChildForm ? (
+            <div className="rounded-card border border-border bg-background overflow-hidden">
+              <p className="text-sm text-foreground-secondary py-4 px-3">Upload a court order to auto-fill, or add manually.</p>
+            </div>
           ) : null}
-        </div>
-      </CollapsibleCard>
-
-      <CollapsibleCard
-        open={openCaseDetails}
-        onToggle={() => setOpenCaseDetails((o) => !o)}
-        title="Case Details"
-      >
-        <div className="space-y-2">
-          <div>
-            <label className="text-xs font-medium text-foreground-secondary">Case number</label>
-            <p className="text-sm text-foreground mt-0.5">
-              {courtOrders.filter((o) => !(o as { deleted_at?: string | null }).deleted_at).length > 0
-                ? (courtOrders.filter((o) => !(o as { deleted_at?: string | null }).deleted_at)[0]?.court_case_number ?? "—")
-                : "Upload a court order to auto-fill"}
-            </p>
-          </div>
-          <div>
-            <label className="text-xs font-medium text-foreground-secondary">Jurisdiction</label>
-            <p className="text-sm text-foreground mt-0.5">
-              {courtOrders.filter((o) => !(o as { deleted_at?: string | null }).deleted_at).length > 0
-                ? (courtOrders.filter((o) => !(o as { deleted_at?: string | null }).deleted_at)[0]?.court_jurisdiction ?? "—")
-                : "Upload a court order to auto-fill"}
-            </p>
-          </div>
-          <div>
-            <label className="text-xs font-medium text-foreground-secondary">Custody split</label>
-            <p className="text-sm text-foreground mt-0.5">{custodySplit}% / {100 - custodySplit}%</p>
-          </div>
         </div>
       </CollapsibleCard>
 

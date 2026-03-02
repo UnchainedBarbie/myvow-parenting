@@ -31,7 +31,11 @@ When analyzing court documents such as parenting plans or custody orders, extrac
 - For 'jurisdiction', look for the court name, county, and state (e.g., 'Arapahoe County District Court, Colorado')
 - For 'date', use the DATE FILED or effective date from the document header
 - For 'category', use one of parenting_plan, modification, custody_order, financial_order, restraining_order (or court_order only if none of these fit) based on the rules above
-- For 'child_names', extract the children's first names only (not full names)
+- For 'children', extract BOTH:
+  - 'first_name' — the child's first name only (not full name)
+  - 'date_of_birth' — the child's date of birth in strict YYYY-MM-DD format if available, otherwise null
+
+Parenting plan PDFs often include a table with columns like 'Full Name of Child' and 'Date of Birth'. Read that table carefully and return one entry in the 'children' array for each row in the table.
 
 Include these additional fields in your JSON response when the document is a court document:
 
@@ -99,6 +103,12 @@ Respond ONLY in JSON format with no other text. For non-court documents, omit th
   "description": "brief description",
   "category": "category from the allowed list above",
   "child_names": ["names of children mentioned if any"],
+  "children": [
+    {
+      "first_name": "child's first name only",
+      "date_of_birth": "YYYY-MM-DD if found, otherwise null"
+    }
+  ],
   "date": "YYYY-MM-DD if found",
   "court_case_number": null or "actual case number",
   "jurisdiction": null or "court name and location",
@@ -122,6 +132,10 @@ type ClassifyPayload = {
   description: string;
   category: string;
   child_names: string[];
+  /**
+   * Optional structured children with DOBs, when available from the document.
+   */
+  children?: { first_name: string; date_of_birth: string | null }[] | null;
   date: string | null;
   court_case_number?: string | null;
   jurisdiction?: string | null;
@@ -489,9 +503,27 @@ function parseClassifyResponse(content: string | undefined, fallbackFileName: st
   const title = typeof parsed.title === "string" ? parsed.title : fallbackFileName;
   const description = typeof parsed.description === "string" ? parsed.description : "";
   const category = typeof parsed.category === "string" ? parsed.category : "other";
-  const child_names = Array.isArray(parsed.child_names)
-    ? (parsed.child_names as unknown[]).filter((n): n is string => typeof n === "string")
+  const rawChildren = Array.isArray((parsed as Record<string, unknown>).children)
+    ? ((parsed as Record<string, unknown>).children as unknown[])
     : [];
+  const children: { first_name: string; date_of_birth: string | null }[] = [];
+  for (const c of rawChildren) {
+    if (!c || typeof c !== "object") continue;
+    const obj = c as Record<string, unknown>;
+    const first = typeof obj.first_name === "string" ? obj.first_name.trim() : "";
+    if (!first) continue;
+    let dob: string | null = null;
+    if (obj.date_of_birth != null) {
+      const raw = String(obj.date_of_birth).slice(0, 10);
+      dob = /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : null;
+    }
+    children.push({ first_name: first, date_of_birth: dob });
+  }
+  const child_names = children.length > 0
+    ? children.map((c) => c.first_name)
+    : Array.isArray(parsed.child_names)
+      ? (parsed.child_names as unknown[]).filter((n): n is string => typeof n === "string")
+      : [];
   const date = typeof parsed.date === "string" ? parsed.date : null;
   const amount = typeof parsed.amount === "number" ? parsed.amount : null;
   const vendor = typeof parsed.vendor === "string" ? parsed.vendor : null;
@@ -514,6 +546,7 @@ function parseClassifyResponse(content: string | undefined, fallbackFileName: st
     description,
     category,
     child_names,
+    children: children.length > 0 ? children : undefined,
     date,
     court_case_number: court_case_number ?? undefined,
     jurisdiction: jurisdiction ?? undefined,

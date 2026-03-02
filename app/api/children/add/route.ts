@@ -29,6 +29,8 @@ export async function POST(req: NextRequest) {
       body.date_of_birth == null || body.date_of_birth === ""
         ? null
         : String(body.date_of_birth).slice(0, 10);
+    const minorNoAccount = body.minor_no_account === true;
+    const member_status = minorNoAccount ? "active" : "not_invited";
 
     const { data: row, error } = await admin
       .from("children")
@@ -36,8 +38,9 @@ export async function POST(req: NextRequest) {
         case_id: membership.case_id,
         first_name,
         date_of_birth: date_of_birth || null,
+        member_status,
       })
-      .select("id, first_name, date_of_birth")
+      .select("id, first_name, date_of_birth, member_status")
       .single();
 
     if (error) {

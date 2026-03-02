@@ -28,6 +28,7 @@ const navItems = [
   { href: "/calendar", label: "Calendar", icon: Calendar },
   { href: "/contacts", label: "Contacts", icon: Users },
   { href: "/documents", label: "Documents", icon: FileText },
+  { href: "/reports", label: "Reports", icon: FileBarChart },
 ];
 
 export function DashboardSidebar() {

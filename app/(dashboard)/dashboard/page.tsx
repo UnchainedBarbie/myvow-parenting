@@ -32,6 +32,7 @@ type ChildSummary = {
   ageLabel: string;
   nextEvent: TodayEvent | null;
   profile_image?: string | null;
+  lastUpdateLabel?: string | null;
 };
 
 function formatDateLabel(date: Date, timezone: string) {
@@ -306,7 +307,7 @@ export default async function DashboardPage() {
     created_at: i.created_at,
   }));
 
-  // Expenses: net balance
+  // Expenses: net balance + open items
   const { data: expensesRaw } = await admin
     .from("expenses")
     .select("id, amount, amount_owed, submitted_by, status, deleted_at")
@@ -315,12 +316,16 @@ export default async function DashboardPage() {
 
   let totalOwedToYou = 0;
   let totalYouOwe = 0;
+  let openExpenseItems = 0;
   for (const e of expensesRaw ?? []) {
     const amountNum = Number(e.amount);
     const owedNum =
       (e.amount_owed as number | null | undefined) != null
         ? Number(e.amount_owed)
         : null;
+    if ((e.status as string | null) !== "resolved") {
+      openExpenseItems += 1;
+    }
     if (Number.isNaN(amountNum) || owedNum == null || Number.isNaN(owedNum)) continue;
     if (e.submitted_by === user.id) {
       totalOwedToYou += owedNum;
@@ -336,7 +341,152 @@ export default async function DashboardPage() {
         ? `You owe $${Math.abs(net).toFixed(2)}`
         : "You are all settled";
 
-  // Kids summary
+  // Messages over last 14 days for tone/communication status
+  const twoWeeksAgo = new Date(now);
+  twoWeeksAgo.setDate(now.getDate() - 14);
+  const oneWeekAgo = new Date(now);
+  oneWeekAgo.setDate(now.getDate() - 7);
+  const { data: messagesLast14Raw } = await admin
+    .from("messages")
+    .select(
+      "id, case_id, conversation_id, direction, read_at, created_at, ai_classification, emotional_intensity_score"
+    )
+    .eq("case_id", caseId)
+    .gte("created_at", twoWeeksAgo.toISOString())
+    .order("created_at", { ascending: true });
+  const messagesLast14 = (messagesLast14Raw ?? []) as {
+    id: string;
+    conversation_id: string | null;
+    direction: "incoming" | "outgoing";
+    read_at: string | null;
+    created_at: string;
+    ai_classification: string | null;
+    emotional_intensity_score: number | null;
+  }[];
+
+  function isElevated(m: {
+    ai_classification: string | null;
+    emotional_intensity_score: number | null;
+  }) {
+    const cls = (m.ai_classification ?? "").toLowerCase();
+    const intensity =
+      typeof m.emotional_intensity_score === "number"
+        ? Number(m.emotional_intensity_score)
+        : 0;
+    if (
+      cls === "escalatory" ||
+      cls === "threatening" ||
+      cls === "coercive" ||
+      cls === "manipulative"
+    ) {
+      return true;
+    }
+    return intensity >= 0.7;
+  }
+
+  const messagesPrevWeek = messagesLast14.filter((m) => {
+    const d = new Date(m.created_at);
+    return d >= twoWeeksAgo && d < oneWeekAgo;
+  });
+  const messagesThisWeek = messagesLast14.filter((m) => {
+    const d = new Date(m.created_at);
+    return d >= oneWeekAgo && d <= now;
+  });
+
+  const elevatedPrevWeek = messagesPrevWeek.filter(isElevated).length;
+  const elevatedThisWeek = messagesThisWeek.filter(isElevated).length;
+  const householdElevated = elevatedThisWeek > 0;
+
+  const householdClimateLabel = householdElevated
+    ? "Elevated this week"
+    : "Calm this week";
+  const disputesLabel =
+    openExpenseItems === 0
+      ? "No open disputes"
+      : openExpenseItems === 1
+        ? "1 unresolved expense item"
+        : `${openExpenseItems} unresolved expense items`;
+
+  // Communication status: conversations awaiting response (last message incoming & unread)
+  const lastMessageByConversation: Record<
+    string,
+    {
+      direction: "incoming" | "outgoing";
+      read_at: string | null;
+      created_at: string;
+    }
+  > = {};
+  for (const m of messagesLast14) {
+    if (!m.conversation_id) continue;
+    const prev = lastMessageByConversation[m.conversation_id];
+    if (!prev || new Date(m.created_at) > new Date(prev.created_at)) {
+      lastMessageByConversation[m.conversation_id] = {
+        direction: m.direction,
+        read_at: m.read_at,
+        created_at: m.created_at,
+      };
+    }
+  }
+  const awaitingResponseCount = Object.values(lastMessageByConversation).filter(
+    (m) => m.direction === "incoming" && m.read_at == null
+  ).length;
+  const communicationMainLabel =
+    awaitingResponseCount === 0
+      ? "All conversations up to date"
+      : `${awaitingResponseCount} conversation${
+          awaitingResponseCount > 1 ? "s" : ""
+        } awaiting response`;
+  const communicationToneLabel =
+    elevatedThisWeek > elevatedPrevWeek
+      ? "More tense than last week"
+      : "Tone stable";
+
+  // Recent child-related updates from conversations and calendar
+  const { data: convRaw } = await admin
+    .from("conversations")
+    .select("id, child_id, subject, updated_at")
+    .eq("case_id", caseId)
+    .not("child_id", "is", null)
+    .order("updated_at", { ascending: false })
+    .limit(100);
+  const convLatestByChild: Record<
+    string,
+    { subject: string; updated_at: string }
+  > = {};
+  for (const row of convRaw ?? []) {
+    const childId = (row.child_id as string) ?? null;
+    if (!childId) continue;
+    if (!convLatestByChild[childId]) {
+      convLatestByChild[childId] = {
+        subject: (row.subject as string) ?? "",
+        updated_at: (row.updated_at as string) ?? "",
+      };
+    }
+  }
+
+  const { data: allChildEventsRaw } = await admin
+    .from("calendar_events")
+    .select("id, title, child_id, start_time, deleted_at")
+    .eq("case_id", caseId)
+    .is("deleted_at", null)
+    .order("start_time", { ascending: false })
+    .limit(100);
+  const eventLatestByChild: Record<
+    string,
+    { title: string; start_time: string }
+  > = {};
+  for (const row of allChildEventsRaw ?? []) {
+    const childId = (row.child_id as string) ?? null;
+    if (!childId) continue;
+    if (!eventLatestByChild[childId]) {
+      eventLatestByChild[childId] = {
+        title: (row.title as string) ?? "",
+        start_time: (row.start_time as string) ?? "",
+      };
+    }
+  }
+
+  // Kids snapshot
   const childrenSummaries: ChildSummary[] = (childrenRaw ?? []).map((c) => {
     const id = c.id as string;
     const upcomingForChild = weekEvents
@@ -352,6 +502,24 @@ export default async function DashboardPage() {
         (a, b) =>
           new Date(a.start_time).getTime() - new Date(b.start_time).getTime()
       )[0] ?? null;
+    const latestConv = convLatestByChild[id] ?? null;
+    const latestEvent = eventLatestByChild[id] ?? null;
+    let lastUpdateLabel: string | null = null;
+    if (latestConv || latestEvent) {
+      const convDate = latestConv ? new Date(latestConv.updated_at) : null;
+      const eventDate = latestEvent ? new Date(latestEvent.start_time) : null;
+      if (eventDate && (!convDate || eventDate >= convDate)) {
+        lastUpdateLabel = `${latestEvent?.title ?? "Event"} ${eventDate.toLocaleDateString(
+          "en-US",
+          { month: "short", day: "numeric" }
+        )}`;
+      } else if (convDate) {
+        lastUpdateLabel = `${latestConv?.subject ?? "Conversation"} ${convDate.toLocaleDateString(
+          "en-US",
+          { month: "short", day: "numeric" }
+        )}`;
+      }
+    }
     return {
       id,
       first_name: c.first_name as string,
@@ -359,6 +527,7 @@ export default async function DashboardPage() {
       ageLabel: formatAge((c.date_of_birth as string | null) ?? null),
       nextEvent: upcomingForChild,
       profile_image: (c.profile_image as string | null) ?? null,
+      lastUpdateLabel,
     };
   });
 
@@ -373,12 +542,85 @@ export default async function DashboardPage() {
           {greeting}
         </h1>
         <p className="text-xs md:text-sm text-foreground-secondary">{todayLabel}</p>
+        <p className="mt-1 text-xs md:text-sm text-foreground-secondary">
+          Here&apos;s where things stand.
+        </p>
       </div>
 
       <div className="space-y-4">
+        {/* Top row: status cards */}
+        <div className="grid gap-3 md:grid-cols-3 items-stretch">
+          {/* Household climate */}
+          <Card
+            className={cn(
+              "rounded-card border text-xs md:text-sm",
+              householdElevated
+                ? "border-[#E8E4DC] bg-[#FDF6E3]"
+                : "border-[#E8E4DC] bg-[#F2F5EF]"
+            )}
+          >
+            <CardContent className="px-3 py-3 space-y-1">
+              <div className="flex items-center gap-2">
+                <span
+                  className={cn(
+                    "h-2.5 w-2.5 rounded-full",
+                    householdElevated ? "bg-[#D4A843]" : "bg-[#7C8B6E]"
+                  )}
+                />
+                <p className="font-medium text-foreground text-xs md:text-sm">
+                  Household climate: {householdClimateLabel}
+                </p>
+              </div>
+              <p className="text-[11px] md:text-xs text-foreground-secondary">
+                {disputesLabel}
+              </p>
+            </CardContent>
+          </Card>
+
+          {/* Communication */}
+          <Card className="rounded-card border border-[#E8E4DC] bg-[#FDFBF7] text-xs md:text-sm">
+            <CardContent className="px-3 py-3 space-y-1">
+              <p className="font-medium text-foreground text-xs md:text-sm">
+                Communication: {communicationMainLabel}
+              </p>
+              <p className="text-[11px] md:text-xs text-foreground-secondary">
+                {communicationToneLabel}
+              </p>
+            </CardContent>
+          </Card>
+
+          {/* Shared expenses */}
+          <Card className="rounded-card border border-[#E8E4DC] bg-[#FDFBF7] text-xs md:text-sm">
+            <CardContent className="px-3 py-3 space-y-1">
+              <p className="font-medium text-foreground text-xs md:text-sm">
+                Shared expenses: {netLabel}
+              </p>
+              <p className="text-[11px] md:text-xs text-foreground-secondary">
+                {openExpenseItems === 0
+                  ? "0 open items"
+                  : `${openExpenseItems} open item${openExpenseItems > 1 ? "s" : ""}`}
+              </p>
+              <div className="flex gap-3 pt-1">
+                <Link
+                  href="/expenses"
+                  className="text-[11px] text-primary underline-offset-2 hover:underline"
+                >
+                  View details
+                </Link>
+                <Link
+                  href="/messages?topic=expense"
+                  className="text-[11px] text-primary underline-offset-2 hover:underline"
+                >
+                  Send reminder
+                </Link>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
         {/* Row 1: Today's events + This week */}
         <div className="grid gap-4 lg:grid-cols-2 items-start">
-          <Card className="shadow-card border-border rounded-card">
+          <Card className="rounded-card border border-[#E8E4DC] bg-[#FDFBF7]">
             <CardHeader className="pb-2 px-4 pt-4">
               <CardTitle className="font-heading text-lg text-foreground">
                 Today&apos;s events
@@ -428,7 +670,7 @@ export default async function DashboardPage() {
             </CardContent>
           </Card>
 
-          <Card className="shadow-card border-border rounded-card">
+          <Card className="rounded-card border border-[#E8E4DC] bg-[#FDFBF7]">
             <CardHeader className="pb-2 px-4 pt-4">
               <CardTitle className="font-heading text-lg text-foreground">
                 This week
@@ -445,9 +687,9 @@ export default async function DashboardPage() {
                     <div
                       key={d.date.toISOString()}
                       className={cn(
-                        "rounded-card border border-border bg-background-secondary/60 px-2 py-1.5 space-y-1 min-w-0",
+                        "rounded-card border border-[#E8E4DC] bg-background-secondary/60 px-2 py-1.5 space-y-1 min-w-0",
                         d.date.toDateString() === now.toDateString() &&
-                          "border-emerald-400 bg-emerald-50/70"
+                          "border-[#E8E4DC] bg-[#F5F0E8]"
                       )}
                     >
                       <p className="font-medium text-foreground truncate">
@@ -485,7 +727,7 @@ export default async function DashboardPage() {
           </Card>
         </div>
 
-        {/* Row 2: Review inbox + Kids summary */}
+        {/* Row 2: Review inbox + Kids snapshot */}
         <div className="grid gap-4 lg:grid-cols-2 items-start">
           <Card className="shadow-card border-border rounded-card">
             <CardHeader className="pb-2 px-4 pt-4 flex items-center justify-between gap-2">
@@ -531,7 +773,7 @@ export default async function DashboardPage() {
           <Card className="shadow-card border-border rounded-card">
             <CardHeader className="pb-2 px-4 pt-4">
               <CardTitle className="font-heading text-lg text-foreground">
-                Kids summary
+                Kids Snapshot
               </CardTitle>
             </CardHeader>
             <CardContent className="px-4 pb-4 space-y-3">
@@ -588,6 +830,10 @@ export default async function DashboardPage() {
                             None scheduled
                           </p>
                         )}
+                        <p className="mt-1 text-[11px] text-foreground-secondary">
+                          Last update:{" "}
+                          {c.lastUpdateLabel ?? "No recent updates"}
+                        </p>
                       </div>
                     </li>
                   ))}

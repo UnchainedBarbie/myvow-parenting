@@ -57,7 +57,7 @@ export default async function ExpensesPage() {
   const { data: expensesRaw } = await admin
     .from("expenses")
     .select(
-      "id, description, amount, category, child_id, amount_owed, status, created_at, submitted_by, receipt_file_id, dispute_reason, deleted_at"
+      "id, description, amount, category, child_id, amount_owed, status, created_at, submitted_by, receipt_file_id, dispute_reason, paid_at, payment_method, payment_reference, deleted_at"
     )
     .eq("case_id", caseId)
     .is("deleted_at", null)

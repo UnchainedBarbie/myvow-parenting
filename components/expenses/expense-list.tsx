@@ -9,7 +9,7 @@ import { cn } from "@/lib/utils";
 import { ColumnFilterPopover } from "@/components/documents/column-filter-popover";
 import { DateFilterPopover, type DateFilterValue } from "@/components/documents/date-filter-popover";
 import { getCategoryColor } from "@/lib/categoryColors";
-import { Download, Trash2, Check, XCircle, Receipt, Filter } from "lucide-react";
+import { Download, Trash2, Check, XCircle, Receipt, Filter, Paperclip, Pencil } from "lucide-react";
 import { showErrorToast, showSuccessToast } from "@/components/ui/toaster";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 
@@ -116,10 +116,12 @@ export function ExpenseList({
   const [deleteSingleId, setDeleteSingleId] = useState<string | null>(null);
   const [disputeExpense, setDisputeExpense] = useState<ExpenseRow | null>(null);
   const [disputeText, setDisputeText] = useState("");
-  const [markPaidExpense, setMarkPaidExpense] = useState<{
-    id: string;
-    amount: string;
-  } | null>(null);
+  const [markPaidExpense, setMarkPaidExpense] = useState<ExpenseRow | null>(null);
+  const [markPaidDate, setMarkPaidDate] = useState<string>("");
+  const [markPaidMethod, setMarkPaidMethod] = useState<string>("");
+  const [markPaidRef, setMarkPaidRef] = useState<string>("");
+  const [markPaidNotes, setMarkPaidNotes] = useState<string>("");
+  const [exportingSelected, setExportingSelected] = useState(false);
 
   const debouncedSearch = searchInput.trim().toLowerCase();
 
@@ -270,6 +272,80 @@ export function ExpenseList({
     URL.revokeObjectURL(url);
   }
 
+  async function handleExportSelectedCSV() {
+    const selected = filtered.filter((exp) => selectedIds.has(exp.id));
+    if (selected.length === 0) return;
+    setExportingSelected(true);
+    try {
+      const headers = [
+        "Expense ID",
+        "Description",
+        "Category",
+        "Child",
+        "Date",
+        "Total",
+        "Split",
+        "Their share",
+        "Status",
+        "Payment Method",
+        "Payment Date",
+        "Payment Reference",
+      ];
+      const rows = selected.map((exp) => {
+        const idx = filtered.findIndex((e) => e.id === exp.id);
+        const idLabel = expenseIdFromIndex(idx >= 0 ? idx : 0);
+        const amountNum = Number(exp.amount);
+        const splitOther = custodySplitPercent;
+        const splitYou = 100 - splitOther;
+        const splitLabel = `${splitYou}/${splitOther}`;
+        const owedNum = exp.amount_owed != null ? Number(exp.amount_owed) : null;
+        const isMine = exp.submitted_by === currentUserId;
+        const theirShare =
+          owedNum != null
+            ? isMine
+              ? owedNum
+              : amountNum - owedNum
+            : null;
+        const statusLabel = STATUS_LABELS[exp.status] ?? exp.status;
+        const paymentMethod = (exp as any).payment_method ?? "";
+        const paidAt = (exp as any).paid_at
+          ? formatDate((exp as any).paid_at as string)
+          : "";
+        const paymentRef = (exp as any).payment_reference ?? "";
+        return [
+          idLabel,
+          exp.description ?? "",
+          CATEGORY_LABELS[exp.category] ?? exp.category,
+          exp.child_name ?? "—",
+          formatDate(exp.created_at),
+          Number.isNaN(amountNum) ? "" : amountNum.toFixed(2),
+          splitLabel,
+          theirShare != null ? theirShare.toFixed(2) : "",
+          statusLabel,
+          paymentMethod,
+          paidAt,
+          paymentRef,
+        ]
+          .map(csvEscape)
+          .join(",");
+      });
+      const csv = [headers.map(csvEscape).join(","), ...rows].join("\r\n");
+      const blob = new Blob(["\uFEFF" + csv], {
+        type: "text/csv;charset=utf-8",
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `MyVow-Expenses-${new Date()
+        .toISOString()
+        .slice(0, 10)}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } finally {
+      setExportingSelected(false);
+    }
+  }
+
   function clearAllFilters() {
     setSearchInput("");
     setFilterCategories([]);
@@ -282,6 +358,70 @@ export function ExpenseList({
   async function handleDeleteSelected() {
     if (selectedIds.size === 0) return;
     setDeleteConfirmIds(Array.from(selectedIds));
+  }
+
+  async function handleDownloadSelectedReceipts() {
+    const selected = filtered.filter(
+      (exp) => selectedIds.has(exp.id) && exp.receipt_file_id
+    );
+    if (selected.length === 0) {
+      showErrorToast("No receipts attached to selected expenses");
+      return;
+    }
+    const ids = [
+      ...new Set(
+        selected
+          .map((exp) => exp.receipt_file_id)
+          .filter((id): id is string => !!id)
+      ),
+    ];
+    if (ids.length === 1) {
+      const res = await fetch(`/api/documents/${ids[0]}/download`);
+      const data = await res.json().catch(() => ({}));
+      const url = (data as { url?: string }).url;
+      if (url) {
+        window.open(url, "_blank");
+      } else {
+        showErrorToast("Download failed");
+      }
+      return;
+    }
+    try {
+      const res = await fetch("/api/documents/download-selected", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids }),
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        let message = "Download failed.";
+        try {
+          const json = JSON.parse(text);
+          if (json?.error) message = json.error;
+        } catch {
+          if (text) message = text;
+        }
+        showErrorToast(message);
+        return;
+      }
+      const blob = await res.blob();
+      if (!blob || blob.size === 0) {
+        showErrorToast(
+          "Download failed: no receipts could be included in the ZIP."
+        );
+        return;
+      }
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `MyVow-Receipts-${new Date()
+        .toISOString()
+        .slice(0, 10)}.zip`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      showErrorToast("Download failed. Check the console for details.");
+    }
   }
 
   async function performDelete(ids: string[]) {
@@ -310,15 +450,33 @@ export function ExpenseList({
   async function handleRespond(
     expenseId: string,
     action: "approve" | "dispute" | "resolve" | "mark_paid",
-    dispute_reason?: string
+    opts?: {
+      dispute_reason?: string;
+      paid_at?: string;
+      payment_method?: string;
+      payment_reference?: string;
+      payment_notes?: string;
+    }
   ) {
     setRespondingId(expenseId);
     try {
-      const body: { expense_id: string; action: string; dispute_reason?: string } = {
+      const body: {
+        expense_id: string;
+        action: string;
+        dispute_reason?: string;
+        paid_at?: string;
+        payment_method?: string;
+        payment_reference?: string;
+        payment_notes?: string;
+      } = {
         expense_id: expenseId,
         action,
       };
-      if (dispute_reason) body.dispute_reason = dispute_reason;
+      if (opts?.dispute_reason) body.dispute_reason = opts.dispute_reason;
+      if (opts?.paid_at) body.paid_at = opts.paid_at;
+      if (opts?.payment_method) body.payment_method = opts.payment_method;
+      if (opts?.payment_reference) body.payment_reference = opts.payment_reference;
+      if (opts?.payment_notes) body.payment_notes = opts.payment_notes;
       const res = await fetch("/api/expenses/respond", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -389,6 +547,7 @@ export function ExpenseList({
   }));
 
   return (
+    <>
     <Card className="shadow-card border-border rounded-card">
       <CardHeader className="pb-2 px-4 pt-4">
         <CardTitle className="font-heading text-lg text-foreground">All expenses</CardTitle>
@@ -485,16 +644,33 @@ export function ExpenseList({
 
         {selectedIds.size > 0 && (
           <div className="flex flex-wrap items-center gap-2 py-2 px-3 rounded-card border border-border bg-background-secondary/60">
-            <span className="text-xs text-foreground-secondary">{selectedIds.size} selected</span>
-            <Button
-              size="sm"
-              variant="ghost"
-              className="rounded-full h-8 text-xs text-red-600/90 hover:text-red-700 hover:bg-red-50"
+            <span className="text-xs text-foreground-secondary">
+              {selectedIds.size} selected
+            </span>
+            <button
+              type="button"
+              className="text-xs text-[#5B7A52] hover:underline"
+              onClick={() => void handleDownloadSelectedReceipts()}
+              disabled={deleting}
+            >
+              Download Receipts
+            </button>
+            <button
+              type="button"
+              className="text-xs text-[#5B7A52] hover:underline"
+              onClick={() => void handleExportSelectedCSV()}
+              disabled={exportingSelected}
+            >
+              {exportingSelected ? "Exporting…" : "Export"}
+            </button>
+            <button
+              type="button"
+              className="text-xs text-red-600/90 hover:text-red-700 hover:underline"
               onClick={handleDeleteSelected}
               disabled={deleting}
             >
               {deleting ? "Deleting…" : "Delete"}
-            </Button>
+            </button>
           </div>
         )}
 
@@ -667,12 +843,20 @@ export function ExpenseList({
                       </td>
                       <td className="px-3 py-1.5 align-middle min-w-0">
                         <div className="flex flex-col gap-0.5 min-w-0">
-                          <span
-                            className="font-semibold text-foreground overflow-hidden text-ellipsis whitespace-nowrap block"
-                            title={exp.description}
-                          >
-                            {exp.description || "—"}
-                          </span>
+                          <div className="flex items-center gap-1 min-w-0">
+                            <span
+                              className="font-semibold text-foreground overflow-hidden text-ellipsis whitespace-nowrap block"
+                              title={exp.description}
+                            >
+                              {exp.description || "—"}
+                            </span>
+                            {exp.receipt_file_id && (
+                              <Paperclip
+                                className="h-3 w-3 text-[#8A8A8A] shrink-0"
+                                aria-hidden
+                              />
+                            )}
+                          </div>
                           <span className="text-[11px] text-foreground-secondary overflow-hidden text-ellipsis whitespace-nowrap block">
                             {(CATEGORY_LABELS[exp.category] ?? exp.category) || ""} 
                             {exp.receipt_file_name && ` • ${exp.receipt_file_name}`}
@@ -779,14 +963,16 @@ export function ExpenseList({
                                   className="inline-flex items-center rounded-full bg-[#5B7A52] px-2 py-0.5 text-[11px] text-white hover:bg-[#476242]"
                                   disabled={respondingId === exp.id}
                                   onClick={() => {
+                                    const today = new Date().toISOString().slice(0, 10);
+                                    setMarkPaidExpense(exp);
+                                    setMarkPaidDate(today);
                                     const theirShareNum =
                                       theirShare != null && !Number.isNaN(theirShare)
                                         ? theirShare
                                         : 0;
-                                    setMarkPaidExpense({
-                                      id: exp.id,
-                                      amount: theirShareNum.toFixed(2),
-                                    });
+                                    setMarkPaidMethod("");
+                                    setMarkPaidRef("");
+                                    setMarkPaidNotes("");
                                   }}
                                 >
                                   Mark Paid
@@ -816,6 +1002,9 @@ export function ExpenseList({
                                 </>
                               )}
                               {exp.status === "resolved" && (
+                                <span className="text-[#5B7A52]">Resolved</span>
+                              )}
+                              {exp.status === "paid" && (
                                 <span className="text-[#3D6B35]">Paid</span>
                               )}
                             </div>
@@ -951,23 +1140,117 @@ export function ExpenseList({
       </div>
     )}
 
-    <ConfirmModal
-      open={markPaidExpense !== null}
-      title="Mark expense as paid?"
-      description={
-        markPaidExpense
-          ? `Confirm you've paid $${markPaidExpense.amount} for this expense.`
-          : undefined
-      }
-      confirmLabel="Mark Paid"
-      confirmTone="danger"
-      onCancel={() => setMarkPaidExpense(null)}
-      onConfirm={() => {
-        if (!markPaidExpense) return;
-        void handleRespond(markPaidExpense.id, "mark_paid").finally(() =>
-          setMarkPaidExpense(null)
-        );
-      }}
-    />
+    {markPaidExpense && (
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-3"
+        onClick={(e) => {
+          if (e.target === e.currentTarget) {
+            setMarkPaidExpense(null);
+          }
+        }}
+      >
+        <div className="w-full max-w-[420px] rounded-2xl border border-[#E8E4DC] bg-[#FDFBF7] p-4 shadow-card">
+          <h2 className="font-heading text-base font-semibold text-[#3D3D3D]">
+            Mark expense as paid
+          </h2>
+          <p className="mt-1 text-[11px] text-[#8A8A8A]">
+            {markPaidExpense.description || "Expense"} · $
+            {Number(markPaidExpense.amount).toFixed(2)}
+          </p>
+
+          <div className="mt-3 space-y-2">
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-[#3D3D3D]">
+                Date paid
+              </label>
+              <input
+                type="date"
+                value={markPaidDate}
+                onChange={(e) => setMarkPaidDate(e.target.value)}
+                className="h-8 w-full rounded-md border border-[#E8E4DC] bg-white px-2 text-xs text-[#3D3D3D] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E]"
+              />
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-[#3D3D3D]">
+                Payment method
+              </label>
+              <select
+                value={markPaidMethod}
+                onChange={(e) => setMarkPaidMethod(e.target.value)}
+                className="h-8 w-full rounded-md border border-[#E8E4DC] bg-white px-2 text-xs text-[#3D3D3D] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E]"
+              >
+                <option value="">Select method</option>
+                <option value="Venmo">Venmo</option>
+                <option value="Zelle">Zelle</option>
+                <option value="Cash">Cash</option>
+                <option value="Check">Check</option>
+                <option value="Bank Transfer">Bank Transfer</option>
+                <option value="Other">Other</option>
+              </select>
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-[#3D3D3D]">
+                Reference / confirmation number
+              </label>
+              <input
+                type="text"
+                value={markPaidRef}
+                onChange={(e) => setMarkPaidRef(e.target.value)}
+                placeholder="e.g., Venmo transaction ID"
+                className="h-8 w-full rounded-md border border-[#E8E4DC] bg-white px-2 text-xs text-[#3D3D3D] placeholder:text-[#B0A899] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E]"
+              />
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-[#3D3D3D]">
+                Notes
+              </label>
+              <textarea
+                value={markPaidNotes}
+                onChange={(e) => setMarkPaidNotes(e.target.value)}
+                placeholder="Any additional details"
+                className="w-full min-h-[72px] rounded-md border border-[#E8E4DC] bg-white px-2 py-1.5 text-xs text-[#3D3D3D] placeholder:text-[#B0A899] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E]"
+              />
+            </div>
+          </div>
+
+          <div className="mt-4 flex justify-end gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8 rounded-full text-xs"
+              onClick={() => setMarkPaidExpense(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              className="h-8 rounded-full bg-[#5B7A52] text-xs text-white hover:bg-[#476242]"
+              onClick={() => {
+                if (!markPaidExpense) return;
+                const paidAtIso = markPaidDate
+                  ? new Date(markPaidDate + "T00:00:00").toISOString()
+                  : new Date().toISOString();
+                void handleRespond(markPaidExpense.id, "mark_paid", {
+                  paid_at: paidAtIso,
+                  payment_method: markPaidMethod || undefined,
+                  payment_reference: markPaidRef.trim() || undefined,
+                  payment_notes: markPaidNotes.trim() || undefined,
+                }).finally(() => {
+                  setMarkPaidExpense(null);
+                });
+              }}
+            >
+              Mark Paid
+            </Button>
+          </div>
+        </div>
+      </div>
+    )}
+    </>
   );
 }

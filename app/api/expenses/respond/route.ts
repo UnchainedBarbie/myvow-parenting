@@ -17,7 +17,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { expense_id, action, dispute_reason } = body as {
       expense_id?: string;
-      action?: "approve" | "dispute";
+      action?: "approve" | "dispute" | "resolve" | "mark_paid";
       dispute_reason?: string;
     };
     if (!expense_id || !action) {
@@ -27,11 +27,11 @@ export async function POST(request: NextRequest) {
       );
     }
     const admin = getServiceRoleClient();
-    if (action === "approve") {
+    if (action === "approve" || action === "resolve" || action === "mark_paid") {
       const { error } = await admin
         .from("expenses")
         .update({
-          status: "approved",
+          status: "resolved",
           approved_by: user.id,
           approved_at: new Date().toISOString(),
         })

@@ -22,6 +22,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { estimateIntensity } from "@/lib/sage/intensity";
 import { showErrorToast, showSuccessToast } from "@/components/ui/toaster";
+import { ConfirmModal } from "@/components/ui/confirm-modal";
 
 type ChildSummary = { id: string; first_name: string };
 
@@ -132,6 +133,9 @@ export function MessagesSplitView({
   const [showExpenseModal, setShowExpenseModal] = useState(false);
   const [showDocumentModal, setShowDocumentModal] = useState(false);
   const [showCourtOrderModal, setShowCourtOrderModal] = useState(false);
+  const [deleteConversationId, setDeleteConversationId] = useState<string | null>(null);
+  const [confirmArchiveOpen, setConfirmArchiveOpen] = useState(false);
+  const [discardDraftOpen, setDiscardDraftOpen] = useState(false);
 
   const childMap = useMemo(
     () =>
@@ -683,37 +687,7 @@ export function MessagesSplitView({
                               type="button"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                if (
-                                  window.confirm(
-                                    "Delete this conversation? This cannot be undone."
-                                  )
-                                ) {
-                                  void (async () => {
-                                    try {
-                                      const res = await fetch(
-                                        `/api/messages/conversations/${c.id}`,
-                                        {
-                                          method: "DELETE",
-                                        }
-                                      );
-                                      if (!res.ok) {
-                                        // eslint-disable-next-line no-console
-                                        console.error(
-                                          "Failed to delete conversation"
-                                        );
-                                        return;
-                                      }
-                                      if (selectedId === c.id) {
-                                        setSelectedId(null);
-                                        setMessages([]);
-                                      }
-                                      await loadConversations();
-                                    } catch (err) {
-                                      // eslint-disable-next-line no-console
-                                      console.error(err);
-                                    }
-                                  })();
-                                }
+                                setDeleteConversationId(c.id);
                               }}
                               className="opacity-0 group-hover:opacity-100 transition-opacity text-[#B0A899] hover:text-[#8A8A8A]"
                               aria-label="Delete empty conversation"
@@ -1191,34 +1165,7 @@ export function MessagesSplitView({
                         className="text-[12px] text-[#8A8A8A] hover:text-[#5B7A52] underline-offset-2 hover:underline"
                         onClick={async () => {
                           if (!activeConversation) return;
-                          const isArchived = activeConversation.status === "archived";
-                          const confirmText = isArchived
-                            ? "Unarchive this conversation?"
-                            : "Archive this conversation? You can find it later in the Archived filter.";
-                          const ok = window.confirm(confirmText);
-                          if (!ok) return;
-                          const nextStatus = isArchived ? "open" : "archived";
-                          const res = await fetch(
-                            `/api/messages/conversations/${activeConversation.id}/status`,
-                            {
-                              method: "PATCH",
-                              headers: { "Content-Type": "application/json" },
-                              body: JSON.stringify({ status: nextStatus }),
-                            }
-                          );
-                          if (!res.ok) {
-                            const d = await res.json().catch(() => ({}));
-                            showErrorToast(
-                              (d as { error?: string }).error ??
-                                "Could not update conversation."
-                            );
-                            return;
-                          }
-                          await loadConversations();
-                          if (nextStatus === "archived") {
-                            setSelectedId(null);
-                            setMessages([]);
-                          }
+                          setConfirmArchiveOpen(true);
                         }}
                       >
                         {activeConversation.status === "archived"
@@ -1317,13 +1264,7 @@ export function MessagesSplitView({
                         type="button"
                         className="text-[11px] text-[#8A8A8A] hover:text-[#C7524A] hover:underline"
                         onClick={() => {
-                          if (!window.confirm("Discard this message?")) return;
-                          setPreviewMode("idle");
-                          setPreviewOriginal("");
-                          setPreviewSage("");
-                          setPreviewEditable("");
-                          setComposeText("");
-                          setSending(false);
+                          setDiscardDraftOpen(true);
                         }}
                         disabled={sending}
                       >
@@ -2129,6 +2070,101 @@ export function MessagesSplitView({
           </div>
         </div>
       )}
+
+      <ConfirmModal
+        open={deleteConversationId !== null}
+        title="Delete conversation?"
+        description="This cannot be undone."
+        confirmLabel="Delete"
+        confirmTone="danger"
+        onCancel={() => setDeleteConversationId(null)}
+        onConfirm={() => {
+          const id = deleteConversationId;
+          if (!id) return;
+          void (async () => {
+            try {
+              const res = await fetch(`/api/messages/conversations/${id}`, {
+                method: "DELETE",
+              });
+              if (!res.ok) {
+                // eslint-disable-next-line no-console
+                console.error("Failed to delete conversation");
+                return;
+              }
+              if (selectedId === id) {
+                setSelectedId(null);
+                setMessages([]);
+              }
+              await loadConversations();
+            } catch (err) {
+              // eslint-disable-next-line no-console
+              console.error(err);
+            } finally {
+              setDeleteConversationId(null);
+            }
+          })();
+        }}
+      />
+
+      <ConfirmModal
+        open={confirmArchiveOpen && !!activeConversation}
+        title={
+          activeConversation?.status === "archived"
+            ? "Unarchive conversation?"
+            : "Archive conversation?"
+        }
+        description={
+          activeConversation?.status === "archived"
+            ? "This conversation will return to your Open list."
+            : "You can find this conversation later under Archived."
+        }
+        confirmLabel={activeConversation?.status === "archived" ? "Unarchive" : "Archive"}
+        onCancel={() => setConfirmArchiveOpen(false)}
+        onConfirm={async () => {
+          if (!activeConversation) return;
+          const isArchived = activeConversation.status === "archived";
+          const nextStatus = isArchived ? "open" : "archived";
+          const res = await fetch(
+            `/api/messages/conversations/${activeConversation.id}/status`,
+            {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ status: nextStatus }),
+            }
+          );
+          if (!res.ok) {
+            const d = await res.json().catch(() => ({}));
+            showErrorToast(
+              (d as { error?: string }).error ?? "Could not update conversation."
+            );
+            return;
+          }
+          await loadConversations();
+          if (nextStatus === "archived") {
+            setSelectedId(null);
+            setMessages([]);
+          }
+          setConfirmArchiveOpen(false);
+        }}
+      />
+
+      <ConfirmModal
+        open={discardDraftOpen}
+        title="Discard message?"
+        description="This cannot be undone."
+        confirmLabel="Discard"
+        confirmTone="danger"
+        onCancel={() => setDiscardDraftOpen(false)}
+        onConfirm={() => {
+          setPreviewMode("idle");
+          setPreviewOriginal("");
+          setPreviewSage("");
+          setPreviewEditable("");
+          setComposeText("");
+          setSending(false);
+          setDiscardDraftOpen(false);
+        }}
+      />
     </div>
   );
 }

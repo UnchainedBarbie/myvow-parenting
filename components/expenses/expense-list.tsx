@@ -11,6 +11,7 @@ import { DateFilterPopover, type DateFilterValue } from "@/components/documents/
 import { getCategoryColor } from "@/lib/categoryColors";
 import { Download, Trash2, Check, XCircle, Receipt, Filter } from "lucide-react";
 import { showErrorToast, showSuccessToast } from "@/components/ui/toaster";
+import { ConfirmModal } from "@/components/ui/confirm-modal";
 
 const CATEGORY_LABELS: Record<string, string> = {
   medical: "Medical",
@@ -51,6 +52,7 @@ export type ExpenseRow = {
   submitted_by: string;
   receipt_file_id: string | null;
   receipt_file_name: string | null;
+  dispute_reason?: string | null;
 };
 
 interface ExpenseListProps {
@@ -110,6 +112,14 @@ export function ExpenseList({
   const [summaryOpen, setSummaryOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [respondingId, setRespondingId] = useState<string | null>(null);
+  const [deleteConfirmIds, setDeleteConfirmIds] = useState<string[] | null>(null);
+  const [deleteSingleId, setDeleteSingleId] = useState<string | null>(null);
+  const [disputeExpense, setDisputeExpense] = useState<ExpenseRow | null>(null);
+  const [disputeText, setDisputeText] = useState("");
+  const [markPaidExpense, setMarkPaidExpense] = useState<{
+    id: string;
+    amount: string;
+  } | null>(null);
 
   const debouncedSearch = searchInput.trim().toLowerCase();
 
@@ -271,13 +281,16 @@ export function ExpenseList({
 
   async function handleDeleteSelected() {
     if (selectedIds.size === 0) return;
-    if (!window.confirm("Delete selected expenses?")) return;
+    setDeleteConfirmIds(Array.from(selectedIds));
+  }
+
+  async function performDelete(ids: string[]) {
     setDeleting(true);
     try {
       const res = await fetch("/api/expenses/delete", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ids: Array.from(selectedIds) }),
+        body: JSON.stringify({ ids }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -294,14 +307,13 @@ export function ExpenseList({
     }
   }
 
-  async function handleRespond(expenseId: string, action: "approve" | "dispute") {
+  async function handleRespond(
+    expenseId: string,
+    action: "approve" | "dispute" | "resolve" | "mark_paid",
+    dispute_reason?: string
+  ) {
     setRespondingId(expenseId);
     try {
-      let dispute_reason: string | undefined;
-      if (action === "dispute") {
-        const input = window.prompt("Optional reason for dispute (leave blank to skip)") ?? "";
-        dispute_reason = input.trim() || undefined;
-      }
       const body: { expense_id: string; action: string; dispute_reason?: string } = {
         expense_id: expenseId,
         action,
@@ -320,6 +332,15 @@ export function ExpenseList({
         return;
       }
       router.refresh();
+      if (action === "approve") {
+        showSuccessToast("Expense approved");
+      } else if (action === "dispute") {
+        showSuccessToast("Dispute submitted");
+      } else if (action === "resolve") {
+        showSuccessToast("Expense resolved");
+      } else if (action === "mark_paid") {
+        showSuccessToast("Marked as paid");
+      }
     } finally {
       setRespondingId(null);
     }
@@ -513,13 +534,15 @@ export function ExpenseList({
                       className="rounded border-border"
                     />
                   </th>
-                  <th className="px-3 py-2 font-medium">Expense ID</th>
+                  <th className="px-3 py-2 font-medium whitespace-nowrap min-w-[90px]">
+                    Expense ID
+                  </th>
                   <th className="px-3 py-2 font-medium">
                     <span className="inline-flex items-center gap-1">
                       <span>Description</span>
                     </span>
                   </th>
-                  <th className="px-3 py-2 font-medium">
+                  <th className="px-3 py-2 font-medium whitespace-nowrap">
                     <span className="inline-flex items-center gap-1">
                       <span>Category</span>
                       <ColumnFilterPopover
@@ -568,14 +591,14 @@ export function ExpenseList({
                       </span>
                     </span>
                   </th>
-                  <th className="px-3 py-2 font-medium">Total</th>
-                  <th className="px-3 py-2 font-medium">Split</th>
-                  <th className="px-3 py-2 font-medium">
+                  <th className="px-3 py-2 font-medium whitespace-nowrap">Total</th>
+                  <th className="px-2 py-2 font-medium whitespace-nowrap">Split</th>
+                  <th className="px-2 py-2 font-medium whitespace-nowrap">
                     <span className="inline-flex items-center gap-1">
                       <span>Their share</span>
                     </span>
                   </th>
-                  <th className="px-3 py-2 font-medium">
+                  <th className="px-3 py-2 font-medium whitespace-nowrap">
                     <span className="inline-flex items-center gap-1">
                       <span>Status</span>
                       <ColumnFilterPopover
@@ -614,12 +637,10 @@ export function ExpenseList({
                     exp.status === "submitted"
                       ? "bg-muted text-foreground-secondary"
                       : exp.status === "disputed"
-                        ? "bg-alert/10 text-alert"
-                        : exp.status === "approved"
-                          ? "bg-success/15 text-success"
-                          : exp.status === "resolved"
-                            ? "bg-emerald-600/15 text-emerald-700"
-                            : "bg-muted text-foreground-secondary";
+                        ? "bg-[#FDF6E3] text-[#D4A843]"
+                        : exp.status === "resolved"
+                          ? "bg-[#E0EDDA] text-[#3D6B35]"
+                          : "bg-muted text-foreground-secondary";
                   return (
                     <tr
                       key={exp.id}
@@ -639,7 +660,7 @@ export function ExpenseList({
                           className="rounded border-border"
                         />
                       </td>
-                      <td className="px-3 py-1.5 text-xs align-middle">
+                      <td className="px-3 py-1.5 text-xs align-middle whitespace-nowrap">
                         {expenseIdFromIndex(idx)}
                       </td>
                       <td className="px-3 py-1.5 align-middle min-w-0">
@@ -656,7 +677,7 @@ export function ExpenseList({
                           </span>
                         </div>
                       </td>
-                      <td className="px-3 py-1.5 align-middle">
+                      <td className="px-3 py-1.5 align-middle whitespace-nowrap">
                         <span className="inline-flex items-center gap-2">
                           <span
                             className={cn("h-2.5 w-2.5 shrink-0 rounded-full", catColors.dotClass)}
@@ -696,24 +717,108 @@ export function ExpenseList({
                       <td className="px-3 py-1.5 text-foreground-secondary whitespace-nowrap align-middle">
                         {formatDate(exp.created_at)}
                       </td>
-                      <td className="px-3 py-1.5 align-middle">
+                      <td className="px-3 py-1.5 align-middle whitespace-nowrap">
                         {Number.isNaN(amountNum) ? "—" : `$${amountNum.toFixed(2)}`}
                       </td>
-                      <td className="px-3 py-1.5 align-middle text-foreground-secondary">
+                      <td className="px-2 py-1.5 align-middle text-foreground-secondary whitespace-nowrap">
                         {splitLabel}
                       </td>
-                      <td className="px-3 py-1.5 align-middle">
+                      <td className="px-2 py-1.5 align-middle whitespace-nowrap">
                         {theirShare != null && !Number.isNaN(theirShare) ? `$${theirShare.toFixed(2)}` : "—"}
                       </td>
-                      <td className="px-3 py-1.5 align-middle">
-                        <span
-                          className={cn(
-                            "inline-block rounded-full px-2 py-0.5 text-xs font-medium",
-                            statusClasses
+                      <td className="px-3 py-1.5 align-middle whitespace-nowrap">
+                        <div className="flex flex-col items-start gap-1">
+                          <span
+                            className={cn(
+                              "inline-block rounded-full px-2 py-0.5 text-xs font-medium",
+                              statusClasses
+                            )}
+                          >
+                            {statusLabel}
+                          </span>
+                          {exp.submitted_by !== currentUserId ? (
+                            <div className="flex flex-wrap gap-1 text-[11px]">
+                              {exp.status === "submitted" && (
+                                <>
+                                  <button
+                                    type="button"
+                                    className="inline-flex items-center rounded-full border border-[#7C8B6E] px-2 py-0.5 text-[11px] text-[#5B7A52] hover:bg-[#F2F5EF]"
+                                    disabled={respondingId === exp.id}
+                                    onClick={() => handleRespond(exp.id, "approve")}
+                                  >
+                                    Approve
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="inline-flex items-center rounded-full border border-[#D4A843] px-2 py-0.5 text-[11px] text-[#B8960F] hover:bg-[#FDF6E3]"
+                                    disabled={respondingId === exp.id}
+                                    onClick={() => {
+                                      setDisputeExpense(exp);
+                                      setDisputeText(exp.dispute_reason ?? "");
+                                    }}
+                                  >
+                                    Dispute
+                                  </button>
+                                </>
+                              )}
+                              {exp.status === "disputed" && (
+                                <button
+                                  type="button"
+                                  className="inline-flex items-center rounded-full border border-[#7C8B6E] px-2 py-0.5 text-[11px] text-[#5B7A52] hover:bg-[#F2F5EF]"
+                                  disabled={respondingId === exp.id}
+                                  onClick={() => handleRespond(exp.id, "resolve")}
+                                >
+                                  Resolve
+                                </button>
+                              )}
+                              {exp.status === "resolved" && (
+                                <button
+                                  type="button"
+                                  className="inline-flex items-center rounded-full bg-[#5B7A52] px-2 py-0.5 text-[11px] text-white hover:bg-[#476242]"
+                                  disabled={respondingId === exp.id}
+                                  onClick={() => {
+                                    const theirShareNum =
+                                      theirShare != null && !Number.isNaN(theirShare)
+                                        ? theirShare
+                                        : 0;
+                                    setMarkPaidExpense({
+                                      id: exp.id,
+                                      amount: theirShareNum.toFixed(2),
+                                    });
+                                  }}
+                                >
+                                  Mark Paid
+                                </button>
+                              )}
+                            </div>
+                          ) : (
+                            <div className="flex flex-col gap-1 text-[11px] text-foreground-secondary">
+                              {exp.status === "submitted" && (
+                                <span>Awaiting response</span>
+                              )}
+                              {exp.status === "disputed" && (
+                                <>
+                                  {exp.dispute_reason && (
+                                    <span className="max-w-xs">
+                                      {exp.dispute_reason}
+                                    </span>
+                                  )}
+                                  <button
+                                    type="button"
+                                    className="mt-0.5 inline-flex items-center rounded-full border border-[#7C8B6E] px-2 py-0.5 text-[11px] text-[#5B7A52] hover:bg-[#F2F5EF]"
+                                    disabled={respondingId === exp.id}
+                                    onClick={() => handleRespond(exp.id, "resolve")}
+                                  >
+                                    Resolve
+                                  </button>
+                                </>
+                              )}
+                              {exp.status === "resolved" && (
+                                <span className="text-[#3D6B35]">Paid</span>
+                              )}
+                            </div>
                           )}
-                        >
-                          {statusLabel}
-                        </span>
+                        </div>
                       </td>
                       <td className="px-2 py-1.5 align-middle" onClick={(e) => e.stopPropagation()}>
                         <span className="inline-flex items-center gap-0.5">
@@ -761,26 +866,7 @@ export function ExpenseList({
                               className="p-1.5 rounded text-foreground-secondary hover:text-foreground hover:bg-muted/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                               aria-label="Delete expense"
                               onClick={async () => {
-                                if (!window.confirm("Delete this expense?")) return;
-                                setDeleting(true);
-                                try {
-                                  const res = await fetch("/api/expenses/delete", {
-                                    method: "POST",
-                                    headers: { "Content-Type": "application/json" },
-                                    body: JSON.stringify({ ids: [exp.id] }),
-                                  });
-                                  if (!res.ok) {
-                                    const data = await res.json().catch(() => ({}));
-                                    showErrorToast(
-                                      (data as { error?: string }).error ??
-                                        "Failed to delete expense"
-                                    );
-                                    return;
-                                  }
-                                  router.refresh();
-                                } finally {
-                                  setDeleting(false);
-                                }
+                                setDeleteSingleId(exp.id);
                               }}
                             >
                               <Trash2 className="h-3.5 w-3.5" />
@@ -797,5 +883,106 @@ export function ExpenseList({
         )}
       </CardContent>
     </Card>
+
+    <ConfirmModal
+      open={deleteConfirmIds !== null}
+      title="Delete expenses?"
+      description="This cannot be undone."
+      confirmLabel="Delete"
+      confirmTone="danger"
+      onCancel={() => setDeleteConfirmIds(null)}
+      onConfirm={() => {
+        const ids = deleteConfirmIds;
+        if (!ids || ids.length === 0) return;
+        void performDelete(ids).finally(() => setDeleteConfirmIds(null));
+      }}
+    />
+
+    <ConfirmModal
+      open={deleteSingleId !== null}
+      title="Delete expense?"
+      description="This cannot be undone."
+      confirmLabel="Delete"
+      confirmTone="danger"
+      onCancel={() => setDeleteSingleId(null)}
+      onConfirm={() => {
+        const id = deleteSingleId;
+        if (!id) return;
+        void performDelete([id]).finally(() => setDeleteSingleId(null));
+      }}
+    />
+
+    {disputeExpense && (
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-3"
+        onClick={(e) => {
+          if (e.target === e.currentTarget) {
+            setDisputeExpense(null);
+            setDisputeText("");
+          }
+        }}
+      >
+        <div className="w-full max-w-md rounded-2xl border border-[#E8E4DC] bg-[#FDFBF7] p-4 shadow-card">
+          <h2 className="font-heading text-base font-semibold text-[#3D3D3D]">
+            Dispute Expense
+          </h2>
+          <p className="mt-1 text-[11px] text-[#8A8A8A]">
+            What&apos;s the issue with this expense?
+          </p>
+          <textarea
+            value={disputeText}
+            onChange={(e) => setDisputeText(e.target.value)}
+            className="mt-3 w-full min-h-[96px] rounded-lg border border-[#E8E4DC] bg-white px-3 py-2 text-sm text-[#3D3D3D] placeholder:text-[#B0A899] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E]"
+            placeholder="Optional — this will be shared with your co-parent."
+          />
+          <div className="mt-4 flex justify-end gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8 rounded-full text-xs"
+              onClick={() => {
+                setDisputeExpense(null);
+                setDisputeText("");
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              className="h-8 rounded-full bg-[#5B7A52] text-xs text-white hover:bg-[#476242]"
+              onClick={() => {
+                if (!disputeExpense) return;
+                void handleRespond(disputeExpense.id, "dispute", disputeText.trim() || undefined);
+                setDisputeExpense(null);
+                setDisputeText("");
+              }}
+            >
+              Submit Dispute
+            </Button>
+          </div>
+        </div>
+      </div>
+    )}
+
+    <ConfirmModal
+      open={markPaidExpense !== null}
+      title="Mark expense as paid?"
+      description={
+        markPaidExpense
+          ? `Confirm you've paid $${markPaidExpense.amount} for this expense.`
+          : undefined
+      }
+      confirmLabel="Mark Paid"
+      confirmTone="danger"
+      onCancel={() => setMarkPaidExpense(null)}
+      onConfirm={() => {
+        if (!markPaidExpense) return;
+        void handleRespond(markPaidExpense.id, "mark_paid").finally(() =>
+          setMarkPaidExpense(null)
+        );
+      }}
+    />
   );
 }

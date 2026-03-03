@@ -9,6 +9,7 @@ import { ColumnFilterPopover } from "@/components/documents/column-filter-popove
 import { ChildMultiSelect, type ChildOption } from "@/components/documents/child-multi-select";
 import { cn } from "@/lib/utils";
 import { showErrorToast, showSuccessToast } from "@/components/ui/toaster";
+import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { Filter, Pencil, Trash2, Lock } from "lucide-react";
 
 export type ContactRow = {
@@ -78,6 +79,7 @@ export function ContactList({ contacts, children }: ContactListProps) {
   const [modalChildIds, setModalChildIds] = useState<string[]>([]);
   const [editSaving, setEditSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
 
   const debouncedSearch = searchInput.trim().toLowerCase();
 
@@ -287,7 +289,6 @@ export function ContactList({ contacts, children }: ContactListProps) {
   }
 
   async function handleDelete(id: string) {
-    if (!window.confirm("Delete this contact?")) return;
     setDeletingId(id);
     try {
       const res = await fetch("/api/contacts/delete", {
@@ -354,7 +355,7 @@ export function ContactList({ contacts, children }: ContactListProps) {
   }
 
   return (
-    <Card className="shadow-card border-border rounded-card">
+      <Card className="shadow-card border-border rounded-card">
       <CardHeader className="pb-2 px-4 pt-4">
         <CardTitle className="font-heading text-lg text-foreground">
           All contacts
@@ -634,7 +635,7 @@ export function ContactList({ contacts, children }: ContactListProps) {
                           type="button"
                           className="p-1.5 rounded text-gray-400 hover:text-red-500 hover:bg-red-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                           aria-label="Delete contact"
-                          onClick={() => handleDelete(c.id)}
+                          onClick={() => setDeleteConfirmId(c.id)}
                           disabled={deletingId === c.id}
                         >
                           <Trash2 className="h-3.5 w-3.5" />
@@ -918,6 +919,20 @@ export function ContactList({ contacts, children }: ContactListProps) {
         </div>
       )}
     </Card>
+
+      <ConfirmModal
+        open={deleteConfirmId !== null}
+        title="Delete contact?"
+        description="This cannot be undone."
+        confirmLabel="Delete"
+        confirmTone="danger"
+        onCancel={() => setDeleteConfirmId(null)}
+        onConfirm={() => {
+          const id = deleteConfirmId;
+          if (!id) return;
+          void handleDelete(id).finally(() => setDeleteConfirmId(null));
+        }}
+      />
   );
 }
 

@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ConfirmModal } from "@/components/ui/confirm-modal";
 import type { CalendarEventRow } from "@/components/calendar/calendar-month";
 import {
   buildUtcIsoFromLocal,
@@ -114,6 +115,7 @@ export function EventDetailModal({
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const deleteCancelRef = useRef<HTMLButtonElement>(null);
   const deleteDialogRef = useRef<HTMLDivElement>(null);
+  const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saveWarning, setSaveWarning] = useState<string | null>(null);
   const [actualExchangeTime, setActualExchangeTime] = useState("");
@@ -279,9 +281,9 @@ export function EventDetailModal({
     function handleKey(e: KeyboardEvent) {
       if (e.key === "Escape") {
         e.preventDefault();
-        if (editMode && isDirty && typeof window !== "undefined") {
-          const discard = window.confirm("Discard changes?");
-          if (!discard) return;
+        if (editMode && isDirty) {
+          setDiscardConfirmOpen(true);
+          return;
         }
         setEditMode(false);
         resetFromOriginal();
@@ -589,9 +591,9 @@ export function EventDetailModal({
 
   function handleCancelEdit() {
     if (!editMode) return;
-    if (isDirty && typeof window !== "undefined") {
-      const confirmDiscard = window.confirm("Discard changes?");
-      if (!confirmDiscard) return;
+    if (isDirty) {
+      setDiscardConfirmOpen(true);
+      return;
     }
     resetFromOriginal();
     setEditMode(false);
@@ -647,9 +649,9 @@ export function EventDetailModal({
   }
 
   function handleCloseRequest() {
-    if (editMode && isDirty && typeof window !== "undefined") {
-      const discard = window.confirm("Discard changes?");
-      if (!discard) return;
+    if (editMode && isDirty) {
+      setDiscardConfirmOpen(true);
+      return;
     }
     doClose();
   }
@@ -1266,6 +1268,22 @@ export function EventDetailModal({
           )}
         </div>
       </div>
+
+      <ConfirmModal
+        open={discardConfirmOpen}
+        title="Discard changes?"
+        description="This cannot be undone."
+        confirmLabel="Discard"
+        confirmTone="danger"
+        onCancel={() => setDiscardConfirmOpen(false)}
+        onConfirm={() => {
+          setDiscardConfirmOpen(false);
+          resetFromOriginal();
+          setEditMode(false);
+          setError(null);
+          onClose();
+        }}
+      />
 
       {deleteConfirmOpen && (
         <div

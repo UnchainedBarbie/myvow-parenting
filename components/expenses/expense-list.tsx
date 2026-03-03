@@ -27,16 +27,16 @@ const CATEGORY_LABELS: Record<string, string> = {
 
 const STATUS_LABELS: Record<string, string> = {
   submitted: "Pending",
-  approved: "Approved",
   disputed: "Disputed",
-  resolved: "Paid",
+  resolved: "Resolved",
+  paid: "Paid",
 };
 
 const STATUS_FILTER_OPTIONS = [
   { value: "submitted", label: "Pending" },
   { value: "disputed", label: "Disputed" },
-  { value: "approved", label: "Approved" },
-  { value: "resolved", label: "Paid" },
+  { value: "resolved", label: "Resolved" },
+  { value: "paid", label: "Paid" },
 ] as const;
 
 export type ExpenseRow = {
@@ -639,8 +639,10 @@ export function ExpenseList({
                       : exp.status === "disputed"
                         ? "bg-[#FDF6E3] text-[#D4A843]"
                         : exp.status === "resolved"
-                          ? "bg-[#E0EDDA] text-[#3D6B35]"
-                          : "bg-muted text-foreground-secondary";
+                          ? "bg-[#F2F5EF] text-[#5B7A52]"
+                          : exp.status === "paid"
+                            ? "bg-[#E0EDDA] text-[#3D6B35]"
+                            : "bg-muted text-foreground-secondary";
                   return (
                     <tr
                       key={exp.id}
@@ -838,28 +840,7 @@ export function ExpenseList({
                               <Receipt className="h-3.5 w-3.5" />
                             </button>
                           )}
-                          {canRespond(exp) && (
-                            <>
-                              <button
-                                type="button"
-                                className="p-1.5 rounded text-emerald-600 hover:text-emerald-700 hover:bg-muted/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                                aria-label="Approve expense"
-                                disabled={respondingId === exp.id}
-                                onClick={() => handleRespond(exp.id, "approve")}
-                              >
-                                <Check className="h-3.5 w-3.5" />
-                              </button>
-                              <button
-                                type="button"
-                                className="p-1.5 rounded text-alert hover:text-alert hover:bg-muted/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                                aria-label="Dispute expense"
-                                disabled={respondingId === exp.id}
-                                onClick={() => handleRespond(exp.id, "dispute")}
-                              >
-                                <XCircle className="h-3.5 w-3.5" />
-                              </button>
-                            </>
-                          )}
+                          {canRespond(exp) && null}
                           {!canRespond(exp) && (
                             <button
                               type="button"
@@ -922,19 +903,23 @@ export function ExpenseList({
           }
         }}
       >
-        <div className="w-full max-w-md rounded-2xl border border-[#E8E4DC] bg-[#FDFBF7] p-4 shadow-card">
+        <div className="w-full max-w-[420px] rounded-2xl border border-[#E8E4DC] bg-[#FDFBF7] p-4 shadow-card">
           <h2 className="font-heading text-base font-semibold text-[#3D3D3D]">
             Dispute Expense
           </h2>
           <p className="mt-1 text-[11px] text-[#8A8A8A]">
-            What&apos;s the issue with this expense?
+            {disputeExpense.description || "Expense"} · $
+            {Number(disputeExpense.amount).toFixed(2)}
           </p>
           <textarea
             value={disputeText}
             onChange={(e) => setDisputeText(e.target.value)}
             className="mt-3 w-full min-h-[96px] rounded-lg border border-[#E8E4DC] bg-white px-3 py-2 text-sm text-[#3D3D3D] placeholder:text-[#B0A899] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E]"
-            placeholder="Optional — this will be shared with your co-parent."
+            placeholder="What's the issue with this expense?"
           />
+          <p className="mt-1 text-[11px] text-[#8A8A8A]">
+            Optional — leave blank to dispute without a reason.
+          </p>
           <div className="mt-4 flex justify-end gap-2">
             <Button
               type="button"
@@ -951,7 +936,7 @@ export function ExpenseList({
             <Button
               type="button"
               size="sm"
-              className="h-8 rounded-full bg-[#5B7A52] text-xs text-white hover:bg-[#476242]"
+              className="h-8 rounded-full bg-[#D4A843] text-xs text-white hover:bg-[#C39A35]"
               onClick={() => {
                 if (!disputeExpense) return;
                 void handleRespond(disputeExpense.id, "dispute", disputeText.trim() || undefined);

@@ -27,11 +27,26 @@ export async function POST(request: NextRequest) {
       );
     }
     const admin = getServiceRoleClient();
-    if (action === "approve" || action === "resolve" || action === "mark_paid") {
+    if (action === "approve" || action === "resolve") {
       const { error } = await admin
         .from("expenses")
         .update({
           status: "resolved",
+          approved_by: user.id,
+          approved_at: new Date().toISOString(),
+        })
+        .eq("id", expense_id);
+      if (error) {
+        return NextResponse.json(
+          { message: error.message },
+          { status: 500 }
+        );
+      }
+    } else if (action === "mark_paid") {
+      const { error } = await admin
+        .from("expenses")
+        .update({
+          status: "paid",
           approved_by: user.id,
           approved_at: new Date().toISOString(),
         })
@@ -58,7 +73,7 @@ export async function POST(request: NextRequest) {
       }
     } else {
       return NextResponse.json(
-        { message: "Action must be approve or dispute" },
+        { message: "Action must be approve, dispute, resolve, or mark_paid" },
         { status: 400 }
       );
     }

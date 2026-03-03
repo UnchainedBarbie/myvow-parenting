@@ -14,6 +14,7 @@ import {
   Lock,
   X,
   Trash2,
+  Bookmark,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -40,6 +41,7 @@ type ConversationSummary = {
   status?: "open" | "archived";
   tone?: "calm" | "elevated";
   message_count?: number;
+  has_flagged_by_me?: boolean;
 };
 
 type SageMessage = {
@@ -94,9 +96,9 @@ export function MessagesSplitView({
   >({});
   const [filterTopic, setFilterTopic] = useState<string>("all");
   const [filterChild, setFilterChild] = useState<string>("all");
-  const [filterStatus, setFilterStatus] = useState<"open" | "archived" | "all">(
-    "open"
-  );
+  const [filterStatus, setFilterStatus] = useState<
+    "open" | "archived" | "flagged" | "all"
+  >("open");
   const [sageOpen, setSageOpen] = useState(false);
   const [sageInput, setSageInput] = useState("");
   const [sageMessages, setSageMessages] = useState<SageMessage[]>([]);
@@ -306,6 +308,8 @@ export function MessagesSplitView({
       list = list.filter((c) => (c.status ?? "open") === "open");
     } else if (filterStatus === "archived") {
       list = list.filter((c) => c.status === "archived");
+    } else if (filterStatus === "flagged") {
+      list = list.filter((c) => c.has_flagged_by_me);
     }
     return list;
   }, [conversations, search, filterTopic, filterChild, filterStatus, childMap, coparentName]);
@@ -611,7 +615,9 @@ export function MessagesSplitView({
             <select
               value={filterStatus}
               onChange={(e) =>
-                setFilterStatus(e.target.value as "open" | "archived" | "all")
+                setFilterStatus(
+                  e.target.value as "open" | "archived" | "flagged" | "all"
+                )
               }
               className={cn(
                 "h-7 rounded-full border px-2 text-[11px] text-[#3D3D3D] bg-[#FDFBF7] border-[#E8E4DC] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E]",
@@ -620,6 +626,7 @@ export function MessagesSplitView({
             >
               <option value="open">Open</option>
               <option value="archived">Archived</option>
+              <option value="flagged">Flagged</option>
               <option value="all">All conversations</option>
             </select>
           </div>
@@ -1045,10 +1052,50 @@ export function MessagesSplitView({
                                 ? "other"
                                 : undefined;
 
-                        const intensityFlag = (m as MessageRow & { intensity_flag?: boolean }).intensity_flag;
+                        const intensityFlag = (m as MessageRow & {
+                          intensity_flag?: boolean;
+                        }).intensity_flag;
                         return (
                           <div key={m.id} className="flex flex-col gap-1">
-                            <MessageBubble message={m} />
+                            <MessageBubble
+                              message={m}
+                              onToggleFlag={async () => {
+                                try {
+                                  if (m.flagged_by_me) {
+                                    await fetch(
+                                      `/api/messages/flags?message_id=${encodeURIComponent(m.id)}`,
+                                      { method: "DELETE" }
+                                    );
+                                  } else {
+                                    await fetch("/api/messages/flags", {
+                                      method: "POST",
+                                      headers: { "Content-Type": "application/json" },
+                                      body: JSON.stringify({ message_id: m.id }),
+                                    });
+                                  }
+                                  setMessages((prev) =>
+                                    prev.map((msg) =>
+                                      msg.id === m.id
+                                        ? { ...msg, flagged_by_me: !m.flagged_by_me }
+                                        : msg
+                                    )
+                                  );
+                                  setConversations((prev) =>
+                                    prev.map((c) =>
+                                      c.id === (activeConversation?.id ?? "")
+                                        ? {
+                                            ...c,
+                                            has_flagged_by_me:
+                                              c.has_flagged_by_me || !m.flagged_by_me,
+                                          }
+                                        : c
+                                    )
+                                  );
+                                } catch {
+                                  // Best-effort; errors are quiet for now to avoid noise.
+                                }
+                              }}
+                            />
                             {m.direction === "incoming" &&
                               intensityFlag &&
                               showIncomingNudge && (

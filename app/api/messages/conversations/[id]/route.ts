@@ -59,10 +59,30 @@ export async function GET(
       );
     }
 
-    const messages = (rawMessages ?? []).filter((m) => {
+    const baseMessages = (rawMessages ?? []).filter((m) => {
       if (m.direction === "outgoing") return true;
       return m.delivery_status === "delivered" || m.delivered_at != null;
     });
+
+    const messageIds = baseMessages.map((m) => m.id as string);
+    let flaggedIds = new Set<string>();
+
+    if (messageIds.length > 0) {
+      const { data: flags } = await admin
+        .from("message_user_flags")
+        .select("message_id")
+        .eq("user_id", user.id)
+        .in("message_id", messageIds);
+
+      if (flags) {
+        flaggedIds = new Set(flags.map((f: { message_id: string }) => f.message_id));
+      }
+    }
+
+    const messages = baseMessages.map((m) => ({
+      ...m,
+      flagged_by_me: flaggedIds.has(m.id),
+    }));
 
     return NextResponse.json({
       conversation: conv,

@@ -93,6 +93,28 @@ export async function GET() {
       byConversation[cid].push(m);
     }
 
+    // Determine which conversations have messages flagged by the current user
+    const messageIds = messages.map((m) => m.id);
+    const flaggedByConversation = new Set<string>();
+    if (messageIds.length > 0) {
+      const { data: flags } = await admin
+        .from("message_user_flags")
+        .select("message_id")
+        .eq("user_id", user.id)
+        .in("message_id", messageIds);
+
+      if (flags && flags.length > 0) {
+        const flaggedIds = new Set<string>(
+          flags.map((f: { message_id: string }) => f.message_id)
+        );
+        for (const m of messages) {
+          if (flaggedIds.has(m.id) && m.conversation_id) {
+            flaggedByConversation.add(m.conversation_id);
+          }
+        }
+      }
+    }
+
     const summaries = conversations.map((c) => {
       const list = (byConversation[c.id] ?? []).slice().sort((a, b) =>
         a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0
@@ -150,6 +172,7 @@ export async function GET() {
         unread_count: unreadCount,
         category,
         message_count: list.length,
+        has_flagged_by_me: flaggedByConversation.has(c.id),
         status,
         tone,
       };

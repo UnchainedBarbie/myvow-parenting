@@ -9,6 +9,23 @@ export default async function MessagesPage() {
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
+  const { data: userProfile } = await supabase
+    .from("users")
+    .select("full_name, profile_image")
+    .eq("id", user.id)
+    .single();
+
+  const displayName =
+    (userProfile as { full_name?: string | null } | null)?.full_name ??
+    user.email ??
+    "";
+  const currentUserInitial = displayName
+    ? displayName.trim().charAt(0).toUpperCase()
+    : "M";
+  const currentUserAvatarUrl =
+    (userProfile as { profile_image?: string | null } | null)?.profile_image ??
+    null;
+
   // Use service role to read membership so we don't rely on RLS/session in server context
   const admin = getServiceRoleClient();
   const { data: membership } = await admin
@@ -81,6 +98,8 @@ export default async function MessagesPage() {
       caseId={caseId}
       children={(children ?? []) as { id: string; first_name: string }[]}
       coparentName={coparentName}
+      currentUserInitial={currentUserInitial}
+      currentUserAvatarUrl={currentUserAvatarUrl}
     />
   );
 }

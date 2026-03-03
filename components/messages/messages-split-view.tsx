@@ -49,12 +49,16 @@ interface MessagesSplitViewProps {
   caseId: string;
   children: ChildSummary[];
   coparentName: string | null;
+  currentUserInitial: string;
+  currentUserAvatarUrl: string | null;
 }
 
 export function MessagesSplitView({
   caseId,
   children,
   coparentName,
+  currentUserInitial,
+  currentUserAvatarUrl,
 }: MessagesSplitViewProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -391,8 +395,8 @@ export function MessagesSplitView({
     }
   }
 
-  const displayCoparentName = coparentName ?? "Co-parent";
-  const coparentInitial = displayCoparentName.charAt(0).toUpperCase() || "C";
+  const displayCoparentName = "Co-Parent";
+  const coparentInitial = "C";
 
   const activeTone =
     activeConversation?.tone && activeConversation.tone === "elevated"
@@ -1480,6 +1484,18 @@ export function MessagesSplitView({
             <form onSubmit={handleCreateConversation} className="mt-4 space-y-3">
               <div className="space-y-1">
                 <label className="text-xs font-medium text-[#3D3D3D]">
+                  To
+                </label>
+                <select
+                  value="coparent"
+                  className="h-8 w-full rounded-md border border-[#E8E4DC] bg-[#FDFBF7] px-2 text-xs text-[#3D3D3D] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E]"
+                  readOnly
+                >
+                  <option value="coparent">Co-Parent</option>
+                </select>
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-[#3D3D3D]">
                   Topic
                 </label>
                 <select
@@ -1500,7 +1516,7 @@ export function MessagesSplitView({
               </div>
               <div className="space-y-1">
                 <label className="text-xs font-medium text-[#3D3D3D]">
-                  Regarding
+                  Child
                 </label>
                 <select
                   value={newChildId}
@@ -1888,32 +1904,26 @@ export function MessagesSplitView({
                       isSage ? "mr-auto" : "ml-auto flex-row-reverse"
                     )}
                   >
-                    <div className="mt-0.5 h-6 w-6 rounded-full bg-[#E8EDE3] flex items-center justify-center">
+                    <div className="mt-0.5 h-6 w-6 flex items-center justify-center">
                       {isSage ? (
-                        <>
-                          <span
-                            className={cn(
-                              "text-[11px] font-semibold text-[#5B7A52]",
-                              doveLoaded && !doveFailed && "opacity-0"
-                            )}
-                          >
-                            S
-                          </span>
-                          <img
-                            src="/dove-translucent.png"
-                            alt="Sage"
-                            className={cn(
-                              "h-4 w-4 object-contain",
-                              (!doveLoaded || doveFailed) && "opacity-0"
-                            )}
-                            onLoad={() => setDoveLoaded(true)}
-                            onError={() => setDoveFailed(true)}
-                          />
-                        </>
+                        <img
+                          src="/dove-translucent.png"
+                          alt="Sage"
+                          className="h-6 w-6 object-contain"
+                        />
+                      ) : currentUserAvatarUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={currentUserAvatarUrl}
+                          alt={currentUserInitial}
+                          className="h-6 w-6 rounded-full object-cover border border-border/60 bg-muted"
+                        />
                       ) : (
-                        <span className="text-[11px] font-semibold text-[#5B7A52]">
-                          Me
-                        </span>
+                        <div className="h-6 w-6 rounded-full bg-[#E8EDE3] flex items-center justify-center">
+                          <span className="text-[11px] font-semibold text-[#5B7A52]">
+                            {currentUserInitial}
+                          </span>
+                        </div>
                       )}
                     </div>
                     <div className="space-y-1">

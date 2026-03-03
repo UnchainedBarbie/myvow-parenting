@@ -107,7 +107,7 @@ export type ChildRow = {
 };
 
 export type ProfileContentProps = {
-  profile: { full_name?: string | null; email?: string | null } | null;
+  profile: { full_name?: string | null; email?: string | null; profile_image?: string | null } | null;
   userEmail: string | null;
   userId: string;
   children: ChildRow[];
@@ -238,6 +238,8 @@ export function ProfileContent({
   const [avatarTargetChildId, setAvatarTargetChildId] = useState<string | null>(null);
   const [avatarUploadingId, setAvatarUploadingId] = useState<string | null>(null);
   const avatarFileRef = useRef<HTMLInputElement>(null);
+  const userAvatarFileRef = useRef<HTMLInputElement>(null);
+  const [userAvatarUploading, setUserAvatarUploading] = useState(false);
   // Co-parent invite
   const [showAddCoparentForm, setShowAddCoparentForm] = useState(false);
   const [coparentInviteEmail, setCoparentInviteEmail] = useState("");
@@ -473,6 +475,39 @@ export function ProfileContent({
     }
   }
 
+  async function handleUserAvatarFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0] ?? null;
+    e.target.value = "";
+    if (!file) return;
+    const allowedTypes = ["image/jpeg", "image/png"];
+    if (!allowedTypes.includes(file.type)) {
+      window.alert("Unsupported file type. Use JPG or PNG.");
+      return;
+    }
+    const maxSizeBytes = 2 * 1024 * 1024;
+    if (file.size > maxSizeBytes) {
+      window.alert("File too large. Max 2MB.");
+      return;
+    }
+    setUserAvatarUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await fetch("/api/profile/avatar", {
+        method: "POST",
+        body: formData,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        window.alert((data as { error?: string }).error ?? "Failed to upload photo.");
+        return;
+      }
+      router.refresh();
+    } finally {
+      setUserAvatarUploading(false);
+    }
+  }
+
   async function handleInviteCoparent(e: React.FormEvent) {
     e.preventDefault();
     const email = coparentInviteEmail.trim();
@@ -601,6 +636,13 @@ export function ProfileContent({
         className="hidden"
         onChange={handleAvatarFileChange}
       />
+      <input
+        ref={userAvatarFileRef}
+        type="file"
+        accept="image/jpeg,image/png"
+        className="hidden"
+        onChange={handleUserAvatarFileChange}
+      />
       <p className="text-xs md:text-sm text-foreground-secondary mb-4">Your info, court orders, and family.</p>
 
       <div className="flex justify-start">
@@ -627,7 +669,44 @@ export function ProfileContent({
         onToggle={() => setOpenYourInfo((o) => !o)}
         title="Your Info"
       >
-        <div className="space-y-2">
+        <div className="space-y-3">
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              disabled={userAvatarUploading}
+              onClick={() => userAvatarFileRef.current?.click()}
+              className="relative h-16 w-16 rounded-full overflow-hidden border border-border/60 bg-muted flex items-center justify-center text-lg font-semibold text-foreground"
+            >
+              {profile?.profile_image ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={profile.profile_image}
+                  alt={profile.full_name ?? "Your avatar"}
+                  className="h-full w-full object-cover"
+                />
+              ) : (
+                <span>
+                  {(profile?.full_name ?? userEmail ?? "?")
+                    .trim()
+                    .charAt(0)
+                    .toUpperCase() || "?"}
+                </span>
+              )}
+            </button>
+            <div className="space-y-0.5">
+              <p className="text-xs text-foreground-secondary">
+                Profile photo
+              </p>
+              <button
+                type="button"
+                disabled={userAvatarUploading}
+                onClick={() => userAvatarFileRef.current?.click()}
+                className="text-xs text-primary hover:underline disabled:opacity-60"
+              >
+                {userAvatarUploading ? "Uploading…" : "Upload photo"}
+              </button>
+            </div>
+          </div>
           <div>
             <label className="text-xs font-medium text-foreground-secondary">Name</label>
             <p className="text-sm text-foreground mt-0.5">{profile?.full_name ?? "—"}</p>

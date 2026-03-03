@@ -21,15 +21,47 @@ export async function POST(req: NextRequest) {
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const admin = getServiceRoleClient();
+    let case_id: string;
     const { data: membership } = await admin
       .from("case_members")
       .select("case_id")
       .eq("user_id", user.id)
       .limit(1)
       .maybeSingle();
-    if (!membership?.case_id) return NextResponse.json({ error: "No case found" }, { status: 403 });
 
-    const case_id = membership.case_id;
+    if (membership?.case_id) {
+      case_id = membership.case_id;
+    } else {
+      // First court order: create a case and link the user as primary member.
+      const { data: caseRow, error: caseError } = await admin
+        .from("cases")
+        .insert({
+          status: "active",
+          mode: "solo",
+          app_mode: "solo",
+          custody_split_percent: 50,
+        })
+        .select("id")
+        .single();
+      if (caseError) {
+        console.error("[profile/court-orders] Create case error:", caseError);
+        return NextResponse.json({ error: caseError.message }, { status: 500 });
+      }
+      const { error: memberError } = await admin
+        .from("case_members")
+        .insert({
+          case_id: caseRow.id,
+          user_id: user.id,
+          role: "parent",
+          is_primary: true,
+          is_participating: true,
+        });
+      if (memberError) {
+        console.error("[profile/court-orders] Create case_member error:", memberError);
+        return NextResponse.json({ error: memberError.message }, { status: 500 });
+      }
+      case_id = caseRow.id;
+    }
     let body: Record<string, unknown> = {};
     let file_path: string | null = null;
     let fileBuf: Buffer | null = null;

@@ -19,13 +19,6 @@ type WeekDaySummary = {
   events: TodayEvent[];
 };
 
-type InboxItem = {
-  id: string;
-  ai_type: string | null;
-  ai_title: string | null;
-  created_at: string;
-};
-
 type ChildSummary = {
   id: string;
   first_name: string;
@@ -286,27 +279,22 @@ export default async function DashboardPage() {
     return { date: day, events: eventsForDay };
   });
 
-  // Inbox: pending items
-  const { data: inboxRaw } = await admin
-    .from("inbox_items")
-    .select("id, ai_type, ai_title, status, created_at")
-    .eq("case_id", caseId)
-    .eq("status", "pending")
-    .order("created_at", { ascending: false });
+  // Review uploads: pending email-to-MyVow items
+  const { data: uploadsRaw } = await admin
+    .from("inbound_uploads")
+    .select("id, subject, created_at")
+    .eq("user_id", user.id)
+    .eq("status", "pending_review")
+    .order("created_at", { ascending: false })
+    .limit(5);
 
-  const pendingInbox = (inboxRaw ?? []) as {
+  const pendingUploads = (uploadsRaw ?? []) as {
     id: string;
-    ai_type?: string | null;
-    ai_title?: string | null;
+    subject: string | null;
     created_at: string;
   }[];
-  const inboxCount = pendingInbox.length;
-  const inboxRecent: InboxItem[] = pendingInbox.slice(0, 3).map((i) => ({
-    id: i.id,
-    ai_type: i.ai_type ?? null,
-    ai_title: i.ai_title ?? null,
-    created_at: i.created_at,
-  }));
+  const uploadsCount = pendingUploads.length;
+  const uploadsRecent = pendingUploads.slice(0, 3);
 
   // Expenses: net balance + open items
   const { data: expensesRaw } = await admin
@@ -674,34 +662,34 @@ export default async function DashboardPage() {
           </Card>
         </div>
 
-        {/* Row 2: Review inbox + Kids snapshot */}
+        {/* Row 2: Review uploads + Kids snapshot */}
         <div className="grid gap-4 lg:grid-cols-2 items-start">
           <Card className="shadow-card border-border rounded-card">
             <CardHeader className="pb-2 px-4 pt-4 flex items-center justify-between gap-2">
               <CardTitle className="font-heading text-lg text-foreground">
-                Review inbox
+                Review uploads
               </CardTitle>
-              {inboxCount > 0 && (
+              {uploadsCount > 0 && (
                 <span className="rounded-full bg-amber-50 text-amber-800 px-2 py-0.5 text-[11px] font-medium">
-                  {inboxCount} pending
+                  {uploadsCount} pending
                 </span>
               )}
             </CardHeader>
             <CardContent className="px-4 pb-4 space-y-3">
-              {inboxCount === 0 ? (
+              {uploadsCount === 0 ? (
                 <p className="text-sm text-foreground-secondary">All caught up.</p>
               ) : (
                 <ul className="space-y-2 text-sm">
-                  {inboxRecent.map((item) => (
+                  {uploadsRecent.map((item) => (
                     <li
                       key={item.id}
                       className="rounded-card border border-border bg-background-secondary/60 px-3 py-2"
                     >
                       <p className="text-xs text-foreground-secondary mb-0.5">
-                        {item.ai_type ?? "Item"}
+                        Incoming upload
                       </p>
                       <p className="text-sm text-foreground font-medium truncate">
-                        {item.ai_title ?? "Needs review"}
+                        {item.subject ?? "Needs review"}
                       </p>
                     </li>
                   ))}
@@ -712,7 +700,7 @@ export default async function DashboardPage() {
                 size="sm"
                 className="rounded-full h-8 text-xs mt-1 bg-[#7B9E87] hover:bg-[#6A8A78] text-white"
               >
-                <Link href="/inbox">Review all</Link>
+                <Link href="/uploads/review">Review now</Link>
               </Button>
             </CardContent>
           </Card>

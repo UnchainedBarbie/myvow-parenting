@@ -34,7 +34,7 @@ type ConversationSummary = {
   last_message_created_at: string | null;
   unread_count: number;
   category?: string;
-  status?: "open" | "resolved";
+  status?: "open" | "resolved" | "archived";
   tone?: "calm" | "elevated";
 };
 
@@ -90,10 +90,11 @@ export function MessagesSplitView({
   >({});
   const [filterTopic, setFilterTopic] = useState<string>("all");
   const [filterChild, setFilterChild] = useState<string>("all");
+  const [filterStatus, setFilterStatus] = useState<"open_resolved" | "archived" | "all">(
+    "open_resolved"
+  );
   const [sageOpen, setSageOpen] = useState(false);
   const [sageInput, setSageInput] = useState("");
-  const [doveFailed, setDoveFailed] = useState(false);
-  const [doveLoaded, setDoveLoaded] = useState(false);
   const [sageMessages, setSageMessages] = useState<SageMessage[]>([]);
   const sageBottomRef = useRef<HTMLDivElement | null>(null);
   const [sageContextMessage, setSageContextMessage] = useState<string | null>(null);
@@ -294,8 +295,13 @@ export function MessagesSplitView({
     if (filterChild !== "all") {
       list = list.filter((c) => c.child_id === filterChild);
     }
+    if (filterStatus === "open_resolved") {
+      list = list.filter((c) => (c.status ?? "open") !== "archived");
+    } else if (filterStatus === "archived") {
+      list = list.filter((c) => c.status === "archived");
+    }
     return list;
-  }, [conversations, search, filterTopic, filterChild, childMap, coparentName]);
+  }, [conversations, search, filterTopic, filterChild, filterStatus, childMap, coparentName]);
 
   const activeConversation = conversations.find((c) => c.id === selectedId) ?? null;
   const activeChildName =
@@ -562,7 +568,7 @@ export function MessagesSplitView({
               <Plus className="h-4 w-4" />
             </button>
           </div>
-          <div className="mt-2 flex items-center gap-2">
+          <div className="mt-2 flex flex-wrap items-center gap-2">
             <select
               value={filterTopic}
               onChange={(e) => setFilterTopic(e.target.value)}
@@ -594,6 +600,20 @@ export function MessagesSplitView({
                   {c.first_name}
                 </option>
               ))}
+            </select>
+            <select
+              value={filterStatus}
+              onChange={(e) =>
+                setFilterStatus(e.target.value as "open_resolved" | "archived" | "all")
+              }
+              className={cn(
+                "h-7 rounded-full border px-2 text-[11px] text-[#3D3D3D] bg-[#FDFBF7] border-[#E8E4DC] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E]",
+                filterStatus !== "open_resolved" && "bg-[#F2F5EF] border-[#7C8B6E]"
+              )}
+            >
+              <option value="open_resolved">Open & Resolved</option>
+              <option value="archived">Archived</option>
+              <option value="all">All statuses</option>
             </select>
           </div>
         </div>
@@ -678,7 +698,7 @@ export function MessagesSplitView({
                             {childName}
                           </span>
                           <span className="text-[10px] text-[#8A8A8A]">
-                            · {displayCoparentName}
+                            · Co-Parent
                           </span>
                         </div>
                         <div className="flex items-center gap-2">
@@ -687,7 +707,9 @@ export function MessagesSplitView({
                               "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium",
                               c.status === "resolved"
                                 ? "bg-[#E3F2E6] text-[#5B7A52]"
-                                : "bg-[#F2F5EF] text-[#5B7A52]"
+                                : c.status === "archived"
+                                  ? "bg-[#F5F5F5] text-[#8A8A8A]"
+                                  : "bg-[#F2F5EF] text-[#5B7A52]"
                             )}
                           >
                             {c.status === "resolved" && (
@@ -695,7 +717,13 @@ export function MessagesSplitView({
                                 ✓
                               </span>
                             )}
-                            <span>{c.status === "resolved" ? "Resolved" : "Open"}</span>
+                            <span>
+                              {c.status === "resolved"
+                                ? "Resolved"
+                                : c.status === "archived"
+                                  ? "Archived"
+                                  : "Open"}
+                            </span>
                           </span>
                           {c.unread_count > 0 && (
                             <span className="h-2 w-2 rounded-full bg-[#D0705A]" />
@@ -1106,6 +1134,47 @@ export function MessagesSplitView({
                         );
                       });
                     })()}
+                    <div className="mt-4 mb-1 flex justify-center">
+                      <button
+                        type="button"
+                        className="text-[12px] text-[#8A8A8A] hover:text-[#5B7A52] underline-offset-2 hover:underline"
+                        onClick={async () => {
+                          if (!activeConversation) return;
+                          const isArchived = activeConversation.status === "archived";
+                          const confirmText = isArchived
+                            ? "Unarchive this conversation?"
+                            : "Archive this conversation? You can find it later in the Archived filter.";
+                          const ok = window.confirm(confirmText);
+                          if (!ok) return;
+                          const nextStatus = isArchived ? "open" : "archived";
+                          const res = await fetch(
+                            `/api/messages/conversations/${activeConversation.id}/status`,
+                            {
+                              method: "PATCH",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({ status: nextStatus }),
+                            }
+                          );
+                          if (!res.ok) {
+                            const d = await res.json().catch(() => ({}));
+                            window.alert(
+                              (d as { error?: string }).error ??
+                                "Could not update conversation."
+                            );
+                            return;
+                          }
+                          await loadConversations();
+                          if (nextStatus === "archived") {
+                            setSelectedId(null);
+                            setMessages([]);
+                          }
+                        }}
+                      >
+                        {activeConversation.status === "archived"
+                          ? "Unarchive conversation"
+                          : "Archive conversation"}
+                      </button>
+                    </div>
                   </div>
                 )}
               </ScrollArea>
@@ -1294,32 +1363,28 @@ export function MessagesSplitView({
                     onClick={() => setSageOpen(true)}
                     title="Talk to Sage"
                     aria-label="Talk to Sage"
-                    className={cn(
-                      "relative flex h-9 w-9 items-center justify-center rounded-full bg-[#E8EDE3] shadow-sm",
-                      activeTone === "elevated" && !sageOpen && "animate-pulse"
-                    )}
+                    className="flex-shrink-0"
                   >
-                    {activeTone === "elevated" && !sageOpen && (
-                      <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-[#7C8B6E] border border-white" />
-                    )}
-                    <span
-                      className={cn(
-                        "text-sm font-semibold text-[#5B7A52]",
-                        doveLoaded && !doveFailed && "opacity-0"
-                      )}
+                    <div
+                      style={{
+                        width: "44px",
+                        height: "44px",
+                        borderRadius: "50%",
+                        backgroundColor: "#E8EDE3",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                      }}
                     >
-                      S
-                    </span>
-                    <img
-                      src="/dove-translucent.png"
-                      alt="Sage"
-                      className={cn(
-                        "h-5 w-5 object-contain",
-                        (!doveLoaded || doveFailed) && "opacity-0"
-                      )}
-                      onLoad={() => setDoveLoaded(true)}
-                      onError={() => setDoveFailed(true)}
-                    />
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src="/dove-translucent.png"
+                        alt="Sage"
+                        width={28}
+                        height={28}
+                        style={{ width: "28px", height: "28px", objectFit: "contain" }}
+                      />
+                    </div>
                   </button>
                   <Textarea
                     value={composeText}
@@ -1838,24 +1903,24 @@ export function MessagesSplitView({
               <div className="border-b border-[#E8E4DC] bg-white sticky top-0 z-10">
               <div className="flex items-center justify-between px-4 pt-3 pb-2">
                 <div className="flex items-center gap-2">
-                  <div className="h-12 w-12 rounded-full bg-[#E8EDE3] flex items-center justify-center">
-                    <span
-                      className={cn(
-                        "text-lg font-semibold text-[#5B7A52]",
-                        doveLoaded && !doveFailed && "opacity-0"
-                      )}
-                    >
-                      S
-                    </span>
+                  <div
+                    style={{
+                      width: "52px",
+                      height: "52px",
+                      borderRadius: "50%",
+                      backgroundColor: "#E8EDE3",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
                       src="/dove-translucent.png"
                       alt="Sage"
-                      className={cn(
-                        "h-7 w-7 object-contain",
-                        (!doveLoaded || doveFailed) && "opacity-0"
-                      )}
-                      onLoad={() => setDoveLoaded(true)}
-                      onError={() => setDoveFailed(true)}
+                      width={32}
+                      height={32}
+                      style={{ width: "32px", height: "32px", objectFit: "contain" }}
                     />
                   </div>
                   <div>
@@ -1885,7 +1950,7 @@ export function MessagesSplitView({
                 </p>
                 {sageContextMessage && (
                   <p className="text-[#8A8A8A] truncate" title={sageContextMessage}>
-                    Regarding: {sageContextMessage.slice(0, 60)}
+                    Child: {sageContextMessage.slice(0, 60)}
                     {sageContextMessage.length > 60 ? "…" : ""}
                   </p>
                 )}
@@ -1904,13 +1969,28 @@ export function MessagesSplitView({
                       isSage ? "mr-auto" : "ml-auto flex-row-reverse"
                     )}
                   >
-                    <div className="mt-0.5 h-6 w-6 flex items-center justify-center">
+                    <div className="mt-0.5 h-7 w-7 flex items-center justify-center">
                       {isSage ? (
-                        <img
-                          src="/dove-translucent.png"
-                          alt="Sage"
-                          className="h-6 w-6 object-contain"
-                        />
+                        <div
+                          style={{
+                            width: "28px",
+                            height: "28px",
+                            borderRadius: "50%",
+                            backgroundColor: "#E8EDE3",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                          }}
+                        >
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src="/dove-translucent.png"
+                            alt="Sage"
+                            width={18}
+                            height={18}
+                            style={{ width: "18px", height: "18px", objectFit: "contain" }}
+                          />
+                        </div>
                       ) : currentUserAvatarUrl ? (
                         // eslint-disable-next-line @next/next/no-img-element
                         <img

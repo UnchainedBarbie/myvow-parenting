@@ -276,31 +276,31 @@ export function MyVowClient({ initialVows }: Props) {
                             {dateLabel}
                           </p>
                         </div>
-                        <div className="flex flex-col items-end gap-1 ml-1">
-                        <button
-                          type="button"
-                          onClick={() => void handlePin(v.id)}
-                          disabled={pinningId !== null}
-                          className={cn(
-                            "inline-flex h-7 w-7 items-center justify-center rounded-full transition-colors",
-                            isPinned
-                              ? "text-[#5B7A52] hover:bg-[#E8EDE3]"
-                              : "text-foreground-secondary hover:bg-muted"
-                          )}
-                          aria-label={isPinned ? "Unpin vow" : "Pin vow"}
-                          title={isPinned ? "Unpin" : "Pin for Sage"}
-                        >
-                          <Pin className="h-3.5 w-3.5" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => void handleDelete(v.id)}
-                          disabled={deletingId !== null}
-                          className="inline-flex h-7 w-7 items-center justify-center rounded-full text-foreground-secondary hover:bg-muted transition-colors"
-                          aria-label="Delete vow"
-                        >
-                          <Trash2 className="h-3 w-3" />
-                        </button>
+                        <div className="ml-1 flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => void handlePin(v.id)}
+                            disabled={pinningId !== null}
+                            className={cn(
+                              "inline-flex h-7 w-7 items-center justify-center rounded-full transition-colors",
+                              isPinned
+                                ? "text-[#5B7A52] hover:bg-[#E8EDE3]"
+                                : "text-foreground-secondary hover:bg-muted"
+                            )}
+                            aria-label={isPinned ? "Unpin vow" : "Pin vow"}
+                            title={isPinned ? "Unpin" : "Pin for Sage"}
+                          >
+                            <Pin className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void handleDelete(v.id)}
+                            disabled={deletingId !== null}
+                            className="inline-flex h-7 w-7 items-center justify-center rounded-full text-foreground-secondary hover:bg-muted transition-colors"
+                            aria-label="Delete vow"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </button>
                         </div>
                       </div>
                     </li>

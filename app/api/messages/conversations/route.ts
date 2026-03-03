@@ -9,6 +9,7 @@ type ConversationRow = {
   category: string | null;
   created_at: string;
   updated_at: string;
+  status?: string | null;
 };
 
 type MessageRow = {
@@ -50,7 +51,7 @@ export async function GET() {
 
     const { data: conversationsRaw, error: convError } = await admin
       .from("conversations")
-      .select("id, case_id, subject, child_id, category, created_at, updated_at")
+      .select("id, case_id, subject, child_id, category, created_at, updated_at, status")
       .eq("case_id", caseId)
       .order("updated_at", { ascending: false });
 
@@ -131,8 +132,11 @@ export async function GET() {
         }
       }
 
-      // For now, thread status is always open; resolved can be added later.
-      const status: "open" | "resolved" = "open";
+      const rawStatus = (c.status as string | null)?.toLowerCase().trim() ?? "open";
+      const allowedStatuses = new Set(["open", "resolved", "archived"]);
+      const status: "open" | "resolved" | "archived" = allowedStatuses.has(rawStatus)
+        ? (rawStatus as "open" | "resolved" | "archived")
+        : "open";
 
       return {
         id: c.id,

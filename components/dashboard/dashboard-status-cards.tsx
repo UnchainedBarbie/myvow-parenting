@@ -14,6 +14,7 @@ const SUB_LINK_CLASS =
   "text-[11px] text-[#5B7A52] underline-offset-2 hover:underline";
 
 type Props = {
+  caseId: string;
   householdElevated: boolean;
   householdClimateLabel: string;
   disputesLabel: string;
@@ -26,6 +27,7 @@ type Props = {
 };
 
 export function DashboardStatusCards({
+  caseId,
   householdElevated,
   householdClimateLabel,
   disputesLabel,
@@ -41,6 +43,9 @@ export function DashboardStatusCards({
   const [coolOffHours, setCoolOffHours] = useState(4);
   const [startingCoolOff, setStartingCoolOff] = useState(false);
   const [coolOffActive, setCoolOffActive] = useState<{ ends_at: string } | null>(null);
+  const [showReminderModal, setShowReminderModal] = useState(false);
+  const [reminderText, setReminderText] = useState("");
+  const [sendingReminder, setSendingReminder] = useState(false);
 
   useEffect(() => {
     fetch("/api/messages/cool-off")
@@ -48,6 +53,71 @@ export function DashboardStatusCards({
       .then((d) => setCoolOffActive((d as { active?: { ends_at: string } }).active ?? null))
       .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    const match = netLabel.match(/\$([0-9][0-9,]*\.\d{2})/);
+    const amount = match ? match[1] : "0.00";
+    const template = `Hi, just a friendly reminder that there are outstanding shared expenses totaling $${amount}. Could you please review and confirm when you get a chance? Thank you.`;
+    setReminderText(template);
+  }, [netLabel]);
+
+  async function handleSendReminder() {
+    const text = reminderText.trim();
+    if (!text) return;
+    setSendingReminder(true);
+    try {
+      // Create conversation
+      const convRes = await fetch("/api/messages/conversations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          subject: "Expense Reminder",
+          child_id: null,
+          category: "expense",
+        }),
+      });
+      const convData = await convRes.json().catch(() => ({}));
+      if (!convRes.ok) {
+        window.alert(
+          (convData as { error?: string }).error ??
+            "Could not start expense reminder conversation."
+        );
+        return;
+      }
+      const convId = (convData as { conversation: { id: string } }).conversation.id;
+
+      // Send message through Sage pipeline (original == rewritten for now)
+      console.log("Sending expense reminder", {
+        case_id: caseId,
+        conversation_id: convId,
+        original_content: text,
+      });
+      const msgRes = await fetch("/api/messages/approve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          case_id: caseId,
+          conversation_id: convId,
+          original_content: text,
+          ai_rewritten_content: text,
+        }),
+      });
+      const msgData = await msgRes.json().catch(() => ({}));
+      if (!msgRes.ok) {
+        window.alert(
+          (msgData as { message?: string }).message ??
+            "Could not send reminder."
+        );
+        return;
+      }
+      setShowReminderModal(false);
+      window.setTimeout(() => {
+        window.alert("Reminder sent");
+      }, 10);
+    } finally {
+      setSendingReminder(false);
+    }
+  }
 
   function handleHouseholdClick() {
     router.push("/messages");
@@ -300,22 +370,89 @@ export function DashboardStatusCards({
                 : `${openExpenseItems} open item${openExpenseItems > 1 ? "s" : ""}`}
             </p>
             <div className="flex gap-3 pt-1" onClick={(e) => e.stopPropagation()}>
-              <Link
-                href="/expenses"
-                className={SUB_LINK_CLASS}
-              >
+              <Link href="/expenses" className={SUB_LINK_CLASS}>
                 View details
               </Link>
-              <Link
-                href="/messages?topic=expense&subject=Expense%20Reminder"
+              <button
+                type="button"
                 className={SUB_LINK_CLASS}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowReminderModal(true);
+                }}
               >
                 Send reminder
-              </Link>
+              </button>
             </div>
           </CardContent>
         </Card>
       </div>
+
+      {showReminderModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-3"
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !sendingReminder) {
+              setShowReminderModal(false);
+            }
+          }}
+        >
+          <div className="w-full max-w-md rounded-2xl border border-[#E8E4DC] bg-[#FDFBF7] p-4 shadow-card">
+            <h2 className="font-heading text-base font-semibold text-[#3D3D3D]">
+              Send Expense Reminder
+            </h2>
+            <p className="mt-1 text-[11px] text-[#8A8A8A]">
+              Send a friendly reminder to your co-parent about outstanding expenses.
+            </p>
+            <div className="mt-3 space-y-2">
+              <Label className="text-xs font-medium text-[#3D3D3D]">
+                Message
+              </Label>
+              <textarea
+                value={reminderText}
+                onChange={(e) => setReminderText(e.target.value)}
+                className="w-full min-h-[96px] rounded-lg border border-[#E8E4DC] bg-white px-3 py-2 text-sm text-[#3D3D3D] placeholder:text-[#B0A899] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E]"
+              />
+              <p className="mt-1 flex items-center gap-1.5 text-[11px] text-[#8A8A8A]">
+                <span className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-[#E8E4DC] bg-[#F2F5EF]">
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    viewBox="0 0 24 24"
+                    className="h-2.5 w-2.5 text-[#7C8B6E]"
+                  >
+                    <path
+                      fill="currentColor"
+                      d="M12 2a5 5 0 0 1 5 5v2h1a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h1V7a5 5 0 0 1 5-5Zm0 2a3 3 0 0 0-3 3v2h6V7a3 3 0 0 0-3-3Z"
+                    />
+                  </svg>
+                </span>
+                <span>This message will be reviewed by Sage before delivery.</span>
+              </p>
+            </div>
+            <div className="mt-4 flex justify-end gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 rounded-full text-xs"
+                disabled={sendingReminder}
+                onClick={() => setShowReminderModal(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                className="h-8 rounded-full bg-[#5B7A52] text-xs text-white hover:bg-[#476242]"
+                disabled={sendingReminder || !reminderText.trim()}
+                onClick={() => void handleSendReminder()}
+              >
+                {sendingReminder ? "Sending…" : "Send Reminder"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }

@@ -540,6 +540,7 @@ export default async function DashboardPage() {
       <div className="space-y-4">
         {/* Top row: status cards */}
         <DashboardStatusCards
+          caseId={caseId}
           householdElevated={householdElevated}
           householdClimateLabel={householdClimateLabel}
           disputesLabel={disputesLabel}

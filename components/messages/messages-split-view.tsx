@@ -15,6 +15,11 @@ import {
   X,
   Trash2,
   Bookmark,
+  MoreVertical,
+  Pin,
+  Flag,
+  Archive,
+  ArchiveRestore,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -42,6 +47,8 @@ type ConversationSummary = {
   tone?: "calm" | "elevated";
   message_count?: number;
   has_flagged_by_me?: boolean;
+  conversation_flagged_by_me?: boolean;
+  pinned_by_me?: boolean;
 };
 
 type SageMessage = {
@@ -138,6 +145,8 @@ export function MessagesSplitView({
   const [deleteConversationId, setDeleteConversationId] = useState<string | null>(null);
   const [confirmArchiveOpen, setConfirmArchiveOpen] = useState(false);
   const [discardDraftOpen, setDiscardDraftOpen] = useState(false);
+  const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
+  const menuAnchorRef = useRef<HTMLDivElement | null>(null);
 
   const [attachExpenses, setAttachExpenses] = useState<
     { id: string; description: string; amount: number; category: string; status: string; created_at: string }[]
@@ -273,6 +282,22 @@ export function MessagesSplitView({
     return () => clearInterval(t);
   }, [releaseCoolOff]);
 
+  // Close conversation card menu on click outside
+  useEffect(() => {
+    if (!menuOpenId) return;
+    const handle = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (
+        target.closest("[data-conversation-card]")?.getAttribute("data-conversation-card") !== menuOpenId &&
+        !target.closest("[data-conversation-menu]")
+      ) {
+        setMenuOpenId(null);
+      }
+    };
+    document.addEventListener("mousedown", handle);
+    return () => document.removeEventListener("mousedown", handle);
+  }, [menuOpenId]);
+
   // Load attach-expense/documents lists when modals open
   useEffect(() => {
     if (!showExpenseModal) {
@@ -384,7 +409,9 @@ export function MessagesSplitView({
     } else if (filterStatus === "archived") {
       list = list.filter((c) => c.status === "archived");
     } else if (filterStatus === "flagged") {
-      list = list.filter((c) => c.has_flagged_by_me);
+      list = list.filter(
+        (c) => c.has_flagged_by_me || c.conversation_flagged_by_me
+      );
     }
     return list;
   }, [conversations, search, filterTopic, filterChild, filterStatus, childMap, coparentName]);

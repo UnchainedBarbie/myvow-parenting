@@ -176,7 +176,13 @@ export function ExpenseList({
 
       const amountNum = Number(exp.amount);
       const owedNum = exp.amount_owed != null ? Number(exp.amount_owed) : null;
-      if (!Number.isNaN(amountNum) && owedNum != null && !Number.isNaN(owedNum)) {
+      // Exclude fully paid expenses from net balance.
+      if (
+        exp.status !== "paid" &&
+        !Number.isNaN(amountNum) &&
+        owedNum != null &&
+        !Number.isNaN(owedNum)
+      ) {
         if (exp.submitted_by === currentUserId) {
           totalOwedToYou += owedNum;
         } else {

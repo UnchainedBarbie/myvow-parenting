@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
-import { FileText, Image, Trash2, Camera } from "lucide-react";
+import { FileText, Image, Trash2, Camera, Sparkles } from "lucide-react";
 import { ChildMultiSelect } from "@/components/documents/child-multi-select";
 
 const EXPENSE_CATEGORIES = [
@@ -343,12 +343,23 @@ export function ExpenseForm({
             )}
           </div>
           {(descriptionSuggested || amountSuggested || categorySuggested || childSuggested) && (
-            <p className="text-xs text-muted-foreground">Fields auto-filled based on your file. Review before saving.</p>
+            <p className="text-xs text-muted-foreground flex items-center gap-1">
+              <Sparkles className="h-3 w-3" />
+              Fields auto-filled from your receipt. Review before saving.
+            </p>
           )}
           <div className="space-y-2">
-            <Label htmlFor="exp-description" className="text-xs font-medium">
-              Description
-            </Label>
+            <div className="flex items-center justify-between">
+              <Label htmlFor="exp-description" className="text-xs font-medium">
+                Description
+              </Label>
+              {descriptionSuggested && (
+                <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground">
+                  <Sparkles className="h-3 w-3" />
+                  AI-suggested
+                </span>
+              )}
+            </div>
             <input
               id="exp-description"
               type="text"
@@ -367,9 +378,17 @@ export function ExpenseForm({
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="exp-amount" className="text-xs font-medium">
-              Amount
-            </Label>
+            <div className="flex items-center justify-between">
+              <Label htmlFor="exp-amount" className="text-xs font-medium">
+                Amount
+              </Label>
+              {amountSuggested && (
+                <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground">
+                  <Sparkles className="h-3 w-3" />
+                  AI-suggested
+                </span>
+              )}
+            </div>
             <div className="flex h-8 w-full rounded-card border border-input bg-background overflow-hidden focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2">
               <span className="flex items-center pl-3 text-xs text-foreground-secondary">$</span>
               <input
@@ -405,9 +424,17 @@ export function ExpenseForm({
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="exp-category" className="text-xs font-medium">
-              Category
-            </Label>
+            <div className="flex items-center justify-between">
+              <Label htmlFor="exp-category" className="text-xs font-medium">
+                Category
+              </Label>
+              {categorySuggested && (
+                <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground">
+                  <Sparkles className="h-3 w-3" />
+                  AI-suggested
+                </span>
+              )}
+            </div>
             <select
               id="exp-category"
               value={category}
@@ -451,7 +478,15 @@ export function ExpenseForm({
           </div>
           {children.length > 0 && (
             <div className="space-y-2">
-              <Label className="text-xs font-medium">Child</Label>
+              <div className="flex items-center justify-between">
+                <Label className="text-xs font-medium">Child</Label>
+                {childSuggested && (
+                  <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground">
+                    <Sparkles className="h-3 w-3" />
+                    AI-suggested
+                  </span>
+                )}
+              </div>
               <ChildMultiSelect
                 children={children}
                 value={selectedChildIds}

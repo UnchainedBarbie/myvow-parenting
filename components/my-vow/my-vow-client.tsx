@@ -5,7 +5,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { showErrorToast, showSuccessToast } from "@/components/ui/toaster";
-import { Info, Lock, Pin, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Info, Lock, Pin, Trash2 } from "lucide-react";
 
 export type Vow = {
   id: string;
@@ -28,6 +28,24 @@ type Props = {
   initialVows: Vow[];
 };
 
+type AlignmentRange = "last_7" | "last_30" | "last_90" | "custom";
+
+type AlignmentResponse = {
+  range: { from: string; to: string } | null;
+  vow: { id: string; text: string } | null;
+  alignment: {
+    score_avg_0_to_100: number;
+    counts: { aligned: number; at_risk: number; off_vow: number; total: number };
+    reasons_top: { reason: string; count: number }[];
+    trend: { date: string; score_0_to_100: number }[];
+  } | null;
+  examples: {
+    aligned?: { message_id: string; snippet: string; date: string; reasons: string[] };
+    at_risk?: { message_id: string; snippet: string; date: string; reasons: string[] };
+    off_vow?: { message_id: string; snippet: string; date: string; reasons: string[] };
+  };
+} | null;
+
 export function MyVowClient({ initialVows }: Props) {
   const [vows, setVows] = useState<Vow[]>(() =>
     [...initialVows].sort((a, b) => {
@@ -41,6 +59,15 @@ export function MyVowClient({ initialVows }: Props) {
   const [pinningId, setPinningId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const vowListRef = useRef<HTMLDivElement | null>(null);
+
+  const [alignmentRange, setAlignmentRange] = useState<AlignmentRange>("last_30");
+  const [alignmentFrom, setAlignmentFrom] = useState<string | null>(null);
+  const [alignmentTo, setAlignmentTo] = useState<string | null>(null);
+  const [alignmentData, setAlignmentData] = useState<AlignmentResponse>(null);
+  const [alignmentLoading, setAlignmentLoading] = useState(false);
+  const [alignmentError, setAlignmentError] = useState<string | null>(null);
+  const [showExamples, setShowExamples] = useState(false);
 
   function autoResizeTextarea(el: HTMLTextAreaElement | null) {
     if (!el) return;
@@ -61,6 +88,50 @@ export function MyVowClient({ initialVows }: Props) {
   useEffect(() => {
     autoResizeTextarea(textareaRef.current);
   }, []);
+
+  const pinnedVow = vows.find((v) => v.is_pinned) ?? null;
+
+  useEffect(() => {
+    if (!pinnedVow) {
+      setAlignmentData(null);
+      return;
+    }
+
+    const controller = new AbortController();
+    async function loadAlignment() {
+      setAlignmentLoading(true);
+      setAlignmentError(null);
+      try {
+        const params = new URLSearchParams();
+        params.set("vowId", pinnedVow.id);
+        params.set("range", alignmentRange);
+        if (alignmentRange === "custom" && alignmentFrom && alignmentTo) {
+          params.set("from", alignmentFrom);
+          params.set("to", alignmentTo);
+        }
+        const res = await fetch(`/api/vows/alignment?${params.toString()}`, {
+          signal: controller.signal,
+        });
+        const data = (await res.json().catch(() => ({}))) as AlignmentResponse | { message?: string };
+        if (!res.ok) {
+          setAlignmentError((data as { message?: string }).message ?? "Unable to load alignment right now.");
+          setAlignmentData(null);
+          return;
+        }
+        setAlignmentData(data as AlignmentResponse);
+      } catch (err) {
+        if (!(err instanceof DOMException && err.name === "AbortError")) {
+          setAlignmentError("Unable to load alignment right now.");
+        }
+      } finally {
+        setAlignmentLoading(false);
+      }
+    }
+
+    void loadAlignment();
+
+    return () => controller.abort();
+  }, [pinnedVow?.id, alignmentRange, alignmentFrom, alignmentTo]);
 
   async function handleSaveVow() {
     const content = draft.trim();
@@ -232,86 +303,286 @@ export function MyVowClient({ initialVows }: Props) {
             </section>
           </div>
 
-          {/* RIGHT COLUMN — Your vows list */}
+          {/* RIGHT COLUMN — Alignment + Your vows list */}
           <div className="rounded-2xl border border-[#E8E4DC]/60 bg-white/80 p-3 md:p-4 space-y-3">
-            <div>
-              <h2 className="font-heading text-lg font-semibold text-[#3D3D3D]">
-                Your Vows
-              </h2>
-              <p className="text-[11px] text-foreground-secondary mt-1">
-                Pin a vow for Sage to gently reference during private coaching. Only one vow can be active at a time.
-              </p>
-            </div>
-
-            {vows.length === 0 ? (
-              <p className="text-sm text-foreground-secondary py-4 text-center">
-                No vows yet. Write your first vow to anchor your intentions.
-              </p>
-            ) : (
-              <ul className="space-y-2.5">
-                {vows.map((v) => {
-                  const dateLabel = new Date(v.created_at).toLocaleDateString(undefined, {
-                    month: "short",
-                    day: "numeric",
-                    year: "numeric",
-                  });
-                  const isPinned = v.is_pinned;
-                  return (
-                    <li
-                      key={v.id}
+            {/* Alignment section */}
+            <section className="rounded-xl border border-[#E8E4DC]/70 bg-[#FBF7F0] px-3 py-2.5 md:px-3.5 md:py-3 space-y-2.5">
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <h2 className="font-heading text-sm md:text-base font-semibold text-[#2F3E34]">
+                    Alignment
+                  </h2>
+                  <p className="text-[11px] text-foreground-secondary">
+                    Based on messages you sent. Private to you.
+                  </p>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  {(["last_7", "last_30", "last_90"] as AlignmentRange[]).map((range) => (
+                    <button
+                      key={range}
+                      type="button"
+                      onClick={() => setAlignmentRange(range)}
                       className={cn(
-                        "rounded-xl border px-3 py-2.5 transition-colors",
-                        isPinned
-                          ? "border-[#D2DECF] bg-[#F2F5EF]"
-                          : "border-[#E8E4DC] bg-[#FDFBF7]"
+                        "rounded-full px-2.5 py-1 text-[10px] font-medium border transition-colors",
+                        alignmentRange === range
+                          ? "border-[#D0D9C8] bg-[#EEF3E8] text-[#2F3E34]"
+                          : "border-transparent bg-transparent text-foreground-secondary hover:bg-[#F2F5EF]"
                       )}
                     >
-                      <div className="flex items-start gap-2">
-                        <div className="flex-1">
-                          {isPinned && (
-                            <p className="text-[10px] font-medium text-[#5B7A52] mb-1">
-                              🕊 Active
+                      {range === "last_7"
+                        ? "7 days"
+                        : range === "last_30"
+                        ? "30 days"
+                        : "90 days"}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {!pinnedVow ? (
+                <div className="rounded-lg border border-dashed border-[#E0D6C4] bg-[#FDFBF7] px-3 py-2.5 text-xs text-foreground-secondary flex items-center justify-between gap-2">
+                  <div>
+                    <p className="font-medium text-[#4A5A4A]">Pin a vow to see alignment.</p>
+                    <p className="text-[11px]">
+                      When a vow is active, we&apos;ll quietly summarize how closely recent messages match it.
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-7 rounded-full px-3 text-[11px] border-[#D2DECF] text-[#3D4A3A] hover:bg-[#EEF3E8]"
+                    onClick={() => {
+                      vowListRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+                    }}
+                  >
+                    Pin a vow
+                  </Button>
+                </div>
+              ) : alignmentLoading ? (
+                <div className="animate-pulse space-y-2">
+                  <div className="h-5 w-20 rounded bg-[#E9E2D5]" />
+                  <div className="flex gap-2">
+                    <div className="h-10 flex-1 rounded bg-[#E9E2D5]" />
+                    <div className="h-10 flex-1 rounded bg-[#EDE7DA]" />
+                  </div>
+                  <div className="h-4 w-32 rounded bg-[#EDE7DA]" />
+                </div>
+              ) : alignmentError ? (
+                <p className="text-xs text-[#9A6B54]">{alignmentError}</p>
+              ) : !alignmentData || !alignmentData.alignment ? (
+                <p className="text-xs text-foreground-secondary">
+                  {pinnedVow
+                    ? "No messages in this period."
+                    : "Pin a vow to see alignment."}
+                </p>
+              ) : (
+                <>
+                  <div className="flex items-end justify-between gap-3">
+                    <div>
+                      <p className="text-[11px] uppercase tracking-wide text-foreground-secondary">
+                        Alignment score
+                      </p>
+                      <p className="text-2xl md:text-3xl font-semibold text-[#2F3E34]">
+                        {Math.round(alignmentData.alignment.score_avg_0_to_100)}
+                      </p>
+                    </div>
+                    <div className="flex flex-1 justify-end gap-1.5">
+                      {[
+                        { key: "aligned", label: "Aligned" },
+                        { key: "at_risk", label: "At-risk" },
+                        { key: "off_vow", label: "Off-vow" },
+                      ].map(({ key, label }) => {
+                        const count =
+                          alignmentData.alignment?.counts[
+                            key as "aligned" | "at_risk" | "off_vow"
+                          ] ?? 0;
+                        const total = alignmentData.alignment?.counts.total ?? 0;
+                        const pct = total > 0 ? Math.round((count / total) * 100) : 0;
+                        return (
+                          <div
+                            key={key}
+                            className="min-w-[72px] rounded-lg border border-[#E1D9C8] bg-[#F9F4EB] px-2 py-1.5"
+                          >
+                            <p className="text-[10px] text-foreground-secondary">{label}</p>
+                            <p className="text-xs font-medium text-[#2F3E34]">
+                              {count}{" "}
+                              <span className="text-[10px] text-foreground-secondary">
+                                ({pct}%)
+                              </span>
                             </p>
-                          )}
-                          <p className="text-sm text-foreground whitespace-pre-wrap leading-snug">
-                            {v.content}
-                          </p>
-                          <p className="text-[10px] text-foreground-secondary mt-1.5">
-                            {dateLabel}
-                          </p>
-                        </div>
-                        <div className="ml-1 flex items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => void handlePin(v.id)}
-                            disabled={pinningId !== null}
-                            className={cn(
-                              "inline-flex h-7 w-7 items-center justify-center rounded-full transition-colors",
-                              isPinned
-                                ? "text-[#5B7A52] hover:bg-[#E8EDE3]"
-                                : "text-foreground-secondary hover:bg-muted"
-                            )}
-                            aria-label={isPinned ? "Unpin vow" : "Pin vow"}
-                            title={isPinned ? "Unpin" : "Pin for Sage"}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {alignmentData.alignment.reasons_top.length > 0 && (
+                    <div className="space-y-1.5">
+                      <p className="text-[11px] font-medium text-[#3D4A3A]">
+                        What we&apos;re noticing, in neutral terms:
+                      </p>
+                      <ul className="space-y-0.5">
+                        {alignmentData.alignment.reasons_top.slice(0, 4).map((r) => (
+                          <li
+                            key={r.reason}
+                            className="text-[11px] text-foreground-secondary flex items-start gap-1.5"
                           >
-                            <Pin className="h-3.5 w-3.5" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => void handleDelete(v.id)}
-                            disabled={deletingId !== null}
-                            className="inline-flex h-7 w-7 items-center justify-center rounded-full text-foreground-secondary hover:bg-muted transition-colors"
-                            aria-label="Delete vow"
-                          >
-                            <Trash2 className="h-3 w-3" />
-                          </button>
-                        </div>
+                            <span className="mt-[5px] h-1.5 w-1.5 rounded-full bg-[#D2DECF]" />
+                            <span>{r.reason}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  <div className="border-t border-[#E6DFD1] pt-2 mt-1">
+                    <button
+                      type="button"
+                      onClick={() => setShowExamples((prev) => !prev)}
+                      className="flex w-full items-center justify-between text-[11px] text-foreground-secondary hover:text-foreground transition-colors"
+                    >
+                      <span>Examples from this period (private)</span>
+                      {showExamples ? (
+                        <ChevronDown className="h-3 w-3" aria-hidden />
+                      ) : (
+                        <ChevronRight className="h-3 w-3" aria-hidden />
+                      )}
+                    </button>
+                    {showExamples && (
+                      <div className="mt-2 space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                        {(["aligned", "at_risk", "off_vow"] as const).map((bucket) => {
+                          const example = alignmentData.examples[bucket];
+                          if (!example) return null;
+                          const dateLabel = new Date(example.date).toLocaleDateString(
+                            undefined,
+                            { month: "short", day: "numeric", year: "numeric" }
+                          );
+                          const title =
+                            bucket === "aligned"
+                              ? "Closer to your vow"
+                              : bucket === "at_risk"
+                              ? "Could use a gentler pass"
+                              : "Further from your vow";
+                          return (
+                            <div
+                              key={bucket}
+                              className="rounded-lg border border-[#E4DDCF] bg-[#FDFBF7] px-2.5 py-2"
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <p className="text-[11px] font-medium text-[#3D4A3A]">
+                                  {title}
+                                </p>
+                                <p className="text-[10px] text-foreground-secondary">
+                                  {dateLabel}
+                                </p>
+                              </div>
+                              <p className="mt-1 text-xs text-foreground line-clamp-2">
+                                {example.snippet}
+                              </p>
+                              {example.reasons.length > 0 && (
+                                <p className="mt-1 text-[10px] text-foreground-secondary">
+                                  {example.reasons[0]}
+                                </p>
+                              )}
+                            </div>
+                          );
+                        })}
+                        {(!alignmentData.examples.aligned &&
+                          !alignmentData.examples.at_risk &&
+                          !alignmentData.examples.off_vow) && (
+                          <p className="text-[11px] text-foreground-secondary">
+                            No specific examples surfaced for this period.
+                          </p>
+                        )}
                       </div>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
+                    )}
+                  </div>
+                </>
+              )}
+            </section>
+
+            {/* Your vows list */}
+            <div ref={vowListRef}>
+              <div>
+                <h2 className="font-heading text-lg font-semibold text-[#3D3D3D]">
+                  Your Vows
+                </h2>
+                <p className="text-[11px] text-foreground-secondary mt-1">
+                  Pin a vow for Sage to gently reference during private coaching. Only one vow can be active at a time.
+                </p>
+              </div>
+
+              {vows.length === 0 ? (
+                <p className="text-sm text-foreground-secondary py-4 text-center">
+                  No vows yet. Write your first vow to anchor your intentions.
+                </p>
+              ) : (
+                <ul className="mt-2.5 space-y-2.5">
+                  {vows.map((v) => {
+                    const dateLabel = new Date(v.created_at).toLocaleDateString(undefined, {
+                      month: "short",
+                      day: "numeric",
+                      year: "numeric",
+                    });
+                    const isPinned = v.is_pinned;
+                    return (
+                      <li
+                        key={v.id}
+                        className={cn(
+                          "rounded-xl border px-3 py-2.5 transition-colors",
+                          isPinned
+                            ? "border-[#D2DECF] bg-[#F2F5EF]"
+                            : "border-[#E8E4DC] bg-[#FDFBF7]"
+                        )}
+                      >
+                        <div className="flex items-start gap-2">
+                          <div className="flex-1">
+                            {isPinned && (
+                              <p className="text-[10px] font-medium text-[#5B7A52] mb-1">
+                                🕊 Active
+                              </p>
+                            )}
+                            <p className="text-sm text-foreground whitespace-pre-wrap leading-snug">
+                              {v.content}
+                            </p>
+                            <p className="text-[10px] text-foreground-secondary mt-1.5">
+                              {dateLabel}
+                            </p>
+                          </div>
+                          <div className="ml-1 flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => void handlePin(v.id)}
+                              disabled={pinningId !== null}
+                              className={cn(
+                                "inline-flex h-7 w-7 items-center justify-center rounded-full transition-colors",
+                                isPinned
+                                  ? "text-[#5B7A52] hover:bg-[#E8EDE3]"
+                                  : "text-foreground-secondary hover:bg-muted"
+                              )}
+                              aria-label={isPinned ? "Unpin vow" : "Pin vow"}
+                              title={isPinned ? "Unpin" : "Pin for Sage"}
+                            >
+                              <Pin className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void handleDelete(v.id)}
+                              disabled={deletingId !== null}
+                              className="inline-flex h-7 w-7 items-center justify-center rounded-full text-foreground-secondary hover:bg-muted transition-colors"
+                              aria-label="Delete vow"
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </button>
+                          </div>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
           </div>
         </div>
       </div>

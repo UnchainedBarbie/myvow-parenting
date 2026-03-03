@@ -14,6 +14,10 @@ export type MessageRow = {
   external_comm_id: string | null;
   created_at: string;
   flags?: Array<{ flag_type: string; description: string | null }>;
+  intensity_flag?: boolean;
+  delivery_status?: string;
+  delivered_at?: string | null;
+  is_emergency?: boolean;
 };
 
 interface MessageBubbleProps {

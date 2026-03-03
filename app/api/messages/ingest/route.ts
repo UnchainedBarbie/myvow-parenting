@@ -1,24 +1,30 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServiceRoleClient } from "@/lib/supabase/server";
 import { mediateIncomingMessage } from "@/lib/ai/mediate";
+import { estimateIntensity } from "@/lib/sage/intensity";
 
 /**
  * Ingest incoming email (from webhook/cron). Service role only.
  * Process raw message → AI mediate → store message + flags.
+ * Sets intensity_score/intensity_flag; delivery_status buffered if recipient is in cool-off.
  */
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
+    const body = await request.json().catch(() => ({}));
     const {
       case_id,
       sender_id,
       sender_external_email,
       original_content,
+      conversation_id,
+      is_emergency,
     } = body as {
       case_id?: string;
-      sender_id?: string;
-      sender_external_email?: string;
+      sender_id?: string | null;
+      sender_external_email?: string | null;
       original_content?: string;
+      conversation_id?: string | null;
+      is_emergency?: boolean;
     };
     if (!case_id || !original_content) {
       return NextResponse.json(
@@ -27,11 +33,38 @@ export async function POST(request: NextRequest) {
       );
     }
     const result = await mediateIncomingMessage(original_content);
+    const contentForIntensity = result.ai_rewritten_content ?? original_content;
+    const { score, flag } = estimateIntensity(contentForIntensity);
+
     const admin = getServiceRoleClient();
+    let deliveryStatus: "delivered" | "buffered" = "delivered";
+    let deliveredAt: string | null = new Date().toISOString();
+    if (!is_emergency) {
+      const { data: members } = await admin
+        .from("case_members")
+        .select("user_id")
+        .eq("case_id", case_id);
+      const recipientId = (members ?? []).find((m) => m.user_id && m.user_id !== sender_id)?.user_id;
+      if (recipientId) {
+        const { data: cool } = await admin
+          .from("cool_off")
+          .select("id")
+          .eq("user_id", recipientId)
+          .eq("is_active", true)
+          .gt("ends_at", new Date().toISOString())
+          .maybeSingle();
+        if (cool) {
+          deliveryStatus = "buffered";
+          deliveredAt = null;
+        }
+      }
+    }
+
     const { data: message, error: msgError } = await admin
       .from("messages")
       .insert({
         case_id,
+        conversation_id: conversation_id ?? null,
         direction: "incoming",
         sender_id: sender_id ?? null,
         sender_external_email: sender_external_email ?? null,
@@ -42,7 +75,12 @@ export async function POST(request: NextRequest) {
         emotional_intensity_score: result.emotional_intensity_score,
         category: result.category ?? null,
         sub_category: result.sub_category ?? null,
-        current_status: "delivered",
+        current_status: deliveryStatus === "delivered" ? "delivered" : "pending",
+        delivery_status: deliveryStatus,
+        delivered_at: deliveredAt,
+        intensity_score: score,
+        intensity_flag: flag,
+        is_emergency: is_emergency ?? false,
       })
       .select("id")
       .single();

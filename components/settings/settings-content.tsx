@@ -1,11 +1,12 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronRight, ChevronDown } from "lucide-react";
+import { ChevronRight, ChevronDown, Feather, Moon, Lock } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import { cn } from "@/lib/utils";
 
 type AppMode = "solo" | "partner" | "coparenting" | "solo_coparenting";
 type AiModerationLevel = "off" | "standard" | "high";
@@ -25,12 +26,14 @@ function CollapsibleCard({
   open,
   onToggle,
   title,
+  subtitle,
   headerAction,
   children: content,
 }: {
   open: boolean;
   onToggle: () => void;
-  title: string;
+  title: React.ReactNode;
+  subtitle?: string;
   headerAction?: React.ReactNode;
   children: React.ReactNode;
 }) {
@@ -45,7 +48,12 @@ function CollapsibleCard({
         ) : (
           <ChevronRight className="h-5 w-5 text-foreground-secondary shrink-0" />
         )}
-        <CardTitle className="font-heading text-lg text-foreground">{title}</CardTitle>
+        <div className="min-w-0">
+          <CardTitle className="font-heading text-lg text-foreground">{title}</CardTitle>
+          {subtitle && (
+            <p className="text-xs text-foreground-secondary mt-0.5">{subtitle}</p>
+          )}
+        </div>
         {headerAction && (
           <div className="ml-auto shrink-0" onClick={(e) => e.stopPropagation()}>
             {headerAction}
@@ -70,6 +78,9 @@ export function SettingsContent({ profile }: SettingsContentProps) {
   const [openCommunication, setOpenCommunication] = useState(false);
   const [openNotifications, setOpenNotifications] = useState(false);
   const [openSubscription, setOpenSubscription] = useState(false);
+  const [openSage, setOpenSage] = useState(false);
+  const [openCoolOff, setOpenCoolOff] = useState(false);
+  const [openPrivacy, setOpenPrivacy] = useState(false);
 
   const [caseSettings, setCaseSettings] = useState<CaseSettings | null>(null);
   const [settingsLoading, setSettingsLoading] = useState(true);
@@ -85,6 +96,19 @@ export function SettingsContent({ profile }: SettingsContentProps) {
   const [emailNotifications, setEmailNotifications] = useState(true);
   const [pushNotifications, setPushNotifications] = useState(false);
   const [notificationFrequency, setNotificationFrequency] = useState<"immediate" | "daily">("immediate");
+
+  const [userSettings, setUserSettings] = useState<{
+    sage_message_review: boolean;
+    proactive_sage_enabled: boolean;
+    vow_references: boolean;
+    default_pause_duration: string;
+    send_read_receipts: boolean;
+  } | null>(null);
+  const [coolOffActive, setCoolOffActive] = useState<{ ends_at: string } | null>(null);
+  const [showCoolOffSelector, setShowCoolOffSelector] = useState(false);
+  const [startingCoolOff, setStartingCoolOff] = useState(false);
+  const [coolOffHours, setCoolOffHours] = useState(4);
+  const [endingCoolOff, setEndingCoolOff] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -131,6 +155,41 @@ export function SettingsContent({ profile }: SettingsContentProps) {
     load();
     return () => { cancelled = true; };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([
+      fetch("/api/settings/user").then((r) => r.json()),
+      fetch("/api/messages/cool-off").then((r) => r.json()),
+    ]).then(([userData, coolData]) => {
+      if (cancelled) return;
+      if (userData.sage_message_review !== undefined) {
+        setUserSettings({
+          sage_message_review: userData.sage_message_review ?? true,
+          proactive_sage_enabled: userData.proactive_sage_enabled ?? true,
+          vow_references: userData.vow_references ?? true,
+          default_pause_duration: userData.default_pause_duration ?? "2hours",
+          send_read_receipts: userData.send_read_receipts ?? false,
+        });
+      }
+      setCoolOffActive((coolData as { active?: { ends_at: string } }).active ?? null);
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  const saveUserSetting = useCallback(
+    async (field: string, value: boolean | string) => {
+      const res = await fetch("/api/settings/user", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ [field]: value }),
+      });
+      if (!res.ok) return;
+      const data = await res.json().catch(() => ({}));
+      setUserSettings((prev) => (prev ? { ...prev, [field]: value } : null));
+    },
+    []
+  );
 
   const hasCase = !!caseSettings?.case_id;
   const showCommunication = hasCase && (appMode === "coparenting" || appMode === "solo_coparenting");
@@ -186,7 +245,12 @@ export function SettingsContent({ profile }: SettingsContentProps) {
   }
 
   const allSectionsOpen =
-    openCommunication && openNotifications && openSubscription;
+    (showCommunication ? openCommunication : true) &&
+    openNotifications &&
+    openSubscription &&
+    openSage &&
+    openCoolOff &&
+    openPrivacy;
 
   return (
     <div className="space-y-6">
@@ -202,10 +266,16 @@ export function SettingsContent({ profile }: SettingsContentProps) {
               setOpenCommunication(false);
               setOpenNotifications(false);
               setOpenSubscription(false);
+              setOpenSage(false);
+              setOpenCoolOff(false);
+              setOpenPrivacy(false);
             } else {
               setOpenCommunication(true);
               setOpenNotifications(true);
               setOpenSubscription(true);
+              setOpenSage(true);
+              setOpenCoolOff(true);
+              setOpenPrivacy(true);
             }
           }}
         >
@@ -244,8 +314,43 @@ export function SettingsContent({ profile }: SettingsContentProps) {
           open={openCommunication}
           onToggle={() => setOpenCommunication((o) => !o)}
           title="Communication"
+          subtitle="Preferences for co-parent messaging"
         >
           <div className="space-y-4">
+            <div className="space-y-2">
+              <Label className="text-xs font-medium text-foreground-secondary">Default pause duration</Label>
+              <select
+                value={userSettings?.default_pause_duration ?? "2hours"}
+                onChange={(e) => {
+                  const v = e.target.value as "30min" | "2hours" | "until_tomorrow";
+                  setUserSettings((prev) => (prev ? { ...prev, default_pause_duration: v } : null));
+                  saveUserSetting("default_pause_duration", v);
+                }}
+                className="flex h-9 rounded-md border border-input bg-background px-2 py-1 text-sm w-full max-w-xs"
+              >
+                <option value="30min">30 min</option>
+                <option value="2hours">2 hours</option>
+                <option value="until_tomorrow">Until tomorrow morning</option>
+              </select>
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                id="send_read_receipts"
+                checked={userSettings?.send_read_receipts ?? false}
+                onChange={(e) => {
+                  const v = e.target.checked;
+                  setUserSettings((prev) => (prev ? { ...prev, send_read_receipts: v } : null));
+                  saveUserSetting("send_read_receipts", v);
+                }}
+                className="rounded border-input"
+              />
+              <Label htmlFor="send_read_receipts" className="text-sm font-normal cursor-pointer">
+                Send read receipts
+              </Label>
+            </div>
+            <p className="text-xs text-foreground-secondary">Read receipts are visible to your co-parent.</p>
+            <div className="border-t border-border pt-4 space-y-4">
             <div className="space-y-2">
               <Label className="text-xs font-medium text-foreground-secondary">AI moderation level</Label>
               <select
@@ -314,6 +419,7 @@ export function SettingsContent({ profile }: SettingsContentProps) {
                 {settingsSaving ? "Saving…" : "Save"}
               </Button>
             )}
+            </div>
           </div>
         </CollapsibleCard>
       )}
@@ -364,6 +470,222 @@ export function SettingsContent({ profile }: SettingsContentProps) {
         </div>
       </CollapsibleCard>
       </div>
+
+      <CollapsibleCard
+        open={openSage}
+        onToggle={() => setOpenSage((o) => !o)}
+        title={
+          <span className="flex items-center gap-2">
+            <Feather className="h-5 w-5 text-[#7C8B6E]" />
+            Sage
+          </span>
+        }
+        subtitle="Control how Sage supports your communication"
+      >
+        <div className="space-y-4">
+          <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              id="sage_message_review"
+              checked={userSettings?.sage_message_review ?? true}
+              onChange={(e) => {
+                const v = e.target.checked;
+                setUserSettings((prev) => (prev ? { ...prev, sage_message_review: v } : null));
+                saveUserSetting("sage_message_review", v);
+              }}
+              className="rounded border-input"
+            />
+            <Label htmlFor="sage_message_review" className="text-sm font-normal cursor-pointer">
+              Sage message review
+            </Label>
+          </div>
+          <p className="text-xs text-foreground-secondary ml-6">Sage reviews messages before sending.</p>
+          <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              id="proactive_nudges"
+              checked={userSettings?.proactive_sage_enabled ?? true}
+              onChange={(e) => {
+                const v = e.target.checked;
+                setUserSettings((prev) => (prev ? { ...prev, proactive_sage_enabled: v } : null));
+                saveUserSetting("proactive_sage_enabled", v);
+              }}
+              className="rounded border-input"
+            />
+            <Label htmlFor="proactive_nudges" className="text-sm font-normal cursor-pointer">
+              Proactive nudges
+            </Label>
+          </div>
+          <p className="text-xs text-foreground-secondary ml-6">Sage suggests support when conversations get tense.</p>
+          <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              id="vow_references"
+              checked={userSettings?.vow_references ?? true}
+              onChange={(e) => {
+                const v = e.target.checked;
+                setUserSettings((prev) => (prev ? { ...prev, vow_references: v } : null));
+                saveUserSetting("vow_references", v);
+              }}
+              className="rounded border-input"
+            />
+            <Label htmlFor="vow_references" className="text-sm font-normal cursor-pointer">
+              Vow references
+            </Label>
+          </div>
+          <p className="text-xs text-foreground-secondary ml-6">Sage may gently reference your vow during private coaching.</p>
+          <p className="text-xs text-foreground-secondary pt-2">
+            These settings apply to all conversations. You can override per conversation from the thread header.
+          </p>
+        </div>
+      </CollapsibleCard>
+
+      <CollapsibleCard
+        open={openCoolOff}
+        onToggle={() => setOpenCoolOff((o) => !o)}
+        title={
+          <span className="flex items-center gap-2">
+            <Moon className="h-5 w-5 text-[#7C8B6E]" />
+            Cool-Off
+          </span>
+        }
+        subtitle="Take a private break from messaging"
+      >
+        <div className="space-y-4">
+          {!coolOffActive ? (
+            <>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="rounded-full border-[#7C8B6E] text-[#5B7A52] hover:bg-[#F2F5EF] hover:border-[#5B7A52]"
+                onClick={() => setShowCoolOffSelector((v) => !v)}
+              >
+                Take a cool-off break
+              </Button>
+              {showCoolOffSelector && (
+                <div className="rounded-lg border border-border bg-[#FDFBF7] p-3 space-y-3">
+                  <Label className="text-xs font-medium text-foreground-secondary">Duration</Label>
+                  <div className="flex flex-wrap gap-2">
+                    {[1, 4, 12, 24, 48].map((h) => (
+                      <button
+                        key={h}
+                        type="button"
+                        onClick={() => setCoolOffHours(h)}
+                        className={cn(
+                          "rounded-full px-3 py-1.5 text-xs border transition-colors",
+                          coolOffHours === h
+                            ? "border-[#7C8B6E] bg-[#F2F5EF] text-[#5B7A52]"
+                            : "border-border bg-background hover:bg-muted/50"
+                        )}
+                      >
+                        {h === 1 ? "1 hour" : `${h} hours`}
+                      </button>
+                    ))}
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="rounded-full h-8 text-xs bg-[#5B7A52] hover:bg-[#476242] text-white"
+                    disabled={startingCoolOff}
+                    onClick={async () => {
+                      setStartingCoolOff(true);
+                      try {
+                        const res = await fetch("/api/messages/cool-off", {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ hours: coolOffHours }),
+                        });
+                        const d = await res.json().catch(() => ({}));
+                        if (res.ok && d.ends_at) {
+                          setCoolOffActive({ ends_at: d.ends_at });
+                          setShowCoolOffSelector(false);
+                        } else {
+                          window.alert((d as { error?: string }).error ?? "Could not start cool-off.");
+                        }
+                      } finally {
+                        setStartingCoolOff(false);
+                      }
+                    }}
+                  >
+                    {startingCoolOff ? "Starting…" : "Start cool-off"}
+                  </Button>
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="space-y-2">
+              <p className="text-sm text-foreground">
+                Cool-off active — ends at{" "}
+                {new Date(coolOffActive.ends_at).toLocaleString(undefined, {
+                  month: "short",
+                  day: "numeric",
+                  hour: "numeric",
+                  minute: "2-digit",
+                })}
+              </p>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="rounded-full h-8 text-xs"
+                disabled={endingCoolOff}
+                onClick={async () => {
+                  setEndingCoolOff(true);
+                  try {
+                    const res = await fetch("/api/messages/cool-off", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ end_early: true }),
+                    });
+                    if (res.ok) setCoolOffActive(null);
+                  } finally {
+                    setEndingCoolOff(false);
+                  }
+                }}
+              >
+                {endingCoolOff ? "Ending…" : "End early"}
+              </Button>
+            </div>
+          )}
+          <p className="text-xs text-foreground-secondary">
+            During cool-off, you cannot send messages. Incoming messages are held until your break ends. Your co-parent will not know you are on a break.
+          </p>
+          <p className="text-xs text-foreground-secondary">
+            Emergency messages from your co-parent will still come through.
+          </p>
+        </div>
+      </CollapsibleCard>
+
+      <CollapsibleCard
+        open={openPrivacy}
+        onToggle={() => setOpenPrivacy((o) => !o)}
+        title="Privacy"
+        subtitle="What's shared and what stays private"
+      >
+        <ul className="space-y-2 text-sm text-foreground-secondary">
+          <li className="flex items-center gap-2">
+            <Lock className="h-4 w-4 text-[#7C8B6E] shrink-0" />
+            Your vows are always private
+          </li>
+          <li className="flex items-center gap-2">
+            <Lock className="h-4 w-4 text-[#7C8B6E] shrink-0" />
+            Sage coaching conversations are always private
+          </li>
+          <li className="flex items-center gap-2">
+            <Lock className="h-4 w-4 text-[#7C8B6E] shrink-0" />
+            Cool-off breaks are always private
+          </li>
+          <li className="flex items-center gap-2">
+            <Lock className="h-4 w-4 text-[#7C8B6E] shrink-0" />
+            Thread summaries may appear in reports
+          </li>
+          <li className="flex items-center gap-2">
+            <Lock className="h-4 w-4 text-[#7C8B6E] shrink-0" />
+            Structured pauses appear in reports as neutral events
+          </li>
+        </ul>
+      </CollapsibleCard>
     </div>
   );
 }

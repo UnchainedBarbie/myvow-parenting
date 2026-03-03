@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
+import { DashboardStatusCards } from "@/components/dashboard/dashboard-status-cards";
 
 type TodayEvent = {
   id: string;
@@ -430,6 +431,10 @@ export default async function DashboardPage() {
   const awaitingResponseCount = Object.values(lastMessageByConversation).filter(
     (m) => m.direction === "incoming" && m.read_at == null
   ).length;
+  const firstUnreadConversationId =
+    Object.entries(lastMessageByConversation).find(
+      ([_, m]) => m.direction === "incoming" && m.read_at == null
+    )?.[0] ?? null;
   const communicationMainLabel =
     awaitingResponseCount === 0
       ? "All conversations up to date"
@@ -549,74 +554,16 @@ export default async function DashboardPage() {
 
       <div className="space-y-4">
         {/* Top row: status cards */}
-        <div className="grid gap-3 md:grid-cols-3 items-stretch">
-          {/* Household climate */}
-          <Card
-            className={cn(
-              "rounded-card border text-xs md:text-sm",
-              householdElevated
-                ? "border-[#E8E4DC] bg-[#FDF6E3]"
-                : "border-[#E8E4DC] bg-[#F2F5EF]"
-            )}
-          >
-            <CardContent className="px-3 py-3 space-y-1">
-              <div className="flex items-center gap-2">
-                <span
-                  className={cn(
-                    "h-2.5 w-2.5 rounded-full",
-                    householdElevated ? "bg-[#D4A843]" : "bg-[#7C8B6E]"
-                  )}
-                />
-                <p className="font-medium text-foreground text-xs md:text-sm">
-                  Household climate: {householdClimateLabel}
-                </p>
-              </div>
-              <p className="text-[11px] md:text-xs text-foreground-secondary">
-                {disputesLabel}
-              </p>
-            </CardContent>
-          </Card>
-
-          {/* Communication */}
-          <Card className="rounded-card border border-[#E8E4DC] bg-[#FDFBF7] text-xs md:text-sm">
-            <CardContent className="px-3 py-3 space-y-1">
-              <p className="font-medium text-foreground text-xs md:text-sm">
-                Communication: {communicationMainLabel}
-              </p>
-              <p className="text-[11px] md:text-xs text-foreground-secondary">
-                {communicationToneLabel}
-              </p>
-            </CardContent>
-          </Card>
-
-          {/* Shared expenses */}
-          <Card className="rounded-card border border-[#E8E4DC] bg-[#FDFBF7] text-xs md:text-sm">
-            <CardContent className="px-3 py-3 space-y-1">
-              <p className="font-medium text-foreground text-xs md:text-sm">
-                Shared expenses: {netLabel}
-              </p>
-              <p className="text-[11px] md:text-xs text-foreground-secondary">
-                {openExpenseItems === 0
-                  ? "0 open items"
-                  : `${openExpenseItems} open item${openExpenseItems > 1 ? "s" : ""}`}
-              </p>
-              <div className="flex gap-3 pt-1">
-                <Link
-                  href="/expenses"
-                  className="text-[11px] text-primary underline-offset-2 hover:underline"
-                >
-                  View details
-                </Link>
-                <Link
-                  href="/messages?topic=expense"
-                  className="text-[11px] text-primary underline-offset-2 hover:underline"
-                >
-                  Send reminder
-                </Link>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
+        <DashboardStatusCards
+          householdElevated={householdElevated}
+          householdClimateLabel={householdClimateLabel}
+          disputesLabel={disputesLabel}
+          openExpenseItems={openExpenseItems}
+          communicationMainLabel={communicationMainLabel}
+          communicationToneLabel={communicationToneLabel}
+          firstUnreadConversationId={firstUnreadConversationId}
+          netLabel={netLabel}
+        />
 
         {/* Row 1: Today's events + This week */}
         <div className="grid gap-4 lg:grid-cols-2 items-start">

@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
-import { getServiceRoleClient } from "@/lib/supabase/server";
+import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
+import { estimateIntensity, type IntensityResult } from "@/lib/sage/intensity";
 
 /**
- * Approve draft and send: insert message (outgoing) and create events.
- * All writes via service role.
+ * Approve draft and send: insert message (outgoing). Checks cool-off and structured pause.
+ * Writes intensity_score/intensity_flag, delivery_status, delivered_at.
  */
 export async function POST(request: NextRequest) {
   try {
@@ -15,17 +15,23 @@ export async function POST(request: NextRequest) {
     if (!user) {
       return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
     }
-    const body = await request.json();
+    const body = await request.json().catch(() => ({}));
     const {
       case_id,
       conversation_id,
       original_content,
       ai_rewritten_content,
+      is_emergency,
+      emergency_type,
+      emergency_note,
     } = body as {
       case_id?: string;
       conversation_id?: string | null;
       original_content?: string;
       ai_rewritten_content?: string;
+      is_emergency?: boolean;
+      emergency_type?: string | null;
+      emergency_note?: string | null;
     };
     if (!case_id || !original_content || !ai_rewritten_content) {
       return NextResponse.json(
@@ -33,19 +39,97 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
+
     const admin = getServiceRoleClient();
+
+    const inCoolOff = await admin
+      .from("cool_off")
+      .select("id")
+      .eq("user_id", user.id)
+      .eq("is_active", true)
+      .gt("ends_at", new Date().toISOString())
+      .maybeSingle();
+    if (inCoolOff.data) {
+      return NextResponse.json(
+        { message: "Sending is paused while you take a break. It will be available again when your break ends." },
+        { status: 403 }
+      );
+    }
+
+    if (conversation_id) {
+      const now = new Date().toISOString();
+      const { data: pause } = await admin
+        .from("structured_pauses")
+        .select("id, mode, created_by")
+        .eq("conversation_id", conversation_id)
+        .gt("ends_at", now)
+        .order("ends_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (pause) {
+        const blocked =
+          pause.mode === "auto" ||
+          pause.mode === "user_mutual" ||
+          (pause.mode === "user_unilateral" && pause.created_by === user.id);
+        if (blocked) {
+          return NextResponse.json(
+            { message: "This conversation is paused. It will reopen at the scheduled time." },
+            { status: 403 }
+          );
+        }
+      }
+    }
+
+    const allowEmergency =
+      typeof is_emergency === "boolean" &&
+      is_emergency &&
+      typeof emergency_type === "string" &&
+      ["medical", "safety", "logistics"].includes(emergency_type) &&
+      typeof emergency_note === "string" &&
+      emergency_note.trim().length >= 1;
+    let emergencyOverLimit = false;
+    if (allowEmergency) {
+      const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+      const { data: recent } = await admin
+        .from("messages")
+        .select("id")
+        .eq("sender_id", user.id)
+        .eq("is_emergency", true)
+        .gte("created_at", weekAgo);
+      emergencyOverLimit = (recent?.length ?? 0) >= 5;
+    }
+    if (emergencyOverLimit) {
+      return NextResponse.json(
+        { message: "Emergency option is temporarily unavailable. Please send a regular message." },
+        { status: 403 }
+      );
+    }
+
+    const contentForIntensity = ai_rewritten_content ?? original_content;
+    const intensityResult: IntensityResult = estimateIntensity(contentForIntensity);
+    const { score, flag, severe } = intensityResult;
+
+    const insertPayload: Record<string, unknown> = {
+      case_id,
+      conversation_id: conversation_id ?? null,
+      direction: "outgoing",
+      sender_id: user.id,
+      original_content,
+      ai_rewritten_content,
+      ai_rewritten: true,
+      current_status: "sent",
+      delivery_status: "delivered",
+      delivered_at: new Date().toISOString(),
+      intensity_score: score,
+      intensity_flag: flag,
+      is_emergency: allowEmergency ?? false,
+      emergency_type: allowEmergency ? emergency_type : null,
+      emergency_note: allowEmergency ? emergency_note?.trim() ?? null : null,
+    };
+
     const { data: message, error: msgError } = await admin
       .from("messages")
-      .insert({
-        case_id,
-        conversation_id: conversation_id ?? null,
-        direction: "outgoing",
-        sender_id: user.id,
-        original_content,
-        ai_rewritten_content,
-        ai_rewritten: true,
-        current_status: "sent",
-      })
+      .insert(insertPayload)
       .select("id")
       .single();
     if (msgError) {
@@ -54,6 +138,41 @@ export async function POST(request: NextRequest) {
         { status: 500 }
       );
     }
+
+    if (conversation_id) {
+      const now = new Date();
+      const tenMinAgo = new Date(now.getTime() - 10 * 60 * 1000).toISOString();
+      const sixtyMinAgo = new Date(now.getTime() - 60 * 60 * 1000).toISOString();
+      const { data: existingAuto } = await admin
+        .from("structured_pauses")
+        .select("id")
+        .eq("conversation_id", conversation_id)
+        .eq("mode", "auto")
+        .gt("ends_at", now.toISOString())
+        .maybeSingle();
+      if (!existingAuto) {
+        const { data: recent } = await admin
+          .from("messages")
+          .select("id, created_at")
+          .eq("conversation_id", conversation_id)
+          .eq("intensity_flag", true)
+          .gte("created_at", sixtyMinAgo);
+        const inLast10 = (recent ?? []).filter((m) => m.created_at >= tenMinAgo).length;
+        const inLast60 = recent?.length ?? 0;
+        const shouldAutoPause =
+          severe || inLast10 >= 3 || inLast60 >= 5;
+        if (shouldAutoPause) {
+          const endsAt = new Date(now.getTime() + 2 * 60 * 60 * 1000);
+          await admin.from("structured_pauses").insert({
+            conversation_id,
+            created_by: null,
+            mode: "auto",
+            ends_at: endsAt.toISOString(),
+          });
+        }
+      }
+    }
+
     return NextResponse.json({ ok: true, message_id: message.id });
   } catch (e) {
     return NextResponse.json(

@@ -1,7 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useMemo, useState, useEffect } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -83,10 +83,22 @@ export function ExpenseList({
   children,
 }: ExpenseListProps) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [searchInput, setSearchInput] = useState("");
   const [filterCategories, setFilterCategories] = useState<string[]>([]);
   const [filterChildren, setFilterChildren] = useState<string[]>([]);
-  const [filterStatuses, setFilterStatuses] = useState<string[]>([]);
+  const [filterStatuses, setFilterStatuses] = useState<string[]>(() => {
+    const status = searchParams.get("status")?.toLowerCase();
+    if (status === "pending") return ["submitted"];
+    if (status === "disputed") return ["disputed"];
+    return [];
+  });
+  useEffect(() => {
+    if (!searchParams.get("status")) return;
+    const u = new URL(window.location.href);
+    u.searchParams.delete("status");
+    router.replace(u.pathname + (u.search || ""), { scroll: false });
+  }, [searchParams, router]);
   const [startDate, setStartDate] = useState<string>("");
   const [endDate, setEndDate] = useState<string>("");
   const [dateFilterOpen, setDateFilterOpen] = useState(false);

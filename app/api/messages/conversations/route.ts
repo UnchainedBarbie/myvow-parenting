@@ -115,6 +115,38 @@ export async function GET() {
       }
     }
 
+    // Pins and conversation-level flags (private to user)
+    const pinnedConversationIds = new Set<string>();
+    const conversationFlaggedIds = new Set<string>();
+    try {
+      const { data: pins } = await admin
+        .from("conversation_user_pins")
+        .select("conversation_id")
+        .eq("user_id", user.id)
+        .in("conversation_id", convIds);
+      if (pins) {
+        for (const p of pins as { conversation_id: string }[]) {
+          pinnedConversationIds.add(p.conversation_id);
+        }
+      }
+    } catch {
+      // table may not exist yet
+    }
+    try {
+      const { data: convFlags } = await admin
+        .from("conversation_user_flags")
+        .select("conversation_id")
+        .eq("user_id", user.id)
+        .in("conversation_id", convIds);
+      if (convFlags) {
+        for (const f of convFlags as { conversation_id: string }[]) {
+          conversationFlaggedIds.add(f.conversation_id);
+        }
+      }
+    } catch {
+      // table may not exist yet
+    }
+
     const summaries = conversations.map((c) => {
       const list = (byConversation[c.id] ?? []).slice().sort((a, b) =>
         a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0
@@ -173,9 +205,20 @@ export async function GET() {
         category,
         message_count: list.length,
         has_flagged_by_me: flaggedByConversation.has(c.id),
+        conversation_flagged_by_me: conversationFlaggedIds.has(c.id),
+        pinned_by_me: pinnedConversationIds.has(c.id),
         status,
         tone,
       };
+    });
+
+    // Pinned first, then by updated_at desc
+    summaries.sort((a, b) => {
+      const aPinned = (a as { pinned_by_me?: boolean }).pinned_by_me ?? false;
+      const bPinned = (b as { pinned_by_me?: boolean }).pinned_by_me ?? false;
+      if (aPinned && !bPinned) return -1;
+      if (!aPinned && bPinned) return 1;
+      return (b.updated_at || "").localeCompare(a.updated_at || "");
     });
 
     return NextResponse.json({ conversations: summaries });

@@ -139,6 +139,20 @@ export function MessagesSplitView({
   const [confirmArchiveOpen, setConfirmArchiveOpen] = useState(false);
   const [discardDraftOpen, setDiscardDraftOpen] = useState(false);
 
+  const [attachExpenses, setAttachExpenses] = useState<
+    { id: string; description: string; amount: number; category: string; status: string; created_at: string }[]
+  >([]);
+  const [attachExpensesLoading, setAttachExpensesLoading] = useState(false);
+  const [attachExpensesSearch, setAttachExpensesSearch] = useState("");
+  const [attachSelectedExpenseId, setAttachSelectedExpenseId] = useState<string | null>(null);
+
+  const [attachDocuments, setAttachDocuments] = useState<
+    { id: string; file_name: string; category: string; created_at: string }[]
+  >([]);
+  const [attachDocumentsLoading, setAttachDocumentsLoading] = useState(false);
+  const [attachDocumentsSearch, setAttachDocumentsSearch] = useState("");
+  const [attachSelectedDocumentId, setAttachSelectedDocumentId] = useState<string | null>(null);
+
   const childMap = useMemo(
     () =>
       children.reduce(
@@ -258,6 +272,67 @@ export function MessagesSplitView({
     const t = setInterval(releaseCoolOff, 60 * 1000);
     return () => clearInterval(t);
   }, [releaseCoolOff]);
+
+  // Load attach-expense/documents lists when modals open
+  useEffect(() => {
+    if (!showExpenseModal) {
+      setAttachExpensesSearch("");
+      setAttachSelectedExpenseId(null);
+      return;
+    }
+    setAttachExpensesLoading(true);
+    fetch("/api/messages/attachments/expenses")
+      .then((r) => r.json())
+      .then((d) => {
+        if (Array.isArray(d.expenses)) {
+          setAttachExpenses(
+            d.expenses.map((e: any) => ({
+              id: e.id as string,
+              description: (e.description as string) ?? "",
+              amount: Number(e.amount ?? 0),
+              category: (e.category as string) ?? "",
+              status: (e.status as string) ?? "",
+              created_at: e.created_at as string,
+            }))
+          );
+        } else {
+          setAttachExpenses([]);
+        }
+      })
+      .catch(() => {
+        setAttachExpenses([]);
+      })
+      .finally(() => setAttachExpensesLoading(false));
+  }, [showExpenseModal]);
+
+  useEffect(() => {
+    if (!showDocumentModal) {
+      setAttachDocumentsSearch("");
+      setAttachSelectedDocumentId(null);
+      return;
+    }
+    setAttachDocumentsLoading(true);
+    fetch("/api/messages/attachments/documents")
+      .then((r) => r.json())
+      .then((d) => {
+        if (Array.isArray(d.documents)) {
+          setAttachDocuments(
+            d.documents.map((doc: any) => ({
+              id: doc.id as string,
+              file_name: (doc.file_name as string) ?? "",
+              category: (doc.category as string) ?? "",
+              created_at: doc.created_at as string,
+            }))
+          );
+        } else {
+          setAttachDocuments([]);
+        }
+      })
+      .catch(() => {
+        setAttachDocuments([]);
+      })
+      .finally(() => setAttachDocumentsLoading(false));
+  }, [showDocumentModal]);
 
   useEffect(() => {
     if (!selectedId) {
@@ -1407,7 +1482,7 @@ export function MessagesSplitView({
                       width: "44px",
                       height: "44px",
                       borderRadius: "50%",
-                      backgroundColor: "#E8EDE3",
+                      backgroundColor: "#dce5d3",
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "center",
@@ -1426,7 +1501,6 @@ export function MessagesSplitView({
                         height: "30px",
                         objectFit: "contain",
                         display: "block",
-                        mixBlendMode: "multiply",
                       }}
                     />
                   </button>
@@ -1734,8 +1808,79 @@ export function MessagesSplitView({
               Link Expense
             </h2>
             <p className="mt-1 text-[11px] text-[#8A8A8A]">
-              Add or find an expense related to this conversation. You&apos;ll complete details on the Expenses page.
+              Select an existing expense related to this conversation. This link is private to this case.
             </p>
+            <div className="mt-3 space-y-2">
+              <input
+                type="text"
+                value={attachExpensesSearch}
+                onChange={(e) => setAttachExpensesSearch(e.target.value)}
+                placeholder="Search expenses..."
+                className="w-full rounded-full border border-[#E8E4DC] bg-[#FDFBF7] px-3 py-1.5 text-[11px] text-[#3D3D3D] placeholder:text-[#B0A899] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E]"
+              />
+              <div className="mt-1 max-h-[300px] overflow-y-auto rounded-xl border border-[#F0E6D6] bg-[#FDFBF7]">
+                {attachExpensesLoading ? (
+                  <div className="flex items-center justify-center py-8 text-[11px] text-[#8A8A8A]">
+                    Loading expenses…
+                  </div>
+                ) : attachExpenses.length === 0 ? (
+                  <div className="py-6 text-center text-[11px] text-[#8A8A8A]">
+                    No expenses yet.
+                  </div>
+                ) : (
+                  <ul className="divide-y divide-[#EDE2D1]">
+                    {attachExpenses
+                      .filter((e) =>
+                        attachExpensesSearch.trim()
+                          ? e.description.toLowerCase().includes(attachExpensesSearch.toLowerCase())
+                          : true
+                      )
+                      .map((e) => {
+                        const selected = attachSelectedExpenseId === e.id;
+                        const dateLabel = new Date(e.created_at).toLocaleDateString(undefined, {
+                          month: "short",
+                          day: "numeric",
+                          year: "numeric",
+                        });
+                        const amount = Number(e.amount ?? 0).toFixed(2);
+                        return (
+                          <li key={e.id}>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setAttachSelectedExpenseId(selected ? null : e.id)
+                              }
+                              className={cn(
+                                "flex w-full items-center gap-2 px-3 py-2 text-left text-[11px] transition-colors",
+                                selected
+                                  ? "border-l-2 border-l-[#7C8B6E] bg-[#F2F5EF]"
+                                  : "border-l-2 border-l-transparent hover:bg-[#FBF3E4]"
+                              )}
+                            >
+                              <div className="min-w-0 flex-1">
+                                <p className="truncate text-[12px] font-medium text-[#3D3D3D]">
+                                  {e.description}
+                                </p>
+                                <p className="mt-0.5 text-[10px] text-[#8A8A8A]">
+                                  {e.category} · {dateLabel}
+                                </p>
+                              </div>
+                              <div className="flex flex-col items-end gap-1">
+                                <span className="text-[11px] font-semibold text-[#3D3D3D]">
+                                  ${amount}
+                                </span>
+                                <span className="inline-flex items-center rounded-full bg-[#F4F0E6] px-2 py-0.5 text-[9px] text-[#6C6455]">
+                                  {e.status}
+                                </span>
+                              </div>
+                            </button>
+                          </li>
+                        );
+                      })}
+                  </ul>
+                )}
+              </div>
+            </div>
             <div className="mt-4 flex justify-end gap-2">
               <Button
                 type="button"
@@ -1750,24 +1895,37 @@ export function MessagesSplitView({
                 type="button"
                 size="sm"
                 className="h-8 rounded-full bg-[#5B7A52] text-xs text-white hover:bg-[#476242]"
-                onClick={() => {
-                  const search = new URLSearchParams();
-                  if (activeConversation.child_id) search.set("child_id", activeConversation.child_id);
-                  const cat = activeConversation.category ?? "general";
-                  const expenseCategoryParam =
-                    cat === "medical"
-                      ? "medical"
-                      : cat === "school"
-                        ? "school"
-                        : cat === "expense"
-                          ? "other"
-                          : undefined;
-                  if (expenseCategoryParam) search.set("category", expenseCategoryParam);
-                  router.push(`/expenses?${search.toString()}`);
-                  setShowExpenseModal(false);
+                disabled={!attachSelectedExpenseId}
+                onClick={async () => {
+                  if (!attachSelectedExpenseId) return;
+                  try {
+                    const res = await fetch(
+                      `/api/messages/conversations/${activeConversation.id}/attachments`,
+                      {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          type: "expense",
+                          expense_id: attachSelectedExpenseId,
+                        }),
+                      }
+                    );
+                    const data = await res.json().catch(() => ({}));
+                    if (!res.ok) {
+                      showErrorToast(
+                        (data as { error?: string }).error ??
+                          "Unable to link expense right now."
+                      );
+                      return;
+                    }
+                    showSuccessToast("Expense linked");
+                    setShowExpenseModal(false);
+                  } catch {
+                    showErrorToast("Unable to link expense right now.");
+                  }
                 }}
               >
-                Open expenses
+                Link
               </Button>
             </div>
           </div>
@@ -1786,8 +1944,78 @@ export function MessagesSplitView({
               Attach Document
             </h2>
             <p className="mt-1 text-[11px] text-[#8A8A8A]">
-              Upload or select a document related to this conversation. You&apos;ll manage files on the Documents page.
+              Select an existing document related to this conversation. This link is private to this case.
             </p>
+            <div className="mt-3 space-y-2">
+              <input
+                type="text"
+                value={attachDocumentsSearch}
+                onChange={(e) => setAttachDocumentsSearch(e.target.value)}
+                placeholder="Search documents..."
+                className="w-full rounded-full border border-[#E8E4DC] bg-[#FDFBF7] px-3 py-1.5 text-[11px] text-[#3D3D3D] placeholder:text-[#B0A899] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E]"
+              />
+              <div className="mt-1 max-h-[300px] overflow-y-auto rounded-xl border border-[#F0E6D6] bg-[#FDFBF7]">
+                {attachDocumentsLoading ? (
+                  <div className="flex items-center justify-center py-8 text-[11px] text-[#8A8A8A]">
+                    Loading documents…
+                  </div>
+                ) : attachDocuments.length === 0 ? (
+                  <div className="py-6 text-center text-[11px] text-[#8A8A8A]">
+                    No documents yet.
+                  </div>
+                ) : (
+                  <ul className="divide-y divide-[#EDE2D1]">
+                    {attachDocuments
+                      .filter((d) =>
+                        attachDocumentsSearch.trim()
+                          ? d.file_name.toLowerCase().includes(
+                              attachDocumentsSearch.toLowerCase()
+                            )
+                          : true
+                      )
+                      .map((d) => {
+                        const selected = attachSelectedDocumentId === d.id;
+                        const dateLabel = new Date(d.created_at).toLocaleDateString(
+                          undefined,
+                          {
+                            month: "short",
+                            day: "numeric",
+                            year: "numeric",
+                          }
+                        );
+                        return (
+                          <li key={d.id}>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setAttachSelectedDocumentId(selected ? null : d.id)
+                              }
+                              className={cn(
+                                "flex w-full items-center gap-2 px-3 py-2 text-left text-[11px] transition-colors",
+                                selected
+                                  ? "border-l-2 border-l-[#7C8B6E] bg-[#F2F5EF]"
+                                  : "border-l-2 border-l-transparent hover:bg-[#FBF3E4]"
+                              )}
+                            >
+                              <div className="flex h-7 w-7 items-center justify-center rounded-full bg-[#E8EDE3] text-[#5B7A52]">
+                                <Paperclip className="h-3.5 w-3.5" />
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <p className="truncate text-[12px] font-medium text-[#3D3D3D]">
+                                  {d.file_name}
+                                </p>
+                                <p className="mt-0.5 text-[10px] text-[#8A8A8A]">
+                                  {d.category} · {dateLabel}
+                                </p>
+                              </div>
+                            </button>
+                          </li>
+                        );
+                      })}
+                  </ul>
+                )}
+              </div>
+            </div>
             <div className="mt-4 flex justify-end gap-2">
               <Button
                 type="button"
@@ -1802,14 +2030,37 @@ export function MessagesSplitView({
                 type="button"
                 size="sm"
                 className="h-8 rounded-full bg-[#5B7A52] text-xs text-white hover:bg-[#476242]"
-                onClick={() => {
-                  const search = new URLSearchParams();
-                  if (activeConversation.child_id) search.set("child_id", activeConversation.child_id);
-                  router.push(`/documents?${search.toString()}`);
-                  setShowDocumentModal(false);
+                disabled={!attachSelectedDocumentId}
+                onClick={async () => {
+                  if (!attachSelectedDocumentId) return;
+                  try {
+                    const res = await fetch(
+                      `/api/messages/conversations/${activeConversation.id}/attachments`,
+                      {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          type: "document",
+                          document_id: attachSelectedDocumentId,
+                        }),
+                      }
+                    );
+                    const data = await res.json().catch(() => ({}));
+                    if (!res.ok) {
+                      showErrorToast(
+                        (data as { error?: string }).error ??
+                          "Unable to attach document right now."
+                      );
+                      return;
+                    }
+                    showSuccessToast("Document attached");
+                    setShowDocumentModal(false);
+                  } catch {
+                    showErrorToast("Unable to attach document right now.");
+                  }
                 }}
               >
-                Open documents
+                Attach
               </Button>
             </div>
           </div>
@@ -1954,7 +2205,7 @@ export function MessagesSplitView({
                       width: "52px",
                       height: "52px",
                       borderRadius: "50%",
-                      backgroundColor: "#E8EDE3",
+                      backgroundColor: "#dce5d3",
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "center",
@@ -1969,7 +2220,6 @@ export function MessagesSplitView({
                         height: "34px",
                         objectFit: "contain",
                         display: "block",
-                        mixBlendMode: "multiply",
                       }}
                     />
                   </div>
@@ -2026,7 +2276,7 @@ export function MessagesSplitView({
                             width: "28px",
                             height: "28px",
                             borderRadius: "50%",
-                            backgroundColor: "#E8EDE3",
+                            backgroundColor: "#dce5d3",
                             display: "flex",
                             alignItems: "center",
                             justifyContent: "center",
@@ -2041,7 +2291,6 @@ export function MessagesSplitView({
                               height: "18px",
                               objectFit: "contain",
                               display: "block",
-                              mixBlendMode: "multiply",
                             }}
                           />
                         </div>

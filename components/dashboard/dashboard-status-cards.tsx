@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
+import { showErrorToast, showSuccessToast } from "@/components/ui/toaster";
 
 const CARD_LINK_CLASS =
   "cursor-pointer transition-all hover:shadow-sm hover:border-[#C5CFBC] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#7C8B6E] focus-visible:ring-offset-1";
@@ -78,7 +79,7 @@ export function DashboardStatusCards({
       });
       const convData = await convRes.json().catch(() => ({}));
       if (!convRes.ok) {
-        window.alert(
+        showErrorToast(
           (convData as { error?: string }).error ??
             "Could not start expense reminder conversation."
         );
@@ -104,16 +105,14 @@ export function DashboardStatusCards({
       });
       const msgData = await msgRes.json().catch(() => ({}));
       if (!msgRes.ok) {
-        window.alert(
+        showErrorToast(
           (msgData as { message?: string }).message ??
             "Could not send reminder."
         );
         return;
       }
       setShowReminderModal(false);
-      window.setTimeout(() => {
-        window.alert("Reminder sent");
-      }, 10);
+      showSuccessToast("Reminder sent");
     } finally {
       setSendingReminder(false);
     }
@@ -149,7 +148,9 @@ export function DashboardStatusCards({
         setCoolOffActive({ ends_at: d.ends_at });
         setShowCoolOff(false);
       } else {
-        window.alert((d as { error?: string }).error ?? "Could not start cool-off.");
+        showErrorToast(
+          (d as { error?: string }).error ?? "Could not start cool-off."
+        );
       }
     } finally {
       setStartingCoolOff(false);

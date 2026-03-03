@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
+import { showErrorToast, showSuccessToast } from "@/components/ui/toaster";
 
 type AppMode = "solo" | "partner" | "coparenting" | "solo_coparenting";
 type AiModerationLevel = "off" | "standard" | "high";
@@ -222,7 +223,9 @@ export function SettingsContent({ profile }: SettingsContentProps) {
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        window.alert((err as { error?: string }).error ?? "Failed to save");
+        showErrorToast(
+          (err as { error?: string }).error ?? "Failed to save"
+        );
         return;
       }
       setCaseSettings((prev) =>
@@ -239,6 +242,7 @@ export function SettingsContent({ profile }: SettingsContentProps) {
           : null
       );
       router.refresh();
+      showSuccessToast("Settings saved");
     } finally {
       setSettingsSaving(false);
     }
@@ -601,7 +605,9 @@ export function SettingsContent({ profile }: SettingsContentProps) {
                           setCoolOffActive({ ends_at: d.ends_at });
                           setShowCoolOffSelector(false);
                         } else {
-                          window.alert((d as { error?: string }).error ?? "Could not start cool-off.");
+                          showErrorToast(
+                            (d as { error?: string }).error ?? "Could not start cool-off."
+                          );
                         }
                       } finally {
                         setStartingCoolOff(false);

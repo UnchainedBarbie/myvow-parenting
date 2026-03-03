@@ -13,6 +13,7 @@ import {
   ScrollText,
   Lock,
   X,
+  Trash2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -20,6 +21,7 @@ import { MessageBubble, type MessageRow } from "./message-bubble";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { estimateIntensity } from "@/lib/sage/intensity";
+import { showErrorToast, showSuccessToast } from "@/components/ui/toaster";
 
 type ChildSummary = { id: string; first_name: string };
 
@@ -34,8 +36,9 @@ type ConversationSummary = {
   last_message_created_at: string | null;
   unread_count: number;
   category?: string;
-  status?: "open" | "resolved" | "archived";
+  status?: "open" | "archived";
   tone?: "calm" | "elevated";
+  message_count?: number;
 };
 
 type SageMessage = {
@@ -90,8 +93,8 @@ export function MessagesSplitView({
   >({});
   const [filterTopic, setFilterTopic] = useState<string>("all");
   const [filterChild, setFilterChild] = useState<string>("all");
-  const [filterStatus, setFilterStatus] = useState<"open_resolved" | "archived" | "all">(
-    "open_resolved"
+  const [filterStatus, setFilterStatus] = useState<"open" | "archived" | "all">(
+    "open"
   );
   const [sageOpen, setSageOpen] = useState(false);
   const [sageInput, setSageInput] = useState("");
@@ -295,8 +298,8 @@ export function MessagesSplitView({
     if (filterChild !== "all") {
       list = list.filter((c) => c.child_id === filterChild);
     }
-    if (filterStatus === "open_resolved") {
-      list = list.filter((c) => (c.status ?? "open") !== "archived");
+    if (filterStatus === "open") {
+      list = list.filter((c) => (c.status ?? "open") === "open");
     } else if (filterStatus === "archived") {
       list = list.filter((c) => c.status === "archived");
     }
@@ -333,7 +336,9 @@ export function MessagesSplitView({
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        window.alert((data as { error?: string }).error ?? "Could not create conversation.");
+        showErrorToast(
+          (data as { error?: string }).error ?? "Could not create conversation."
+        );
         return;
       }
       const conv = (data as { conversation: ConversationSummary }).conversation;
@@ -344,6 +349,7 @@ export function MessagesSplitView({
       await loadConversations();
       setSelectedId(conv.id);
       await loadMessages(conv.id);
+      showSuccessToast("Conversation created");
     } finally {
       setCreating(false);
     }
@@ -404,10 +410,7 @@ export function MessagesSplitView({
   const displayCoparentName = "Co-Parent";
   const coparentInitial = "C";
 
-  const activeTone =
-    activeConversation?.tone && activeConversation.tone === "elevated"
-      ? "elevated"
-      : "calm";
+  const activeTone: "calm" | "elevated" = "calm";
 
   const now = new Date();
   const last30Start = new Date(
@@ -604,16 +607,16 @@ export function MessagesSplitView({
             <select
               value={filterStatus}
               onChange={(e) =>
-                setFilterStatus(e.target.value as "open_resolved" | "archived" | "all")
+                setFilterStatus(e.target.value as "open" | "archived" | "all")
               }
               className={cn(
                 "h-7 rounded-full border px-2 text-[11px] text-[#3D3D3D] bg-[#FDFBF7] border-[#E8E4DC] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E]",
-                filterStatus !== "open_resolved" && "bg-[#F2F5EF] border-[#7C8B6E]"
+                filterStatus !== "open" && "bg-[#F2F5EF] border-[#7C8B6E]"
               )}
             >
-              <option value="open_resolved">Open & Resolved</option>
+              <option value="open">Open</option>
               <option value="archived">Archived</option>
-              <option value="all">All statuses</option>
+              <option value="all">All conversations</option>
             </select>
           </div>
         </div>
@@ -644,20 +647,18 @@ export function MessagesSplitView({
                       month: "short",
                       day: "numeric",
                     });
+                const isDeletable = (c.message_count ?? 0) === 0;
+
                 return (
                   <button
                     key={c.id}
                     type="button"
                     onClick={() => void handleSelectConversation(c.id)}
                     className={cn(
-                      "flex w-full items-start gap-2 rounded-xl border-l-4 px-2.5 py-2 text-left text-xs transition-colors",
-                      activeTone === "elevated" && isActive
-                        ? "border-l-[#D4A843] bg-[#F2F5EF]"
-                        : isActive
-                          ? "border-l-[#7C8B6E] bg-[#F2F5EF]"
-                          : c.tone === "elevated"
-                            ? "border-l-[#D4A843] bg-white hover:bg-[#FDFBF7]"
-                            : "border-l-transparent bg-white hover:bg-[#FDFBF7]"
+                      "group flex w-full items-start gap-2 rounded-xl border-l-4 px-2.5 py-2 text-left text-xs transition-colors",
+                      isActive
+                        ? "border-l-[#7C8B6E] bg-[#F2F5EF]"
+                        : "border-l-transparent bg-white hover:bg-[#FDFBF7]"
                     )}
                   >
                     <div className="mt-0.5 flex h-8 w-8 items-center justify-center rounded-full bg-[#E8EDE3] text-[13px] font-semibold text-[#5B7A52]">
@@ -668,9 +669,59 @@ export function MessagesSplitView({
                         <p className="truncate text-[13px] font-semibold text-[#3D3D3D]">
                           {c.subject}
                         </p>
-                        <span className="shrink-0 text-[10px] text-[#8A8A8A]">
-                          {dateLabel}
-                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <span className="shrink-0 text-[10px] text-[#8A8A8A]">
+                            {dateLabel}
+                          </span>
+                          {c.status === "archived" && (
+                            <span className="inline-flex items-center rounded-full border border-[#E2C877] bg-[#FDF6E3] px-2 py-0.5 text-[9px] font-medium text-[#B8960F]">
+                              Archived
+                            </span>
+                          )}
+                          {isDeletable && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (
+                                  window.confirm(
+                                    "Delete this conversation? This cannot be undone."
+                                  )
+                                ) {
+                                  void (async () => {
+                                    try {
+                                      const res = await fetch(
+                                        `/api/messages/conversations/${c.id}`,
+                                        {
+                                          method: "DELETE",
+                                        }
+                                      );
+                                      if (!res.ok) {
+                                        // eslint-disable-next-line no-console
+                                        console.error(
+                                          "Failed to delete conversation"
+                                        );
+                                        return;
+                                      }
+                                      if (selectedId === c.id) {
+                                        setSelectedId(null);
+                                        setMessages([]);
+                                      }
+                                      await loadConversations();
+                                    } catch (err) {
+                                      // eslint-disable-next-line no-console
+                                      console.error(err);
+                                    }
+                                  })();
+                                }
+                              }}
+                              className="opacity-0 group-hover:opacity-100 transition-opacity text-[#B0A899] hover:text-[#8A8A8A]"
+                              aria-label="Delete empty conversation"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                        </div>
                       </div>
                       <p className="line-clamp-1 text-[11px] text-[#8A8A8A]">
                         {c.last_message_preview || "No messages yet."}
@@ -1157,7 +1208,7 @@ export function MessagesSplitView({
                           );
                           if (!res.ok) {
                             const d = await res.json().catch(() => ({}));
-                            window.alert(
+                            showErrorToast(
                               (d as { error?: string }).error ??
                                 "Could not update conversation."
                             );
@@ -1364,27 +1415,32 @@ export function MessagesSplitView({
                     title="Talk to Sage"
                     aria-label="Talk to Sage"
                     className="flex-shrink-0"
+                    style={{
+                      width: "44px",
+                      height: "44px",
+                      borderRadius: "50%",
+                      backgroundColor: "#E8EDE3",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      border: "none",
+                      cursor: "pointer",
+                      flexShrink: 0,
+                      padding: 0,
+                    }}
                   >
-                    <div
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src="/dove-translucent.png"
+                      alt="Sage"
                       style={{
-                        width: "44px",
-                        height: "44px",
-                        borderRadius: "50%",
-                        backgroundColor: "#E8EDE3",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
+                        width: "30px",
+                        height: "30px",
+                        objectFit: "contain",
+                        display: "block",
+                        mixBlendMode: "multiply",
                       }}
-                    >
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src="/dove-translucent.png"
-                        alt="Sage"
-                        width={28}
-                        height={28}
-                        style={{ width: "28px", height: "28px", objectFit: "contain" }}
-                      />
-                    </div>
+                    />
                   </button>
                   <Textarea
                     value={composeText}
@@ -1873,7 +1929,9 @@ export function MessagesSplitView({
                       setCoolOffActive({ id: d.id, ends_at: d.ends_at });
                       setShowCoolOffModal(false);
                     } else {
-                      window.alert((d as { error?: string }).error ?? "Could not start break.");
+                      showErrorToast(
+                        (d as { error?: string }).error ?? "Could not start break."
+                      );
                     }
                   } finally {
                     setStartingCoolOff(false);
@@ -1918,9 +1976,13 @@ export function MessagesSplitView({
                     <img
                       src="/dove-translucent.png"
                       alt="Sage"
-                      width={32}
-                      height={32}
-                      style={{ width: "32px", height: "32px", objectFit: "contain" }}
+                      style={{
+                        width: "34px",
+                        height: "34px",
+                        objectFit: "contain",
+                        display: "block",
+                        mixBlendMode: "multiply",
+                      }}
                     />
                   </div>
                   <div>
@@ -1986,9 +2048,13 @@ export function MessagesSplitView({
                           <img
                             src="/dove-translucent.png"
                             alt="Sage"
-                            width={18}
-                            height={18}
-                            style={{ width: "18px", height: "18px", objectFit: "contain" }}
+                            style={{
+                              width: "18px",
+                              height: "18px",
+                              objectFit: "contain",
+                              display: "block",
+                              mixBlendMode: "multiply",
+                            }}
                           />
                         </div>
                       ) : currentUserAvatarUrl ? (

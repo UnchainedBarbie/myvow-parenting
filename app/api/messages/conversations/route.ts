@@ -133,10 +133,10 @@ export async function GET() {
       }
 
       const rawStatus = (c.status as string | null)?.toLowerCase().trim() ?? "open";
-      const allowedStatuses = new Set(["open", "resolved", "archived"]);
-      const status: "open" | "resolved" | "archived" = allowedStatuses.has(rawStatus)
-        ? (rawStatus as "open" | "resolved" | "archived")
-        : "open";
+      // Treat legacy "resolved" as "archived" for UI purposes.
+      const normalizedStatus =
+        rawStatus === "archived" || rawStatus === "resolved" ? "archived" : "open";
+      const status: "open" | "archived" = normalizedStatus === "archived" ? "archived" : "open";
 
       return {
         id: c.id,
@@ -149,6 +149,7 @@ export async function GET() {
         last_message_created_at: last?.created_at ?? null,
         unread_count: unreadCount,
         category,
+        message_count: list.length,
         status,
         tone,
       };

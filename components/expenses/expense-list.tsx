@@ -10,6 +10,7 @@ import { ColumnFilterPopover } from "@/components/documents/column-filter-popove
 import { DateFilterPopover, type DateFilterValue } from "@/components/documents/date-filter-popover";
 import { getCategoryColor } from "@/lib/categoryColors";
 import { Download, Trash2, Check, XCircle, Receipt, Filter } from "lucide-react";
+import { showErrorToast, showSuccessToast } from "@/components/ui/toaster";
 
 const CATEGORY_LABELS: Record<string, string> = {
   medical: "Medical",
@@ -280,11 +281,14 @@ export function ExpenseList({
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        window.alert((data as { error?: string }).error ?? "Failed to delete expenses");
+        showErrorToast(
+          (data as { error?: string }).error ?? "Failed to delete expenses"
+        );
         return;
       }
       setSelectedIds(new Set());
       router.refresh();
+      showSuccessToast("Expenses deleted");
     } finally {
       setDeleting(false);
     }
@@ -310,7 +314,9 @@ export function ExpenseList({
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        window.alert((data as { message?: string }).message ?? "Request failed");
+        showErrorToast(
+          (data as { message?: string }).message ?? "Request failed"
+        );
         return;
       }
       router.refresh();
@@ -765,7 +771,10 @@ export function ExpenseList({
                                   });
                                   if (!res.ok) {
                                     const data = await res.json().catch(() => ({}));
-                                    window.alert((data as { error?: string }).error ?? "Failed to delete expense");
+                                    showErrorToast(
+                                      (data as { error?: string }).error ??
+                                        "Failed to delete expense"
+                                    );
                                     return;
                                   }
                                   router.refresh();

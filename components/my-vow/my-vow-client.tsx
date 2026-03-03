@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { showErrorToast, showSuccessToast } from "@/components/ui/toaster";
 import { Info, Lock, Pin, Trash2 } from "lucide-react";
 
 export type Vow = {
@@ -73,7 +74,9 @@ export function MyVowClient({ initialVows }: Props) {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        window.alert((data as { message?: string }).message ?? "Failed to save vow.");
+        showErrorToast(
+          (data as { message?: string }).message ?? "Failed to save vow."
+        );
         return;
       }
       const saved = (data as { vow?: Vow }).vow;
@@ -88,6 +91,7 @@ export function MyVowClient({ initialVows }: Props) {
           });
           return next;
         });
+        showSuccessToast("Vow saved");
       }
     } finally {
       setSaving(false);

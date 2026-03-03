@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { ChevronRight, ChevronDown, FileText, Image, Trash2, Pencil, X, Download, UserPlus, Copy } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import { showErrorToast } from "@/components/ui/toaster";
 
 const COURT_ORDER_TYPES = [
   { value: "parenting_plan", label: "Parenting Plan" },
@@ -287,7 +288,9 @@ export function ProfileContent({
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        window.alert((err as { error?: string }).error ?? "Failed to save app mode");
+        showErrorToast(
+          (err as { error?: string }).error ?? "Failed to save app mode"
+        );
         setAppMode(prev);
         return;
       }
@@ -441,7 +444,9 @@ export function ProfileContent({
       const res = await fetch(`/api/children/${childId}/delete`, { method: "POST" });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        window.alert((data as { error?: string }).error ?? "Failed to remove child");
+        showErrorToast(
+          (data as { error?: string }).error ?? "Failed to remove child"
+        );
         return;
       }
       closeDeleteChildConfirm();
@@ -465,7 +470,9 @@ export function ProfileContent({
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        window.alert((data as { error?: string }).error ?? "Failed to upload photo.");
+        showErrorToast(
+          (data as { error?: string }).error ?? "Failed to upload photo."
+        );
         return;
       }
       router.refresh();
@@ -481,12 +488,12 @@ export function ProfileContent({
     if (!file) return;
     const allowedTypes = ["image/jpeg", "image/png"];
     if (!allowedTypes.includes(file.type)) {
-      window.alert("Unsupported file type. Use JPG or PNG.");
+      showErrorToast("Unsupported file type. Use JPG or PNG.");
       return;
     }
     const maxSizeBytes = 2 * 1024 * 1024;
     if (file.size > maxSizeBytes) {
-      window.alert("File too large. Max 2MB.");
+      showErrorToast("File too large. Max 2MB.");
       return;
     }
     setUserAvatarUploading(true);
@@ -499,7 +506,9 @@ export function ProfileContent({
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        window.alert((data as { error?: string }).error ?? "Failed to upload photo.");
+        showErrorToast(
+          (data as { error?: string }).error ?? "Failed to upload photo."
+        );
         return;
       }
       router.refresh();
@@ -604,7 +613,9 @@ export function ProfileContent({
       const res = await fetch(`/api/profile/court-orders/${id}`, { method: "DELETE" });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        window.alert((data as { error?: string }).error ?? "Failed to delete court order");
+        showErrorToast(
+          (data as { error?: string }).error ?? "Failed to delete court order"
+        );
         return;
       }
       setDeleteCourtOrderConfirm(null);
@@ -1339,11 +1350,14 @@ export function ProfileContent({
                                     const fd = new FormData();
                                     fd.append("file", detailAttachFile);
                                     const res = await fetch(`/api/profile/court-orders/${o.id}/attach-file`, { method: "POST", body: fd });
-                                    const data = await res.json().catch(() => ({}));
-                                    if (!res.ok) {
-                                      window.alert((data as { error?: string }).error ?? "Failed to attach file");
-                                      return;
-                                    }
+                                  const data = await res.json().catch(() => ({}));
+                                  if (!res.ok) {
+                                    showErrorToast(
+                                      (data as { error?: string }).error ??
+                                        "Failed to attach file"
+                                    );
+                                    return;
+                                  }
                                     setSelectedCourtOrder({ ...o, file_path: (data as { file_path?: string }).file_path ?? null });
                                     setDetailAttachFile(null);
                                     router.refresh();
@@ -1835,7 +1849,10 @@ export function ProfileContent({
                       }
                       if (!res.ok) {
                         const err = await res.json().catch(() => ({}));
-                        window.alert((err as { error?: string }).error ?? "Failed to save court order");
+                        showErrorToast(
+                          (err as { error?: string }).error ??
+                            "Failed to save court order"
+                        );
                         return;
                       }
                       setShowAddCourtOrder(false);

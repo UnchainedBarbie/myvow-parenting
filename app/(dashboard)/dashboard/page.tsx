@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { DashboardStatusCards } from "@/components/dashboard/dashboard-status-cards";
+import { KidsThisWeekCard, type KidsThisWeekChild } from "@/components/dashboard/kids-this-week-card";
 
 type TodayEvent = {
   id: string;
@@ -524,6 +525,47 @@ export default async function DashboardPage() {
   const todayLabel = formatDateLabel(now, timezone);
   const greeting = getGreetingLabel(profile?.full_name ?? null, timezone);
 
+  // Build per-child week view data for KidsThisWeekCard
+  const kidsThisWeekChildren: KidsThisWeekChild[] = childrenSummaries.map((child) => {
+    const weekByDayForChild = weekDays.map((day) => {
+      const dayStart = new Date(
+        day.getFullYear(),
+        day.getMonth(),
+        day.getDate(),
+        0,
+        0,
+        0,
+        0
+      );
+      const dayEnd = new Date(
+        day.getFullYear(),
+        day.getMonth(),
+        day.getDate(),
+        23,
+        59,
+        59,
+        999
+      );
+      const eventsForDay = weekEvents.filter((e) => {
+        const d = new Date(e.start_time);
+        const isSameChild =
+          e.child_name === child.first_name ||
+          (!e.child_name && false);
+        return isSameChild && d >= dayStart && d <= dayEnd;
+      });
+      return { date: day, events: eventsForDay };
+    });
+
+    return {
+      id: child.id,
+      first_name: child.first_name,
+      ageLabel: child.ageLabel,
+      profile_image: child.profile_image ?? null,
+      weekByDay: weekByDayForChild,
+      nextEvent: child.nextEvent,
+    };
+  });
+
   return (
     <div className="px-3 pt-3 pb-1 md:px-4 md:pt-4 md:pb-2">
       {/* Greeting header */}
@@ -552,7 +594,7 @@ export default async function DashboardPage() {
           netLabel={netLabel}
         />
 
-        {/* Row 1: Today's events + This week */}
+        {/* Row 1: Today's events + Kids this week */}
         <div className="grid gap-4 lg:grid-cols-2 items-start">
           <Card className="rounded-card border border-[#E8E4DC] bg-[#FDFBF7]">
             <CardHeader className="pb-2 px-4 pt-4">
@@ -604,64 +646,10 @@ export default async function DashboardPage() {
             </CardContent>
           </Card>
 
-          <Card className="rounded-card border border-[#E8E4DC] bg-[#FDFBF7]">
-            <CardHeader className="pb-2 px-4 pt-4">
-              <CardTitle className="font-heading text-lg text-foreground">
-                This week
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="px-4 pb-4 space-y-3">
-              {weekByDay.length === 0 ? (
-                <p className="text-sm text-foreground-secondary">
-                  No events scheduled this week.
-                </p>
-              ) : (
-                <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2 text-xs">
-                  {weekByDay.map((d) => (
-                    <div
-                      key={d.date.toISOString()}
-                      className={cn(
-                        "rounded-card border border-[#E8E4DC] bg-background-secondary/60 px-2 py-1.5 space-y-1 min-w-0",
-                        d.date.toDateString() === now.toDateString() &&
-                          "border-[#E8E4DC] bg-[#F5F0E8]"
-                      )}
-                    >
-                      <p className="font-medium text-foreground truncate">
-                        {formatShortDay(d.date, timezone)}
-                      </p>
-                      {d.events.length === 0 ? (
-                        <p className="text-[11px] text-foreground-secondary">
-                          No events
-                        </p>
-                      ) : (
-                        <>
-                          <p className="text-[11px] text-foreground-secondary">
-                            {d.events.length === 1
-                              ? "1 event"
-                              : `${d.events.length} events`}
-                          </p>
-                          <p className="text-[11px] text-foreground truncate">
-                            {d.events[0].title}
-                          </p>
-                        </>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-              <Button
-                asChild
-                size="sm"
-                variant="outline"
-                className="rounded-full h-8 text-xs mt-1"
-              >
-                <Link href="/calendar">View full calendar</Link>
-              </Button>
-            </CardContent>
-          </Card>
+          <KidsThisWeekCard childrenSummaries={kidsThisWeekChildren} timezone={timezone} />
         </div>
 
-        {/* Row 2: Review + Kids snapshot */}
+        {/* Row 2: Review */}
         <div className="grid gap-4 lg:grid-cols-2 items-start">
           <Card className="shadow-card border-border rounded-card">
             <CardHeader className="pb-2 px-4 pt-4 flex items-center justify-between gap-2">
@@ -689,77 +677,7 @@ export default async function DashboardPage() {
             </CardContent>
           </Card>
 
-          <Card className="shadow-card border-border rounded-card">
-            <CardHeader className="pb-2 px-4 pt-4">
-              <CardTitle className="font-heading text-lg text-foreground">
-                Kids Snapshot
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="px-4 pb-4 space-y-3">
-              {childrenSummaries.length === 0 ? (
-                <p className="text-sm text-foreground-secondary">
-                  Add children from the Profile page to see their schedules here.
-                </p>
-              ) : (
-                <ul className="space-y-2">
-                  {childrenSummaries.map((c) => (
-                    <li
-                      key={c.id}
-                      className="flex items-start justify-between gap-2 rounded-card border border-border bg-background-secondary/60 px-3 py-2"
-                    >
-                      <div className="flex items-center gap-2">
-                        {c.profile_image ? (
-                          <img
-                            src={c.profile_image}
-                            alt={c.first_name}
-                            className="h-7 w-7 rounded-full object-cover border border-border/60 bg-emerald-50"
-                          />
-                        ) : (
-                          <div className="h-7 w-7 rounded-full bg-emerald-50 text-emerald-800 flex items-center justify-center text-xs font-medium">
-                            {c.first_name?.charAt(0).toUpperCase() ?? ""}
-                          </div>
-                        )}
-                        <div>
-                          <p className="text-sm font-medium text-foreground">
-                            {c.first_name}
-                          </p>
-                          <p className="text-xs text-foreground-secondary">
-                            {c.ageLabel}
-                          </p>
-                        </div>
-                      </div>
-                      <div className="text-right max-w-[60%]">
-                        <p className="text-[11px] text-foreground-secondary mb-0.5">
-                          Next event
-                        </p>
-                        {c.nextEvent ? (
-                          <>
-                            <p className="text-xs text-foreground truncate">
-                              {c.nextEvent.title}
-                            </p>
-                            <p className="text-[11px] text-foreground-secondary">
-                              {formatShortDay(
-                                new Date(c.nextEvent.start_time),
-                                timezone
-                              )}
-                            </p>
-                          </>
-                        ) : (
-                          <p className="text-xs text-foreground-secondary">
-                            None scheduled
-                          </p>
-                        )}
-                        <p className="mt-1 text-[11px] text-foreground-secondary">
-                          Last update:{" "}
-                          {c.lastUpdateLabel ?? "No recent updates"}
-                        </p>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </CardContent>
-          </Card>
+          <div className="hidden lg:block" />
         </div>
 
         {/* Row 3: Quick actions */}

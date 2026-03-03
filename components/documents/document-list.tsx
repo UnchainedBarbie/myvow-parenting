@@ -13,6 +13,7 @@ import { DateFilterPopover, type DateFilterValue } from "@/components/documents/
 import { ColumnFilterPopover } from "@/components/documents/column-filter-popover";
 import { TitleFilterPopover } from "@/components/documents/title-filter-popover";
 import { Filter, Pencil, Download, Trash2 } from "lucide-react";
+import { showErrorToast, showSuccessToast } from "@/components/ui/toaster";
 
 const CHILD_NONE_VALUE = "__none__";
 /** Value for "All children" filter (documents where child_id is null). */
@@ -349,13 +350,15 @@ export function DocumentList({ documents, children = [] }: DocumentListProps) {
         }
         console.error("[bulk-download] Server error:", res.status, message);
         console.error("[bulk-download] Full server response:", text);
-        alert(message);
+        showErrorToast(message);
         return;
       }
       const blob = await res.blob();
       if (!blob || blob.size === 0) {
         console.error("[bulk-download] Empty ZIP received");
-        alert("Download failed: no files could be included in the ZIP.");
+        showErrorToast(
+          "Download failed: no files could be included in the ZIP."
+        );
         return;
       }
       const url = URL.createObjectURL(blob);
@@ -366,7 +369,7 @@ export function DocumentList({ documents, children = [] }: DocumentListProps) {
       URL.revokeObjectURL(url);
     } catch (e) {
       console.error("[bulk-download] Download error:", e);
-      alert("Download failed. Check the console for details.");
+      showErrorToast("Download failed. Check the console for details.");
     } finally {
       clearTimeout(timeoutId);
       setDownloadingZip(false);
@@ -390,15 +393,16 @@ export function DocumentList({ documents, children = [] }: DocumentListProps) {
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         console.error("[bulk-delete] Server error:", res.status, data);
-        alert(data?.error ?? "Failed to delete documents.");
+        showErrorToast(data?.error ?? "Failed to delete documents.");
         return;
       }
       setSelectedIds(new Set());
       setDeleteConfirm(null);
       router.refresh();
+      showSuccessToast("Documents deleted");
     } catch (e) {
       console.error("[bulk-delete] Error:", e);
-      alert("Failed to delete documents.");
+      showErrorToast("Failed to delete documents.");
     }
   }
 

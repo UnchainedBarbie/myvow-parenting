@@ -76,3 +76,105 @@ export async function GET(
   }
 }
 
+export async function DELETE(
+  _request: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  try {
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const admin = getServiceRoleClient();
+    const conversationId = params.id;
+
+    const { data: conv, error: convError } = await admin
+      .from("conversations")
+      .select("id, case_id")
+      .eq("id", conversationId)
+      .maybeSingle();
+
+    if (convError) {
+      return NextResponse.json(
+        { error: convError.message },
+        { status: 500 }
+      );
+    }
+    if (!conv) {
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
+
+    const { data: membership } = await admin
+      .from("case_members")
+      .select("id")
+      .eq("case_id", conv.case_id)
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    if (!membership) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+
+    const { count: messageCount, error: countError } = await admin
+      .from("messages")
+      .select("id", { count: "exact", head: true })
+      .eq("conversation_id", conversationId);
+
+    if (countError) {
+      return NextResponse.json(
+        { error: countError.message },
+        { status: 500 }
+      );
+    }
+
+    if ((messageCount ?? 0) > 0) {
+      return NextResponse.json(
+        { error: "Cannot delete a conversation that has messages" },
+        { status: 400 }
+      );
+    }
+
+    // Best-effort cleanup of related tables
+    try {
+      await admin
+        .from("conversation_settings")
+        .delete()
+        .eq("conversation_id", conversationId);
+    } catch {
+      // ignore if table doesn't exist or other non-critical errors
+    }
+
+    try {
+      await admin
+        .from("conversation_attachments")
+        .delete()
+        .eq("conversation_id", conversationId);
+    } catch {
+      // ignore if table doesn't exist or other non-critical errors
+    }
+
+    const { error: deleteError } = await admin
+      .from("conversations")
+      .delete()
+      .eq("id", conversationId);
+
+    if (deleteError) {
+      return NextResponse.json(
+        { error: deleteError.message },
+        { status: 500 }
+      );
+    }
+
+    return NextResponse.json({ success: true });
+  } catch (e) {
+    return NextResponse.json(
+      { error: e instanceof Error ? e.message : "Failed to delete conversation" },
+      { status: 500 }
+    );
+  }
+}
+

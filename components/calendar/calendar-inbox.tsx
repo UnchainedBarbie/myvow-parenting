@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
+import { showErrorToast, showSuccessToast } from "@/components/ui/toaster";
 
 type InboxMessage = {
   id: string;
@@ -76,7 +77,7 @@ export function CalendarInbox({ open, onClose }: { open: boolean; onClose: () =>
       setSelectedId(null);
       router.refresh();
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Failed");
+      showErrorToast(e instanceof Error ? e.message : "Failed");
     } finally {
       setCreatingId(null);
     }
@@ -91,7 +92,7 @@ export function CalendarInbox({ open, onClose }: { open: boolean; onClose: () =>
       setMessages((prev) => prev.map((m) => (m.id === messageId ? { ...m, parse_status: "failed" } : m)));
       setSelectedId(null);
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Failed");
+      showErrorToast(e instanceof Error ? e.message : "Failed");
     } finally {
       setDiscardingId(null);
     }

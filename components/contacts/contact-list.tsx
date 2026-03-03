@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { ColumnFilterPopover } from "@/components/documents/column-filter-popover";
 import { ChildMultiSelect, type ChildOption } from "@/components/documents/child-multi-select";
 import { cn } from "@/lib/utils";
+import { showErrorToast, showSuccessToast } from "@/components/ui/toaster";
 import { Filter, Pencil, Trash2, Lock } from "lucide-react";
 
 export type ContactRow = {
@@ -297,10 +298,11 @@ export function ContactList({ contacts, children }: ContactListProps) {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         const message = (data as { error?: string }).error ?? "Failed to delete contact.";
-        window.alert(message);
+        showErrorToast(message);
         return;
       }
       router.refresh();
+      showSuccessToast("Contact deleted");
     } finally {
       setDeletingId(null);
     }
@@ -326,7 +328,7 @@ export function ContactList({ contacts, children }: ContactListProps) {
         child_ids: modalChildIds,
       };
       if (!payload.name) {
-        window.alert("Name is required.");
+        showErrorToast("Name is required.");
         setEditSaving(false);
         return;
       }
@@ -338,7 +340,7 @@ export function ContactList({ contacts, children }: ContactListProps) {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         const message = (data as { message?: string }).message ?? "Could not save contact.";
-        window.alert(message);
+        showErrorToast(message);
         setEditSaving(false);
         return;
       }

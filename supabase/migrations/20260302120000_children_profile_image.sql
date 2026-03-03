@@ -1,0 +1,3 @@
+ALTER TABLE children
+ADD COLUMN IF NOT EXISTS profile_image TEXT;
+

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -39,6 +39,13 @@ export function MyVowClient({ initialVows }: Props) {
   const [saving, setSaving] = useState(false);
   const [pinningId, setPinningId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  function autoResizeTextarea(el: HTMLTextAreaElement | null) {
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }
 
   useEffect(() => {
     setVows(
@@ -49,6 +56,10 @@ export function MyVowClient({ initialVows }: Props) {
       })
     );
   }, [initialVows]);
+
+  useEffect(() => {
+    autoResizeTextarea(textareaRef.current);
+  }, []);
 
   async function handleSaveVow() {
     const content = draft.trim();
@@ -132,8 +143,8 @@ export function MyVowClient({ initialVows }: Props) {
 
   return (
     <div className="min-h-[calc(100vh-4.5rem)] bg-[#FDFBF7]">
-      <div className="px-3 pt-3 pb-6 md:px-4 md:pt-6 md:pb-10">
-        <header className="mb-6 text-center">
+      <div className="px-3 pt-3 pb-6 md:px-4 md:pt-5 md:pb-8">
+        <header className="mb-4 text-center">
           <h1 className="font-heading text-2xl md:text-3xl font-semibold text-[#3D3D3D]">
             My Vow
           </h1>
@@ -147,7 +158,7 @@ export function MyVowClient({ initialVows }: Props) {
             Your commitments as a parent. A quiet anchor for difficult moments.
           </p>
           <div className="flex items-center justify-center gap-1.5 mt-2 text-[11px] text-foreground-secondary">
-            <span className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-border bg-muted">
+              <span className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-border bg-muted">
               <Info className="h-2.5 w-2.5" aria-hidden />
             </span>
             <span>
@@ -158,7 +169,7 @@ export function MyVowClient({ initialVows }: Props) {
 
         <div className="grid gap-4 lg:grid-cols-[minmax(260px,40%)_minmax(0,1fr)] items-start">
           {/* LEFT COLUMN — Write your vow */}
-          <div className="rounded-card border border-[#E8E4DC] bg-white shadow-card p-4 space-y-4">
+          <div className="rounded-2xl border border-[#E8E4DC]/70 bg-white/90 p-3 md:p-4 space-y-3">
             <div>
               <h2 className="font-heading text-lg font-semibold text-[#3D3D3D]">
                 Your Vow
@@ -168,15 +179,19 @@ export function MyVowClient({ initialVows }: Props) {
               </p>
             </div>
             <Textarea
+              ref={textareaRef}
               value={draft}
-              onChange={(e) => setDraft(e.target.value)}
+              onChange={(e) => {
+                setDraft(e.target.value);
+                autoResizeTextarea(textareaRef.current);
+              }}
               placeholder={PLACEHOLDER}
-              className="min-h-[160px] resize-y rounded-xl border-[#E8E4DC] bg-[#FDFBF7] text-sm text-foreground placeholder:text-muted-foreground"
+              className="min-h-[96px] max-h-[260px] resize-none rounded-xl border-[#E8E4DC]/80 bg-[#FDFBF7] px-3 py-2 text-sm leading-snug text-foreground placeholder:text-muted-foreground"
             />
             <Button
               type="button"
               size="sm"
-              className="w-full rounded-full h-9 bg-[#5B7A52] hover:bg-[#476242] text-white text-sm"
+              className="w-full rounded-full h-8 bg-[#5B7A52] hover:bg-[#476242] text-white text-xs md:text-sm"
               disabled={saving || !draft.trim()}
               onClick={() => void handleSaveVow()}
             >
@@ -184,20 +199,20 @@ export function MyVowClient({ initialVows }: Props) {
             </Button>
             <p className="flex items-center gap-1.5 text-[11px] text-foreground-secondary">
               <Lock className="h-3 w-3 shrink-0" aria-hidden />
-              <span>Changes are private · Not shared or exported</span>
+              <span>Private to you. Not shared or included in reports.</span>
             </p>
 
-            <section className="pt-4 border-t border-[#E8E4DC] space-y-3">
+            <section className="pt-3 border-t border-[#E8E4DC]/70 space-y-2.5">
               <h3 className="font-heading text-sm font-semibold text-foreground">
                 Starter vows
               </h3>
-              <div className="space-y-1.5">
+              <div className="flex flex-wrap gap-1.5">
                 {STARTER_VOWS.map((text) => (
                   <button
                     key={text}
                     type="button"
                     onClick={() => setDraft(text)}
-                    className="block w-full text-left text-xs rounded-lg border border-[#E8E4DC] bg-[#FDFBF7] px-3 py-2 text-foreground-secondary hover:border-[#7C8B6E] hover:bg-[#F2F5EF] transition-colors"
+                    className="inline-flex items-center text-left text-[11px] rounded-full border border-[#E8E4DC] bg-[#FDFBF7] px-3 py-1.5 text-foreground-secondary hover:border-[#7C8B6E] hover:bg-[#F2F5EF] transition-colors"
                   >
                     {text}
                   </button>
@@ -205,7 +220,7 @@ export function MyVowClient({ initialVows }: Props) {
                 <button
                   type="button"
                   onClick={() => setDraft("")}
-                  className="block w-full text-left text-xs rounded-lg border border-dashed border-[#E8E4DC] bg-[#FDFBF7] px-3 py-2 text-foreground-secondary hover:border-[#7C8B6E] hover:bg-[#F2F5EF] transition-colors"
+                  className="text-[11px] text-[#5B7A52] underline-offset-2 hover:underline px-1 py-0.5"
                 >
                   Write my own
                 </button>
@@ -214,7 +229,7 @@ export function MyVowClient({ initialVows }: Props) {
           </div>
 
           {/* RIGHT COLUMN — Your vows list */}
-          <div className="rounded-card border border-[#E8E4DC] bg-white shadow-card p-4 space-y-4">
+          <div className="rounded-2xl border border-[#E8E4DC]/60 bg-white/80 p-3 md:p-4 space-y-3">
             <div>
               <h2 className="font-heading text-lg font-semibold text-[#3D3D3D]">
                 Your Vows
@@ -225,11 +240,11 @@ export function MyVowClient({ initialVows }: Props) {
             </div>
 
             {vows.length === 0 ? (
-              <p className="text-sm text-foreground-secondary py-6 text-center">
+              <p className="text-sm text-foreground-secondary py-4 text-center">
                 No vows yet. Write your first vow to anchor your intentions.
               </p>
             ) : (
-              <ul className="space-y-3">
+              <ul className="space-y-2.5">
                 {vows.map((v) => {
                   const dateLabel = new Date(v.created_at).toLocaleDateString(undefined, {
                     month: "short",
@@ -241,30 +256,33 @@ export function MyVowClient({ initialVows }: Props) {
                     <li
                       key={v.id}
                       className={cn(
-                        "rounded-xl border px-3 py-3 transition-colors",
+                        "rounded-xl border px-3 py-2.5 transition-colors",
                         isPinned
-                          ? "border-l-4 border-l-[#7C8B6E] bg-[#F2F5EF] border-[#E8E4DC]"
+                          ? "border-[#D2DECF] bg-[#F2F5EF]"
                           : "border-[#E8E4DC] bg-[#FDFBF7]"
                       )}
                     >
-                      {isPinned && (
-                        <p className="text-[10px] font-medium text-[#5B7A52] mb-1.5">
-                          Sage remembers this vow
-                        </p>
-                      )}
-                      <p className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">
-                        {v.content}
-                      </p>
-                      <p className="text-[11px] text-foreground-secondary mt-2">
-                        {dateLabel}
-                      </p>
-                      <div className="flex items-center justify-end gap-1 mt-2">
+                      <div className="flex items-start gap-2">
+                        <div className="flex-1">
+                          {isPinned && (
+                            <p className="text-[10px] font-medium text-[#5B7A52] mb-1">
+                              🕊 Active
+                            </p>
+                          )}
+                          <p className="text-sm text-foreground whitespace-pre-wrap leading-snug">
+                            {v.content}
+                          </p>
+                          <p className="text-[10px] text-foreground-secondary mt-1.5">
+                            {dateLabel}
+                          </p>
+                        </div>
+                        <div className="flex flex-col items-end gap-1 ml-1">
                         <button
                           type="button"
                           onClick={() => void handlePin(v.id)}
                           disabled={pinningId !== null}
                           className={cn(
-                            "inline-flex h-8 w-8 items-center justify-center rounded-full transition-colors",
+                            "inline-flex h-7 w-7 items-center justify-center rounded-full transition-colors",
                             isPinned
                               ? "text-[#5B7A52] hover:bg-[#E8EDE3]"
                               : "text-foreground-secondary hover:bg-muted"
@@ -272,17 +290,18 @@ export function MyVowClient({ initialVows }: Props) {
                           aria-label={isPinned ? "Unpin vow" : "Pin vow"}
                           title={isPinned ? "Unpin" : "Pin for Sage"}
                         >
-                          <Pin className="h-4 w-4" />
+                          <Pin className="h-3.5 w-3.5" />
                         </button>
                         <button
                           type="button"
                           onClick={() => void handleDelete(v.id)}
                           disabled={deletingId !== null}
-                          className="inline-flex h-8 w-8 items-center justify-center rounded-full text-foreground-secondary hover:bg-muted transition-colors"
+                          className="inline-flex h-7 w-7 items-center justify-center rounded-full text-foreground-secondary hover:bg-muted transition-colors"
                           aria-label="Delete vow"
                         >
-                          <Trash2 className="h-3.5 w-3.5" />
+                          <Trash2 className="h-3 w-3" />
                         </button>
+                        </div>
                       </div>
                     </li>
                   );

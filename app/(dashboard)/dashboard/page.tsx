@@ -387,8 +387,8 @@ export default async function DashboardPage() {
   const householdElevated = elevatedThisWeek > 0;
 
   const householdClimateLabel = householdElevated
-    ? "Elevated this week"
-    : "Calm this week";
+    ? "More active this week"
+    : "Steady this week";
   const disputesLabel =
     openExpenseItems === 0
       ? "No open disputes"
@@ -423,16 +423,13 @@ export default async function DashboardPage() {
     Object.entries(lastMessageByConversation).find(
       ([_, m]) => m.direction === "incoming" && m.read_at == null
     )?.[0] ?? null;
-  const communicationMainLabel =
+  const communicationMainLabel = "All conversations up to date";
+  const communicationToneLabel =
     awaitingResponseCount === 0
-      ? "All conversations up to date"
+      ? "No replies waiting"
       : `${awaitingResponseCount} conversation${
           awaitingResponseCount > 1 ? "s" : ""
-        } awaiting response`;
-  const communicationToneLabel =
-    elevatedThisWeek > elevatedPrevWeek
-      ? "More tense than last week"
-      : "Tone stable";
+        } may need a response`;
 
   // Recent child-related updates from conversations and calendar
   const { data: convRaw } = await admin
@@ -547,6 +544,7 @@ export default async function DashboardPage() {
           householdClimateLabel={householdClimateLabel}
           disputesLabel={disputesLabel}
           openExpenseItems={openExpenseItems}
+          awaitingResponseCount={awaitingResponseCount}
           communicationMainLabel={communicationMainLabel}
           communicationToneLabel={communicationToneLabel}
           firstUnreadConversationId={firstUnreadConversationId}
@@ -662,46 +660,31 @@ export default async function DashboardPage() {
           </Card>
         </div>
 
-        {/* Row 2: Review uploads + Kids snapshot */}
+        {/* Row 2: Review + Kids snapshot */}
         <div className="grid gap-4 lg:grid-cols-2 items-start">
           <Card className="shadow-card border-border rounded-card">
             <CardHeader className="pb-2 px-4 pt-4 flex items-center justify-between gap-2">
               <CardTitle className="font-heading text-lg text-foreground">
-                Review uploads
+                Review
               </CardTitle>
-              {uploadsCount > 0 && (
-                <span className="rounded-full bg-amber-50 text-amber-800 px-2 py-0.5 text-[11px] font-medium">
-                  {uploadsCount} pending
-                </span>
-              )}
             </CardHeader>
             <CardContent className="px-4 pb-4 space-y-3">
               {uploadsCount === 0 ? (
                 <p className="text-sm text-foreground-secondary">All caught up.</p>
               ) : (
-                <ul className="space-y-2 text-sm">
-                  {uploadsRecent.map((item) => (
-                    <li
-                      key={item.id}
-                      className="rounded-card border border-border bg-background-secondary/60 px-3 py-2"
-                    >
-                      <p className="text-xs text-foreground-secondary mb-0.5">
-                        Incoming upload
-                      </p>
-                      <p className="text-sm text-foreground font-medium truncate">
-                        {item.subject ?? "Needs review"}
-                      </p>
-                    </li>
-                  ))}
-                </ul>
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-sm text-foreground-secondary">
+                    {uploadsCount} item{uploadsCount > 1 ? "s" : ""} to review
+                  </p>
+                  <Button
+                    asChild
+                    size="sm"
+                    className="rounded-full h-8 text-xs bg-[#7B9E87] hover:bg-[#6A8A78] text-white"
+                  >
+                    <Link href="/uploads/review">Review now</Link>
+                  </Button>
+                </div>
               )}
-              <Button
-                asChild
-                size="sm"
-                className="rounded-full h-8 text-xs mt-1 bg-[#7B9E87] hover:bg-[#6A8A78] text-white"
-              >
-                <Link href="/uploads/review">Review now</Link>
-              </Button>
             </CardContent>
           </Card>
 
@@ -778,7 +761,7 @@ export default async function DashboardPage() {
           </Card>
         </div>
 
-        {/* Row 3: Quick actions + Net balance */}
+        {/* Row 3: Quick actions */}
         <div className="grid gap-4 lg:grid-cols-2 items-start">
           <Card className="shadow-card border-border rounded-card">
             <CardHeader className="pb-2 px-4 pt-4">
@@ -810,28 +793,6 @@ export default async function DashboardPage() {
                   <Link href="/calendar">Add calendar event</Link>
                 </Button>
               </div>
-            </CardContent>
-          </Card>
-
-          <Card className="shadow-card border-border rounded-card">
-            <CardHeader className="pb-2 px-4 pt-4">
-              <CardTitle className="font-heading text-lg text-foreground">
-                Net balance
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="px-4 pb-4 space-y-2">
-              <p className="text-sm font-medium text-foreground">{netLabel}</p>
-              <p className="text-xs text-foreground-secondary">
-                Based on all shared expenses.
-              </p>
-              <Button
-                asChild
-                size="sm"
-                variant="outline"
-                className="rounded-full h-8 text-xs mt-1"
-              >
-                <Link href="/expenses">View expenses</Link>
-              </Button>
             </CardContent>
           </Card>
         </div>

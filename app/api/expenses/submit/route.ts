@@ -65,7 +65,7 @@ export async function POST(request: NextRequest) {
         child_id: child_id ?? null,
         split_percent: allocation.other_parent_percent,
         amount_owed: allocation.other_parent_share,
-        allocation_status: allocation.allocation_status,
+        allocation_status: "pending",
         other_parent_percent: allocation.other_parent_percent,
         other_parent_share: allocation.other_parent_share,
         split_label: allocation.split_label,

@@ -137,7 +137,8 @@ export function ExpenseForm({
         category: string | null;
       };
       if (!descriptionTouched && payload.description) {
-        setDescription(payload.description);
+        const truncated = payload.description.slice(0, 80);
+        setDescription(truncated);
         setDescriptionSuggested(true);
       }
       if (

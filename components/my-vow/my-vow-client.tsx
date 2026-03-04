@@ -52,6 +52,10 @@ export function MyVowClient({ initialVows }: Props) {
   const [savingEdit, setSavingEdit] = useState(false);
   const [stats, setStats] = useState<VowStats | null>(null);
   const [statsLoading, setStatsLoading] = useState(true);
+  const [suggestedVows, setSuggestedVows] = useState<
+    { vow: string; reason: string }[] | null
+  >(null);
+  const [suggestedLoading, setSuggestedLoading] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const vowListRef = useRef<HTMLDivElement | null>(null);
   const detailsRef = useRef<HTMLDivElement | null>(null);
@@ -74,6 +78,30 @@ export function MyVowClient({ initialVows }: Props) {
 
   useEffect(() => {
     autoResizeTextarea(textareaRef.current);
+  }, []);
+
+  async function loadSuggestedVows() {
+    setSuggestedLoading(true);
+    try {
+      const res = await fetch("/api/sage/suggested-vows", { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setSuggestedVows(
+          ((data as { suggestions?: { vow: string; reason: string }[] }).suggestions ??
+            null) as { vow: string; reason: string }[] | null
+        );
+      } else {
+        setSuggestedVows(null);
+      }
+    } catch {
+      setSuggestedVows(null);
+    } finally {
+      setSuggestedLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void loadSuggestedVows();
   }, []);
 
   useEffect(() => {
@@ -328,6 +356,107 @@ export function MyVowClient({ initialVows }: Props) {
                 </button>
               </div>
             </section>
+            {/* All vows list */}
+            <div ref={vowListRef}>
+              <div>
+                <h2 className="font-heading text-lg font-semibold text-[#3D3D3D]">
+                  All vows
+                </h2>
+                <p className="text-[11px] text-foreground-secondary mt-1">
+                  Pin up to 3 anchors for Sage to reference during coaching.
+                </p>
+              </div>
+
+              {vows.length === 0 ? (
+                <p className="text-sm text-foreground-secondary py-4 text-center">
+                  No vows yet. Write your first vow to anchor your intentions.
+                </p>
+              ) : (
+                <ul className="mt-2.5 space-y-2.5">
+                  {vows.map((v) => {
+                    const dateLabel = new Date(v.created_at).toLocaleDateString(undefined, {
+                      month: "short",
+                      day: "numeric",
+                      year: "numeric",
+                    });
+                    const isPinned = v.is_pinned;
+                    return (
+                      <li
+                        key={v.id}
+                        className={cn(
+                          "rounded-2xl border px-3 py-3 md:px-4 md:py-3.5 transition-colors bg-[#FDFBF7] border-[#E8E4DC] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.7)]",
+                          isPinned && "border-[#D2DECF] bg-[#F2F5EF]"
+                        )}
+                      >
+                        <div className="flex items-start gap-3">
+                          <div className="mt-0.5 h-7 w-7 shrink-0 rounded-full bg-[#E0E8DC] text-[#4F6B55] flex items-center justify-center text-[11px]">
+                            ✧
+                          </div>
+                          <div className="flex-1">
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="min-w-0">
+                                <p className="text-[10px] text-[#8A8A8A] mb-1">
+                                  Active • {dateLabel}
+                                </p>
+                                <p className="text-sm text-foreground whitespace-pre-wrap leading-snug">
+                                  {v.content}
+                                </p>
+                              </div>
+                              {isPinned && (
+                                <span className="inline-flex items-center rounded-full bg-[#E0E8DC] px-2 py-0.5 text-[10px] font-medium text-[#4F6B55]">
+                                  Pinned
+                                </span>
+                              )}
+                            </div>
+                            <div className="mt-2 flex items-center gap-1.5">
+                              <span className="text-[10px] text-foreground-secondary">
+                                Status: Active
+                              </span>
+                            </div>
+                          </div>
+                          <div className="ml-1 flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => void handlePin(v.id)}
+                              disabled={pinningId !== null}
+                              className={cn(
+                                "inline-flex h-7 w-7 items-center justify-center rounded-full transition-colors",
+                                isPinned
+                                  ? "text-[#5B7A52] hover:bg-[#E8EDE3]"
+                                  : "text-[#8A8A8A] hover:text-[#5B7A52] hover:bg-[#E8EDE3]/50"
+                              )}
+                              aria-label={isPinned ? "Unpin vow" : "Pin vow"}
+                              title={isPinned ? "Unpin" : "Pin for Sage"}
+                            >
+                              <Pin className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => openEditModal(v)}
+                              className={iconBtnClass}
+                              aria-label="Edit vow"
+                              title="Edit vow"
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void handleDelete(v.id)}
+                              disabled={deletingId !== null}
+                              className={iconBtnClass}
+                              aria-label="Delete vow"
+                              title="Delete vow"
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </button>
+                          </div>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
           </div>
 
           {/* RIGHT COLUMN — Pinned vows + Your vows list */}
@@ -452,107 +581,72 @@ export function MyVowClient({ initialVows }: Props) {
             />
             <SageReflection stats={stats} pinned={pinnedVows} />
 
-            {/* All vows list */}
-            <div ref={vowListRef}>
+            {/* Suggested Vows */}
+            <section className="pt-1 space-y-2.5">
               <div>
-                <h2 className="font-heading text-lg font-semibold text-[#3D3D3D]">
-                  All vows
+                <h2 className="font-heading text-sm font-semibold text-[#3D3D3D]">
+                  Suggested Vows
                 </h2>
-                <p className="text-[11px] text-foreground-secondary mt-1">
-                  Pin up to 3 anchors for Sage to reference during coaching.
+                <p className="text-[11px] text-foreground-secondary mt-0.5">
+                  Based on your recent patterns. Private to you.
                 </p>
               </div>
-
-              {vows.length === 0 ? (
-                <p className="text-sm text-foreground-secondary py-4 text-center">
-                  No vows yet. Write your first vow to anchor your intentions.
+              {suggestedLoading ? (
+                <div className="space-y-2">
+                  <div className="rounded-2xl border border-[#E8E4DC] bg-[#FDFBF7] px-3 py-3 md:px-4 md:py-3.5 animate-pulse">
+                    <div className="h-3 w-3/4 rounded bg-[#E8E4DC]" />
+                    <div className="mt-2 h-2.5 w-1/2 rounded bg-[#EDE4D3]" />
+                  </div>
+                  <div className="rounded-2xl border border-[#E8E4DC] bg-[#FDFBF7] px-3 py-3 md:px-4 md:py-3.5 animate-pulse">
+                    <div className="h-3 w-2/3 rounded bg-[#E8E4DC]" />
+                    <div className="mt-2 h-2.5 w-1/3 rounded bg-[#EDE4D3]" />
+                  </div>
+                </div>
+              ) : !suggestedVows || suggestedVows.length === 0 ? (
+                <p className="text-[11px] text-foreground-secondary">
+                  Sage will suggest vows as it learns your patterns.
                 </p>
               ) : (
-                <ul className="mt-2.5 space-y-2.5">
-                  {vows.map((v) => {
-                    const dateLabel = new Date(v.created_at).toLocaleDateString(undefined, {
-                      month: "short",
-                      day: "numeric",
-                      year: "numeric",
-                    });
-                    const isPinned = v.is_pinned;
-                    return (
-                      <li
-                        key={v.id}
-                        className={cn(
-                          "rounded-2xl border px-3 py-3 md:px-4 md:py-3.5 transition-colors bg-[#FDFBF7] border-[#E8E4DC] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.7)]",
-                          isPinned && "border-[#D2DECF] bg-[#F2F5EF]"
-                        )}
-                      >
-                        <div className="flex items-start gap-3">
-                          <div className="mt-0.5 h-7 w-7 shrink-0 rounded-full bg-[#E0E8DC] text-[#4F6B55] flex items-center justify-center text-[11px]">
-                            ✧
-                          </div>
-                          <div className="flex-1">
-                            <div className="flex items-start justify-between gap-2">
-                              <div className="min-w-0">
-                                <p className="text-[10px] text-[#8A8A8A] mb-1">
-                                  Active • {dateLabel}
-                                </p>
-                                <p className="text-sm text-foreground whitespace-pre-wrap leading-snug">
-                                  {v.content}
-                                </p>
-                              </div>
-                              {isPinned && (
-                                <span className="inline-flex items-center rounded-full bg-[#E0E8DC] px-2 py-0.5 text-[10px] font-medium text-[#4F6B55]">
-                                  Pinned
-                                </span>
-                              )}
-                            </div>
-                            <div className="mt-2 flex items-center gap-1.5">
-                              <span className="text-[10px] text-foreground-secondary">
-                                Status: Active
-                              </span>
-                            </div>
-                          </div>
-                          <div className="ml-1 flex items-center gap-2">
-                            <button
-                              type="button"
-                              onClick={() => void handlePin(v.id)}
-                              disabled={pinningId !== null}
-                              className={cn(
-                                "inline-flex h-7 w-7 items-center justify-center rounded-full transition-colors",
-                                isPinned
-                                  ? "text-[#5B7A52] hover:bg-[#E8EDE3]"
-                                  : "text-[#8A8A8A] hover:text-[#5B7A52] hover:bg-[#E8EDE3]/50"
-                              )}
-                              aria-label={isPinned ? "Unpin vow" : "Pin vow"}
-                              title={isPinned ? "Unpin" : "Pin for Sage"}
-                            >
-                              <Pin className="h-3.5 w-3.5" />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => openEditModal(v)}
-                              className={iconBtnClass}
-                              aria-label="Edit vow"
-                              title="Edit vow"
-                            >
-                              <Pencil className="h-3.5 w-3.5" />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => void handleDelete(v.id)}
-                              disabled={deletingId !== null}
-                              className={iconBtnClass}
-                              aria-label="Delete vow"
-                              title="Delete vow"
-                            >
-                              <Trash2 className="h-3 w-3" />
-                            </button>
-                          </div>
-                        </div>
-                      </li>
-                    );
-                  })}
-                </ul>
+                <div className="space-y-2.5">
+                  {suggestedVows.map((s, idx) => (
+                    <div
+                      key={`${s.vow}-${idx}`}
+                      className="rounded-2xl border border-[#E8E4DC] bg-[#FDFBF7] px-3 py-3 md:px-4 md:py-3.5 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.7)]"
+                    >
+                      <p className="text-sm italic text-[#2F3E34] whitespace-pre-wrap">
+                        {s.vow}
+                      </p>
+                      <p className="mt-1 text-[11px] text-foreground-secondary">
+                        Why Sage suggests this: {s.reason}
+                      </p>
+                      <div className="mt-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setDraft(s.vow);
+                            autoResizeTextarea(textareaRef.current);
+                            textareaRef.current?.scrollIntoView({
+                              behavior: "smooth",
+                              block: "start",
+                            });
+                          }}
+                          className="inline-flex items-center rounded-full border border-[#D2DECF] bg-white px-3 py-1 text-[11px] font-medium text-[#5B7A52] hover:bg-[#F2F5EF] hover:border-[#7C8B6E] transition-colors"
+                        >
+                          + Add this vow
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => void loadSuggestedVows()}
+                    className="text-[11px] text-[#5B7A52] underline-offset-2 hover:underline"
+                  >
+                    Refresh suggestions
+                  </button>
+                </div>
               )}
-            </div>
+            </section>
           </div>
         </div>
       </div>

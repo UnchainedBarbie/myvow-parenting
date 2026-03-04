@@ -28,6 +28,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { estimateIntensity } from "@/lib/sage/intensity";
 import { showErrorToast, showSuccessToast } from "@/components/ui/toaster";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
+import { AlertCircle } from "lucide-react";
 
 type ChildSummary = { id: string; first_name: string };
 
@@ -48,6 +49,7 @@ type ConversationSummary = {
   has_flagged_by_me?: boolean;
   conversation_flagged_by_me?: boolean;
   pinned_by_me?: boolean;
+  is_emergency?: boolean;
 };
 
 type SageMessage = {
@@ -82,6 +84,7 @@ export function MessagesSplitView({
   const [search, setSearch] = useState("");
   const [newModalOpen, setNewModalOpen] = useState(false);
   const [newChildId, setNewChildId] = useState<string | "general">("general");
+  const [newIsEmergency, setNewIsEmergency] = useState(false);
   const [newSubject, setNewSubject] = useState("");
   const [newTopic, setNewTopic] = useState<string>("");
   const [creating, setCreating] = useState(false);
@@ -464,6 +467,7 @@ export function MessagesSplitView({
         subject: newSubject.trim(),
         child_id: newChildId === "general" ? null : newChildId,
         category: newTopic,
+        is_emergency: newIsEmergency,
       };
       const res = await fetch("/api/messages/conversations", {
         method: "POST",
@@ -787,6 +791,7 @@ export function MessagesSplitView({
                     });
                 const isDeletable = (c.message_count ?? 0) === 0;
 
+                const isEmergency = c.is_emergency === true;
                 return (
                   <div
                     key={c.id}
@@ -799,13 +804,20 @@ export function MessagesSplitView({
                       "group relative flex w-full items-start rounded-xl border-l-4 px-2.5 py-2 text-left text-xs transition-colors",
                       isActive
                         ? "border-l-[#7C8B6E] bg-[#F2F5EF]"
+                        : isEmergency
+                        ? "border-l-red-400 bg-red-50/60 hover:bg-red-50"
                         : "border-l-transparent bg-white hover:bg-[#FDFBF7]"
                     )}
                   >
                     <div className="min-w-0 flex-1 space-y-0.5">
                       <div className="flex items-center justify-between gap-2">
                         <p className="truncate text-[13px] font-semibold text-[#3D3D3D]">
-                          {c.subject}
+                          <span className="truncate align-middle">{c.subject}</span>
+                          {isEmergency && (
+                            <span className="ml-1 inline-flex items-center gap-0.5 align-middle text-[10px] font-medium text-red-500">
+                              <AlertCircle className="h-3 w-3" aria-hidden />
+                            </span>
+                          )}
                         </p>
                         <div className="flex items-center gap-1.5">
                           {c.pinned_by_me && (
@@ -1868,6 +1880,24 @@ export function MessagesSplitView({
                   className="h-8 w-full rounded-md border border-[#E8E4DC] bg-[#FDFBF7] px-2 text-xs text-[#3D3D3D] placeholder:text-[#B0A899] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E]"
                   required
                 />
+              </div>
+              <div className="space-y-1 pt-1">
+                <label className="flex items-start gap-2 text-[11px] text-[#3D3D3D]">
+                  <input
+                    type="checkbox"
+                    className="mt-[1px] h-3.5 w-3.5 rounded border border-[#D4A843] text-[#D4A843] accent-[#D4A843] focus:outline-none focus:ring-1 focus:ring-[#D4A843]/60"
+                    checked={newIsEmergency}
+                    onChange={(e) => setNewIsEmergency(e.target.checked)}
+                  />
+                  <span className="font-medium">
+                    This is an emergency communication
+                  </span>
+                </label>
+                {newIsEmergency && (
+                  <p className="pl-5 text-[10px] text-[#D4A843]">
+                    Emergency messages are delivered immediately, bypassing delivery windows and cool-off periods.
+                  </p>
+                )}
               </div>
               <div className="mt-2 flex justify-end gap-2">
                 <Button

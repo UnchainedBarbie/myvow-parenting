@@ -58,7 +58,7 @@ export type ExpenseRow = {
   payment_method?: string | null;
   payment_reference?: string | null;
   payment_notes?: string | null;
-  allocation_status?: "ALLOCATED" | "NONE" | "MANUAL_REQUIRED" | null;
+  allocation_status?: "ALLOCATED" | "NONE" | "MANUAL_REQUIRED" | "pending" | null;
   split_label?: string | null;
 };
 
@@ -967,7 +967,7 @@ export function ExpenseList({
                                 aria-label="Download receipt"
                                 title="Download receipt"
                               >
-                                <Download className="h-3 w-3" aria-hidden />
+                                <Download className="h-4 w-4" aria-hidden />
                               </button>
                             )}
                           </div>

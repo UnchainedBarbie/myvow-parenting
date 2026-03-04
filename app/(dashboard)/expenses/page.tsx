@@ -119,6 +119,14 @@ export default async function ExpensesPage() {
     payment_method: (e as { payment_method?: string | null }).payment_method ?? null,
     payment_reference: (e as { payment_reference?: string | null }).payment_reference ?? null,
     payment_notes: (e as { payment_notes?: string | null }).payment_notes ?? null,
+    allocation_status:
+      ((e as { allocation_status?: string | null }).allocation_status as
+        | "ALLOCATED"
+        | "NONE"
+        | "MANUAL_REQUIRED"
+        | "pending"
+        | null) ?? "pending",
+    split_label: (e as { split_label?: string | null }).split_label ?? null,
   }));
 
   return (

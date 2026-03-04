@@ -101,7 +101,6 @@ export async function PATCH(
       });
       updates.split_percent = allocation.other_parent_percent;
       updates.amount_owed = allocation.other_parent_share;
-      updates.allocation_status = allocation.allocation_status;
       updates.other_parent_percent = allocation.other_parent_percent;
       updates.other_parent_share = allocation.other_parent_share;
       updates.split_label = allocation.split_label;

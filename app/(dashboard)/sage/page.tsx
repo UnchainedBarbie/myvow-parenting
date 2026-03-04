@@ -10,8 +10,8 @@ export default async function SagePage() {
   if (!user) redirect("/login");
 
   return (
-    <div className="px-3 pt-3 pb-6 md:px-4 md:pt-6 md:pb-10 flex justify-center">
-      <div className="w-full max-w-2xl space-y-4">
+    <div className="px-3 pt-3 pb-0 md:px-4 md:pt-4 md:pb-0 flex justify-center min-h-[calc(100vh-4.5rem)]">
+      <div className="w-full max-w-2xl flex flex-col gap-4 h-[calc(100vh-5.5rem)]">
         <header className="space-y-1 text-center md:text-left">
           <h1 className="font-heading text-xl md:text-2xl font-semibold text-foreground">
             Sage
@@ -21,7 +21,9 @@ export default async function SagePage() {
           </p>
         </header>
 
-        <SageClient />
+        <div className="flex-1 flex">
+          <SageClient />
+        </div>
       </div>
     </div>
   );

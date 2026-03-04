@@ -10,6 +10,7 @@ type ConversationRow = {
   created_at: string;
   updated_at: string;
   status?: string | null;
+  is_emergency?: boolean | null;
 };
 
 type MessageRow = {
@@ -51,7 +52,9 @@ export async function GET() {
 
     const { data: conversationsRaw, error: convError } = await admin
       .from("conversations")
-      .select("id, case_id, subject, child_id, category, created_at, updated_at, status")
+      .select(
+        "id, case_id, subject, child_id, category, created_at, updated_at, status, is_emergency"
+      )
       .eq("case_id", caseId)
       .order("updated_at", { ascending: false });
 
@@ -209,6 +212,7 @@ export async function GET() {
         pinned_by_me: pinnedConversationIds.has(c.id),
         status,
         tone,
+        is_emergency: (c as { is_emergency?: boolean | null }).is_emergency ?? false,
       };
     });
 

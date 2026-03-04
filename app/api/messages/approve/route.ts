@@ -42,44 +42,6 @@ export async function POST(request: NextRequest) {
 
     const admin = getServiceRoleClient();
 
-    const inCoolOff = await admin
-      .from("cool_off")
-      .select("id")
-      .eq("user_id", user.id)
-      .eq("is_active", true)
-      .gt("ends_at", new Date().toISOString())
-      .maybeSingle();
-    if (inCoolOff.data) {
-      return NextResponse.json(
-        { message: "Sending is paused while you take a break. It will be available again when your break ends." },
-        { status: 403 }
-      );
-    }
-
-    if (conversation_id) {
-      const now = new Date().toISOString();
-      const { data: pause } = await admin
-        .from("structured_pauses")
-        .select("id, mode, created_by")
-        .eq("conversation_id", conversation_id)
-        .gt("ends_at", now)
-        .order("ends_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (pause) {
-        const blocked =
-          pause.mode === "auto" ||
-          pause.mode === "user_mutual" ||
-          (pause.mode === "user_unilateral" && pause.created_by === user.id);
-        if (blocked) {
-          return NextResponse.json(
-            { message: "This conversation is paused. It will reopen at the scheduled time." },
-            { status: 403 }
-          );
-        }
-      }
-    }
-
     const allowEmergency =
       typeof is_emergency === "boolean" &&
       is_emergency &&
@@ -87,7 +49,55 @@ export async function POST(request: NextRequest) {
       ["medical", "safety", "logistics"].includes(emergency_type) &&
       typeof emergency_note === "string" &&
       emergency_note.trim().length >= 1;
-    let emergencyOverLimit = false;
+
+    // Cool-off and structured pauses are bypassed only for valid emergency messages.
+    if (!allowEmergency) {
+      const inCoolOff = await admin
+        .from("cool_off")
+        .select("id")
+        .eq("user_id", user.id)
+        .eq("is_active", true)
+        .gt("ends_at", new Date().toISOString())
+        .maybeSingle();
+      if (inCoolOff.data) {
+        return NextResponse.json(
+          {
+            message:
+              "Sending is paused while you take a break. It will be available again when your break ends.",
+          },
+          { status: 403 }
+        );
+      }
+
+      if (conversation_id) {
+        const now = new Date().toISOString();
+        const { data: pause } = await admin
+          .from("structured_pauses")
+          .select("id, mode, created_by")
+          .eq("conversation_id", conversation_id)
+          .gt("ends_at", now)
+          .order("ends_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (pause) {
+          const blocked =
+            pause.mode === "auto" ||
+            pause.mode === "user_mutual" ||
+            (pause.mode === "user_unilateral" && pause.created_by === user.id);
+          if (blocked) {
+            return NextResponse.json(
+              {
+                message:
+                  "This conversation is paused. It will reopen at the scheduled time.",
+              },
+              { status: 403 }
+            );
+          }
+        }
+      }
+    }
+
+    let emergencyAllowed = allowEmergency;
     if (allowEmergency) {
       const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
       const { data: recent } = await admin
@@ -96,13 +106,9 @@ export async function POST(request: NextRequest) {
         .eq("sender_id", user.id)
         .eq("is_emergency", true)
         .gte("created_at", weekAgo);
-      emergencyOverLimit = (recent?.length ?? 0) >= 5;
-    }
-    if (emergencyOverLimit) {
-      return NextResponse.json(
-        { message: "Emergency option is temporarily unavailable. Please send a regular message." },
-        { status: 403 }
-      );
+      if ((recent?.length ?? 0) >= 3) {
+        emergencyAllowed = false;
+      }
     }
 
     const contentForIntensity = ai_rewritten_content ?? original_content;
@@ -122,9 +128,9 @@ export async function POST(request: NextRequest) {
       delivered_at: new Date().toISOString(),
       intensity_score: score,
       intensity_flag: flag,
-      is_emergency: allowEmergency ?? false,
-      emergency_type: allowEmergency ? emergency_type : null,
-      emergency_note: allowEmergency ? emergency_note?.trim() ?? null : null,
+      is_emergency: emergencyAllowed ?? false,
+      emergency_type: emergencyAllowed ? emergency_type : null,
+      emergency_note: emergencyAllowed ? emergency_note?.trim() ?? null : null,
     };
 
     const { data: message, error: msgError } = await admin

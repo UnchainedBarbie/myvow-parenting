@@ -104,6 +104,9 @@ export function SettingsContent({ profile }: SettingsContentProps) {
     vow_references: boolean;
     default_pause_duration: string;
     send_read_receipts: boolean;
+    delivery_window_enabled: boolean;
+    delivery_start_time: string | null;
+    delivery_end_time: string | null;
   } | null>(null);
   const [coolOffActive, setCoolOffActive] = useState<{ ends_at: string } | null>(null);
   const [showCoolOffSelector, setShowCoolOffSelector] = useState(false);
@@ -171,6 +174,9 @@ export function SettingsContent({ profile }: SettingsContentProps) {
           vow_references: userData.vow_references ?? true,
           default_pause_duration: userData.default_pause_duration ?? "2hours",
           send_read_receipts: userData.send_read_receipts ?? false,
+          delivery_window_enabled: userData.delivery_window_enabled ?? false,
+          delivery_start_time: userData.delivery_start_time ?? null,
+          delivery_end_time: userData.delivery_end_time ?? null,
         });
       }
       setCoolOffActive((coolData as { active?: { ends_at: string } }).active ?? null);
@@ -471,6 +477,74 @@ export function SettingsContent({ profile }: SettingsContentProps) {
             </select>
           </div>
           <p className="text-xs text-foreground-secondary">Notification preferences are device-specific.</p>
+
+          <div className="mt-4 border-t border-border pt-4 space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <p className="text-sm font-medium text-foreground">Delivery window</p>
+                <p className="text-xs text-foreground-secondary">
+                  Control when co-parent messages are delivered to you.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="delivery_window_enabled"
+                  checked={userSettings?.delivery_window_enabled ?? false}
+                  onChange={async (e) => {
+                    const v = e.target.checked;
+                    setUserSettings((prev) =>
+                      prev ? { ...prev, delivery_window_enabled: v } : null
+                    );
+                    await saveUserSetting("delivery_window_enabled", v);
+                  }}
+                  className="rounded border-input"
+                />
+                <Label
+                  htmlFor="delivery_window_enabled"
+                  className="text-sm font-normal cursor-pointer"
+                >
+                  Enable delivery window
+                </Label>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label className="text-xs font-medium text-foreground-secondary">
+                Deliver messages between:
+              </Label>
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  type="time"
+                  value={userSettings?.delivery_start_time ?? ""}
+                  onChange={async (e) => {
+                    const v = e.target.value || null;
+                    setUserSettings((prev) =>
+                      prev ? { ...prev, delivery_start_time: v } : null
+                    );
+                    await saveUserSetting("delivery_start_time", v ?? "");
+                  }}
+                  className="flex h-8 w-28 rounded-md border border-input bg-background px-2 py-1 text-xs"
+                />
+                <span className="text-xs text-foreground-secondary">to</span>
+                <input
+                  type="time"
+                  value={userSettings?.delivery_end_time ?? ""}
+                  onChange={async (e) => {
+                    const v = e.target.value || null;
+                    setUserSettings((prev) =>
+                      prev ? { ...prev, delivery_end_time: v } : null
+                    );
+                    await saveUserSetting("delivery_end_time", v ?? "");
+                  }}
+                  className="flex h-8 w-28 rounded-md border border-input bg-background px-2 py-1 text-xs"
+                />
+              </div>
+              <p className="text-[11px] text-foreground-secondary">
+                Messages outside this window will be delivered when your window opens. Emergency messages always come through immediately.
+              </p>
+            </div>
+          </div>
         </div>
       </CollapsibleCard>
       </div>

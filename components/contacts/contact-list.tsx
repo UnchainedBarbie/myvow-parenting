@@ -355,6 +355,7 @@ export function ContactList({ contacts, children }: ContactListProps) {
   }
 
   return (
+    <>
       <Card className="shadow-card border-border rounded-card">
       <CardHeader className="pb-2 px-4 pt-4">
         <CardTitle className="font-heading text-lg text-foreground">
@@ -933,6 +934,7 @@ export function ContactList({ contacts, children }: ContactListProps) {
           void handleDelete(id).finally(() => setDeleteConfirmId(null));
         }}
       />
+    </>
   );
 }
 

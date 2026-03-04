@@ -2,11 +2,13 @@
 
 import { useState, useRef, useEffect } from "react";
 import Link from "next/link";
-import Image from "next/image";
 
-const AVATAR_LOGO = "/Horiztonal%20logo%20translucent.png";
+type HeaderAvatarProps = {
+  initial: string;
+  avatarUrl: string | null;
+};
 
-export function HeaderAvatar() {
+export function HeaderAvatar({ initial, avatarUrl }: HeaderAvatarProps) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -27,18 +29,23 @@ export function HeaderAvatar() {
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className="h-8 w-8 flex items-center justify-center rounded-full overflow-hidden ring-1 ring-border/50 hover:ring-border hover:bg-muted/50 transition-colors focus:outline-none focus:ring-2 focus:ring-foreground/20"
+        className="h-8 w-8 flex items-center justify-center rounded-full overflow-hidden ring-1 ring-border/50 hover:ring-border hover:bg-muted/50 transition-colors focus:outline-none focus:ring-2 focus:ring-foreground/20 bg-muted"
         aria-label="Open menu"
         aria-expanded={open}
         aria-haspopup="true"
       >
-        <Image
-          src={AVATAR_LOGO}
-          alt="MyVow"
-          width={32}
-          height={32}
-          className="h-8 w-8 object-contain"
-        />
+        {avatarUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={avatarUrl}
+            alt={initial}
+            className="h-8 w-8 rounded-full object-cover"
+          />
+        ) : (
+          <span className="h-8 w-8 flex items-center justify-center rounded-full bg-emerald-50 text-emerald-800 text-sm font-semibold">
+            {initial}
+          </span>
+        )}
       </button>
       {open && (
         <div

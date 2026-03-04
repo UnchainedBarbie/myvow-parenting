@@ -172,6 +172,14 @@ export function ExpenseList({
       showErrorToast("Enter a valid amount.");
       return;
     }
+    if (
+      editExpense.submitted_by !== currentUserId &&
+      editForm.status === "disputed" &&
+      !editForm.dispute_reason.trim()
+    ) {
+      showErrorToast("Please add a dispute reason.");
+      return;
+    }
     setSavingEdit(true);
     try {
       const res = await fetch(`/api/expenses/${editExpense.id}`, {
@@ -905,6 +913,10 @@ export function ExpenseList({
                           : exp.status === "paid"
                             ? "bg-[#E0EDDA] text-[#3D6B35]"
                             : "bg-muted text-foreground-secondary";
+                  const handleRowActivate = () => {
+                    openEditModal(exp);
+                  };
+
                   return (
                     <tr
                       key={exp.id}
@@ -912,8 +924,20 @@ export function ExpenseList({
                         "border-t border-border border-l-4",
                         catColors.stripeClass,
                         idx % 2 === 0 ? "bg-background" : "bg-[#FAF8F5]",
-                        "hover:bg-background-secondary/50"
+                        "hover:bg-background-secondary/50 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                       )}
+                      role="button"
+                      tabIndex={0}
+                      onClick={handleRowActivate}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          handleRowActivate();
+                        }
+                      }}
+                      aria-label={`Open expense details: ${exp.description || "Expense"}, total ${
+                        Number.isNaN(amountNum) ? "—" : `$${amountNum.toFixed(2)}`
+                      }`}
                     >
                       <td className="px-3 py-1.5 w-10 align-middle" onClick={(e) => e.stopPropagation()}>
                         <input
@@ -961,7 +985,7 @@ export function ExpenseList({
                         </span>
                       </td>
                       <td className="px-3 py-1.5 text-foreground-secondary align-middle">
-                        {exp.child_id && exp.child_name ? (
+                    {exp.child_id && exp.child_name ? (
                           <div className="flex items-center gap-2">
                             {(() => {
                               const child = children.find((c) => c.id === exp.child_id);
@@ -1016,7 +1040,10 @@ export function ExpenseList({
                                     type="button"
                                     className="inline-flex items-center rounded-full border border-[#7C8B6E] px-2 py-0.5 text-[11px] text-[#5B7A52] hover:bg-[#F2F5EF]"
                                     disabled={respondingId === exp.id}
-                                    onClick={() => handleRespond(exp.id, "approve")}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      void handleRespond(exp.id, "approve");
+                                    }}
                                   >
                                     Approve
                                   </button>
@@ -1024,7 +1051,8 @@ export function ExpenseList({
                                     type="button"
                                     className="inline-flex items-center rounded-full border border-[#D4A843] px-2 py-0.5 text-[11px] text-[#B8960F] hover:bg-[#FDF6E3]"
                                     disabled={respondingId === exp.id}
-                                    onClick={() => {
+                                    onClick={(e) => {
+                                      e.stopPropagation();
                                       setDisputeExpense(exp);
                                       setDisputeText(exp.dispute_reason ?? "");
                                     }}
@@ -1038,7 +1066,10 @@ export function ExpenseList({
                                   type="button"
                                   className="inline-flex items-center rounded-full border border-[#7C8B6E] px-2 py-0.5 text-[11px] text-[#5B7A52] hover:bg-[#F2F5EF]"
                                   disabled={respondingId === exp.id}
-                                  onClick={() => handleRespond(exp.id, "resolve")}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    void handleRespond(exp.id, "resolve");
+                                  }}
                                 >
                                   Resolve
                                 </button>
@@ -1048,7 +1079,8 @@ export function ExpenseList({
                                   type="button"
                                   className="inline-flex items-center rounded-full bg-[#5B7A52] px-2 py-0.5 text-[11px] text-white hover:bg-[#476242]"
                                   disabled={respondingId === exp.id}
-                                  onClick={() => {
+                                  onClick={(e) => {
+                                    e.stopPropagation();
                                     const today = new Date().toISOString().slice(0, 10);
                                     setMarkPaidExpense(exp);
                                     setMarkPaidDate(today);
@@ -1080,8 +1112,11 @@ export function ExpenseList({
                                   <button
                                     type="button"
                                     className="mt-0.5 inline-flex items-center rounded-full border border-[#7C8B6E] px-2 py-0.5 text-[11px] text-[#5B7A52] hover:bg-[#F2F5EF]"
-                                    disabled={respondingId === exp.id}
-                                    onClick={() => handleRespond(exp.id, "resolve")}
+                                  disabled={respondingId === exp.id}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    void handleRespond(exp.id, "resolve");
+                                  }}
                                   >
                                     Resolve
                                   </button>
@@ -1100,17 +1135,18 @@ export function ExpenseList({
                       <td className="px-2 py-1.5 align-middle" onClick={(e) => e.stopPropagation()}>
                         <span className="inline-flex items-center gap-0.5">
                           {exp.receipt_file_id && (
-                            <button
+                                  <button
                               type="button"
                               className="p-1.5 rounded text-foreground-secondary hover:text-foreground hover:bg-muted/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                               aria-label="View receipt"
-                              onClick={async () => {
-                                const res = await fetch(`/api/documents/${exp.receipt_file_id}/download`);
-                                const data = await res.json().catch(() => ({}));
-                                if ((data as { url?: string }).url) {
-                                  window.open((data as { url: string }).url, "_blank");
-                                }
-                              }}
+                                    onClick={async (e) => {
+                                      e.stopPropagation();
+                                      const res = await fetch(`/api/documents/${exp.receipt_file_id}/download`);
+                                      const data = await res.json().catch(() => ({}));
+                                      if ((data as { url?: string }).url) {
+                                        window.open((data as { url: string }).url, "_blank");
+                                      }
+                                    }}
                             >
                               <Receipt className="h-3.5 w-3.5" />
                             </button>
@@ -1119,7 +1155,10 @@ export function ExpenseList({
                             type="button"
                             className="p-1.5 rounded text-[#8A8A8A] hover:text-[#5B7A52] hover:bg-[#E8EDE3]/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                             aria-label="Edit expense"
-                            onClick={() => openEditModal(exp)}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openEditModal(exp);
+                            }}
                           >
                             <Pencil className="h-3.5 w-3.5" />
                           </button>
@@ -1128,7 +1167,10 @@ export function ExpenseList({
                               type="button"
                               className="p-1.5 rounded text-foreground-secondary hover:text-foreground hover:bg-muted/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                               aria-label="Delete expense"
-                              onClick={() => setDeleteSingleId(exp.id)}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setDeleteSingleId(exp.id);
+                              }}
                             >
                               <Trash2 className="h-3.5 w-3.5" />
                             </button>
@@ -1380,6 +1422,7 @@ export function ExpenseList({
               )}
             </div>
 
+            {/* Core amount / category / child fields */}
             <div className="space-y-1">
               <Label className="text-xs font-medium text-[#3D3D3D] flex items-center gap-1">
                 Amount
@@ -1452,75 +1495,88 @@ export function ExpenseList({
               )}
             </div>
 
-            <div className="space-y-1">
-              <Label className="text-xs font-medium text-[#3D3D3D]">Status</Label>
-              <select
-                value={editForm.status}
-                onChange={(e) => setEditForm((f) => ({ ...f, status: e.target.value }))}
-                className="h-8 w-full rounded-md border border-[#E8E4DC] bg-white px-2 text-sm text-[#3D3D3D] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E]"
-              >
-                {STATUS_FILTER_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>{opt.label}</option>
-                ))}
-              </select>
-            </div>
+            {/* Co-parent response fields: only when expense was submitted by co-parent */}
+            {editExpense.submitted_by !== currentUserId && (
+              <>
+                <div className="space-y-1">
+                  <Label className="text-xs font-medium text-[#3D3D3D]">Status</Label>
+                  <select
+                    value={editForm.status}
+                    onChange={(e) => setEditForm((f) => ({ ...f, status: e.target.value }))}
+                    className="h-8 w-full rounded-md border border-[#E8E4DC] bg-white px-2 text-sm text-[#3D3D3D] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E]"
+                  >
+                    {STATUS_FILTER_OPTIONS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
+                </div>
 
-            <div className="space-y-1">
-              <Label className="text-xs font-medium text-[#3D3D3D]">Dispute reason</Label>
-              <Input
-                value={editForm.dispute_reason}
-                onChange={(e) => setEditForm((f) => ({ ...f, dispute_reason: e.target.value }))}
-                placeholder="Optional"
-                className="h-8 text-sm border-[#E8E4DC]"
-              />
-            </div>
+                {editForm.status === "disputed" && (
+                  <div className="space-y-1">
+                    <Label className="text-xs font-medium text-[#3D3D3D]">
+                      Dispute reason
+                    </Label>
+                    <Input
+                      value={editForm.dispute_reason}
+                      onChange={(e) => setEditForm((f) => ({ ...f, dispute_reason: e.target.value }))}
+                      placeholder="Required when disputing"
+                      className="h-8 text-sm border-[#E8E4DC]"
+                    />
+                  </div>
+                )}
 
-            <div className="space-y-1">
-              <Label className="text-xs font-medium text-[#3D3D3D]">Date paid</Label>
-              <Input
-                type="date"
-                value={editForm.paid_at}
-                onChange={(e) => setEditForm((f) => ({ ...f, paid_at: e.target.value }))}
-                className="h-8 text-sm border-[#E8E4DC]"
-              />
-            </div>
+                {editForm.status === "paid" && (
+                  <>
+                    <div className="space-y-1">
+                      <Label className="text-xs font-medium text-[#3D3D3D]">Date paid</Label>
+                      <Input
+                        type="date"
+                        value={editForm.paid_at}
+                        onChange={(e) => setEditForm((f) => ({ ...f, paid_at: e.target.value }))}
+                        className="h-8 text-sm border-[#E8E4DC]"
+                      />
+                    </div>
 
-            <div className="space-y-1">
-              <Label className="text-xs font-medium text-[#3D3D3D]">Payment method</Label>
-              <select
-                value={editForm.payment_method}
-                onChange={(e) => setEditForm((f) => ({ ...f, payment_method: e.target.value }))}
-                className="h-8 w-full rounded-md border border-[#E8E4DC] bg-white px-2 text-sm text-[#3D3D3D] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E]"
-              >
-                <option value="">—</option>
-                <option value="Venmo">Venmo</option>
-                <option value="Zelle">Zelle</option>
-                <option value="Cash">Cash</option>
-                <option value="Check">Check</option>
-                <option value="Bank Transfer">Bank Transfer</option>
-                <option value="Other">Other</option>
-              </select>
-            </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs font-medium text-[#3D3D3D]">Payment method</Label>
+                      <select
+                        value={editForm.payment_method}
+                        onChange={(e) => setEditForm((f) => ({ ...f, payment_method: e.target.value }))}
+                        className="h-8 w-full rounded-md border border-[#E8E4DC] bg-white px-2 text-sm text-[#3D3D3D] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E]"
+                      >
+                        <option value="">—</option>
+                        <option value="Venmo">Venmo</option>
+                        <option value="Zelle">Zelle</option>
+                        <option value="Cash">Cash</option>
+                        <option value="Check">Check</option>
+                        <option value="Bank Transfer">Bank Transfer</option>
+                        <option value="Other">Other</option>
+                      </select>
+                    </div>
 
-            <div className="space-y-1">
-              <Label className="text-xs font-medium text-[#3D3D3D]">Payment reference</Label>
-              <Input
-                value={editForm.payment_reference}
-                onChange={(e) => setEditForm((f) => ({ ...f, payment_reference: e.target.value }))}
-                placeholder="Optional"
-                className="h-8 text-sm border-[#E8E4DC]"
-              />
-            </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs font-medium text-[#3D3D3D]">Payment reference</Label>
+                      <Input
+                        value={editForm.payment_reference}
+                        onChange={(e) => setEditForm((f) => ({ ...f, payment_reference: e.target.value }))}
+                        placeholder="Optional"
+                        className="h-8 text-sm border-[#E8E4DC]"
+                      />
+                    </div>
 
-            <div className="space-y-1">
-              <Label className="text-xs font-medium text-[#3D3D3D]">Payment notes</Label>
-              <Input
-                value={editForm.payment_notes}
-                onChange={(e) => setEditForm((f) => ({ ...f, payment_notes: e.target.value }))}
-                placeholder="Optional"
-                className="h-8 text-sm border-[#E8E4DC]"
-              />
-            </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs font-medium text-[#3D3D3D]">Payment notes</Label>
+                      <Input
+                        value={editForm.payment_notes}
+                        onChange={(e) => setEditForm((f) => ({ ...f, payment_notes: e.target.value }))}
+                        placeholder="Optional"
+                        className="h-8 text-sm border-[#E8E4DC]"
+                      />
+                    </div>
+                  </>
+                )}
+              </>
+            )}
           </div>
 
           <div className="mt-4 flex justify-end gap-2">

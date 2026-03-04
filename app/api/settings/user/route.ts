@@ -10,9 +10,10 @@ const BOOLEAN_FIELDS = [
   "sage_message_review",
   "vow_references",
   "send_read_receipts",
+  "delivery_window_enabled",
 ] as const;
 
-const FIELDS = [...BOOLEAN_FIELDS, "default_pause_duration"] as const;
+const FIELDS = [...BOOLEAN_FIELDS, "default_pause_duration", "delivery_start_time", "delivery_end_time"] as const;
 const DEFAULT_PAUSE_VALUES = new Set(["30min", "2hours", "until_tomorrow"]);
 
 export async function GET() {
@@ -42,6 +43,9 @@ export async function GET() {
       vow_references: true,
       default_pause_duration: "2hours" as const,
       send_read_receipts: false,
+      delivery_window_enabled: false,
+      delivery_start_time: null as string | null,
+      delivery_end_time: null as string | null,
     };
 
     if (row) {
@@ -56,6 +60,9 @@ export async function GET() {
         vow_references: row.vow_references ?? true,
         default_pause_duration: DEFAULT_PAUSE_VALUES.has(row.default_pause_duration as string) ? row.default_pause_duration : "2hours",
         send_read_receipts: row.send_read_receipts ?? false,
+        delivery_window_enabled: row.delivery_window_enabled ?? false,
+        delivery_start_time: (row.delivery_start_time as string | null) ?? null,
+        delivery_end_time: (row.delivery_end_time as string | null) ?? null,
       });
     }
 
@@ -95,6 +102,12 @@ export async function PATCH(request: NextRequest) {
     }
     if (typeof body.default_pause_duration === "string" && DEFAULT_PAUSE_VALUES.has(body.default_pause_duration)) {
       updates.default_pause_duration = body.default_pause_duration;
+    }
+    if (typeof body.delivery_start_time === "string") {
+      updates.delivery_start_time = body.delivery_start_time;
+    }
+    if (typeof body.delivery_end_time === "string") {
+      updates.delivery_end_time = body.delivery_end_time;
     }
 
     if (Object.keys(updates).length === 0) {
@@ -142,6 +155,9 @@ export async function PATCH(request: NextRequest) {
       vow_references: updated.vow_references ?? true,
       default_pause_duration: DEFAULT_PAUSE_VALUES.has(updated.default_pause_duration as string) ? updated.default_pause_duration : "2hours",
       send_read_receipts: updated.send_read_receipts ?? false,
+      delivery_window_enabled: updated.delivery_window_enabled ?? false,
+      delivery_start_time: (updated.delivery_start_time as string | null) ?? null,
+      delivery_end_time: (updated.delivery_end_time as string | null) ?? null,
     };
     return NextResponse.json(out);
   } catch (e) {

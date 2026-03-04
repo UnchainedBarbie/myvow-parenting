@@ -18,6 +18,8 @@ export type MessageRow = {
   delivery_status?: string;
   delivered_at?: string | null;
   is_emergency?: boolean;
+  emergency_type?: string | null;
+  emergency_note?: string | null;
   flagged_by_me?: boolean;
 };
 
@@ -36,6 +38,15 @@ export function MessageBubble({
   const displayContent =
     message.ai_rewritten_content ?? message.original_content;
   const isOutgoing = message.direction === "outgoing";
+  const isEmergency = message.is_emergency === true;
+
+  function emergencyReasonLabel(type: string | null | undefined): string {
+    if (!type) return "Emergency";
+    if (type === "medical") return "Medical emergency";
+    if (type === "safety") return "Safety concern";
+    if (type === "logistics") return "Time-sensitive logistics";
+    return "Emergency";
+  }
 
   return (
     <div
@@ -44,12 +55,18 @@ export function MessageBubble({
         isOutgoing ? "ml-auto items-end text-right" : "mr-auto items-start text-left"
       )}
     >
+      {isEmergency && (
+        <div className="text-[10px] font-medium text-[#B7791F]">
+          Emergency · {emergencyReasonLabel(message.emergency_type)}
+        </div>
+      )}
       <div
         className={cn(
           "inline-block rounded-2xl px-3 py-2 text-sm whitespace-pre-wrap text-[#3D3D3D]",
           isOutgoing
             ? "bg-[#EEF2E9] rounded-br-[4px] rounded-bl-[14px]"
-            : "bg-[#F9F6F0] rounded-bl-[4px] rounded-br-[14px]"
+            : "bg-[#F9F6F0] rounded-bl-[4px] rounded-br-[14px]",
+          isEmergency && "border-l-2 border-l-[#D4A843] pl-2"
         )}
       >
         {displayContent}
@@ -102,3 +119,4 @@ export function MessageBubble({
     </div>
   );
 }
+

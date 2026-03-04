@@ -516,7 +516,6 @@ export function MessagesSplitView({
   }
 
   const displayCoparentName = "Co-Parent";
-  const coparentInitial = "C";
 
   const activeTone: "calm" | "elevated" = "calm";
 
@@ -769,15 +768,12 @@ export function MessagesSplitView({
                       if (menuOpenId === c.id) setMenuOpenId(null);
                     }}
                     className={cn(
-                      "group relative flex w-full items-start gap-2 rounded-xl border-l-4 px-2.5 py-2 text-left text-xs transition-colors",
+                      "group relative flex w-full items-start rounded-xl border-l-4 px-2.5 py-2 text-left text-xs transition-colors",
                       isActive
                         ? "border-l-[#7C8B6E] bg-[#F2F5EF]"
                         : "border-l-transparent bg-white hover:bg-[#FDFBF7]"
                     )}
                   >
-                    <div className="relative z-10 mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#E8EDE3] text-[13px] font-semibold text-[#5B7A52]">
-                      {coparentInitial}
-                    </div>
                     <div className="min-w-0 flex-1 space-y-0.5">
                       <div className="flex items-center justify-between gap-2">
                         <p className="truncate text-[13px] font-semibold text-[#3D3D3D]">
@@ -1008,10 +1004,7 @@ export function MessagesSplitView({
         {activeConversation ? (
           <>
             <div className="flex items-center justify-between gap-3 border-b border-[#E8E4DC] bg-white px-4 py-3">
-              <div className="flex items-center gap-3 min-w-0">
-                <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[#E8EDE3] text-sm font-semibold text-[#5B7A52]">
-                  {coparentInitial}
-                </div>
+              <div className="flex items-center min-w-0">
                 <div className="min-w-0">
                   <p className="truncate text-sm font-semibold text-[#3D3D3D]">
                     {activeConversation.subject}

@@ -6,6 +6,8 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { showErrorToast, showSuccessToast } from "@/components/ui/toaster";
 import { Info, Lock, Pencil, Pin, Trash2 } from "lucide-react";
+import { VowAnalytics, type VowAnalyticsStats } from "@/components/vows/VowAnalytics";
+import { SageReflection } from "@/components/vows/SageReflection";
 
 export type Vow = {
   id: string;
@@ -22,12 +24,11 @@ const STARTER_VOWS = [
   "I vow to prioritize my child's wellbeing in every interaction.",
 ];
 
-const PLACEHOLDER = "What kind of parent do you want to be when things get hard?";
+const PLACEHOLDER = "Who do you choose to be when things get hard?";
 
-type VowStats = {
-  messages_sent: number;
-  messages_softened: number;
-  calm_streak_days: number;
+type VowStats = VowAnalyticsStats & {
+  top_vow_text?: string | null;
+  top_trigger_tag?: string | null;
 };
 
 type Props = {
@@ -53,6 +54,7 @@ export function MyVowClient({ initialVows }: Props) {
   const [statsLoading, setStatsLoading] = useState(true);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const vowListRef = useRef<HTMLDivElement | null>(null);
+  const detailsRef = useRef<HTMLDivElement | null>(null);
 
   function autoResizeTextarea(el: HTMLTextAreaElement | null) {
     if (!el) return;
@@ -97,7 +99,6 @@ export function MyVowClient({ initialVows }: Props) {
   }, []);
 
   const pinnedVows = vows.filter((v) => v.is_pinned);
-  const hasNoMessages = stats ? stats.messages_sent === 0 : true;
 
   async function handleSaveVow() {
     const content = draft.trim();
@@ -153,7 +154,7 @@ export function MyVowClient({ initialVows }: Props) {
       if (!res.ok) {
         const msg = (data as { message?: string }).message ?? "Failed to update pinned vow.";
         if (msg === "You can pin up to 3 vows at a time") {
-          showErrorToast("You can pin up to 3 vows. Unpin one to add another.");
+          showErrorToast("You can pin up to 3 anchors. Unpin one to pin another.");
         } else {
           showErrorToast(msg);
         }
@@ -256,14 +257,14 @@ export function MyVowClient({ initialVows }: Props) {
             </span>
           </div>
           <p className="mt-2 text-xs md:text-sm text-foreground-secondary max-w-xl mx-auto">
-            Your commitments as a parent. A quiet anchor for difficult moments.
+            Who do you choose to be when things get hard?
           </p>
           <div className="flex items-center justify-center gap-1.5 mt-2 text-[11px] text-foreground-secondary">
               <span className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-border bg-muted">
               <Info className="h-2.5 w-2.5" aria-hidden />
             </span>
             <span>
-              Sage may gently reference your pinned vows during private conversations. Your vows remain private.
+              Sage may gently reference your pinned vows during private coaching. Your vows remain private.
             </span>
           </div>
         </header>
@@ -273,10 +274,10 @@ export function MyVowClient({ initialVows }: Props) {
           <div className="rounded-2xl border border-[#E8E4DC]/70 bg-white/90 p-3 md:p-4 space-y-3">
             <div>
               <h2 className="font-heading text-lg font-semibold text-[#3D3D3D]">
-                Your Vow
+                Write a vow
               </h2>
               <p className="text-xs text-foreground-secondary mt-0.5">
-                {PLACEHOLDER}
+                Keep it short. Make it real. This is for you.
               </p>
             </div>
             <Textarea
@@ -305,7 +306,7 @@ export function MyVowClient({ initialVows }: Props) {
 
             <section className="pt-3 border-t border-[#E8E4DC]/70 space-y-2.5">
               <h3 className="font-heading text-sm font-semibold text-foreground">
-                Starter vows
+                Starter vows (tap to add)
               </h3>
               <div className="flex flex-wrap gap-1.5">
                 {STARTER_VOWS.map((text) => (
@@ -331,10 +332,18 @@ export function MyVowClient({ initialVows }: Props) {
 
           {/* RIGHT COLUMN — Pinned vows + Your vows list */}
           <div className="rounded-2xl border border-[#E8E4DC]/60 bg-white/80 p-3 md:p-4 space-y-3">
-            {/* Pinned vows anchor area */}
+            {/* Pinned anchors */}
             <section className="space-y-2.5">
+              <div>
+                <h2 className="font-heading text-sm font-semibold text-[#3D3D3D]">
+                  Pinned anchors
+                </h2>
+                <p className="text-[11px] text-foreground-secondary mt-0.5">
+                  Pin up to 3 vows Sage can reference during coaching.
+                </p>
+              </div>
               {pinnedVows.length === 0 ? (
-                <div className="rounded-xl border-l-[3px] border-l-[#5B7A52] bg-[#F2F5EF] px-3 py-3 md:px-4 md:py-4 flex items-start gap-3">
+                <div className="rounded-xl border border-[#E4D6BC] bg-[#FBF3E4] px-3 py-3 md:px-4 md:py-4 flex items-start gap-3">
                   <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#E8EDE3]">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
@@ -349,26 +358,20 @@ export function MyVowClient({ initialVows }: Props) {
                     />
                   </div>
                   <div className="min-w-0 flex-1">
-                    <p className="text-[11px] font-medium text-[#6A7A6E]">
-                      Your anchors
-                    </p>
-                    <p className="mt-1 text-sm md:text-base text-[#6A7A6E]">
-                      Pin up to 3 vows to set your anchors. Sage will gently reference them during coaching.
-                    </p>
-                    <p className="mt-1 text-[11px] text-[#8A8A8A]">
-                      No pinned vows yet.
+                    <p className="text-sm md:text-base text-[#6A7A6E]">
+                      No anchors pinned yet. Pin up to 3 vows to keep them close.
                     </p>
                   </div>
                 </div>
               ) : (
                 <>
                   <p className="text-[11px] font-medium text-[#6A7A6E] px-0.5">
-                    {pinnedVows.length === 1 ? "Your anchor" : "Your anchors"}
+                    {pinnedVows.length === 1 ? "Pinned anchor" : "Pinned anchors"}
                   </p>
                   {pinnedVows.map((vow, index) => (
                     <div
                       key={vow.id}
-                      className="rounded-xl border-l-[3px] border-l-[#5B7A52] bg-[#F2F5EF] px-3 py-3 md:px-4 md:py-4 flex items-start gap-3"
+                      className="rounded-2xl border border-[#D2DECF] bg-[#F2F5EF] px-3 py-3 md:px-4 md:py-4 flex items-start gap-3 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.6)]"
                     >
                       {index === 0 ? (
                         <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#E8EDE3]">
@@ -390,11 +393,17 @@ export function MyVowClient({ initialVows }: Props) {
                       <div className="min-w-0 flex-1 space-y-1">
                         <div className="flex items-start justify-between gap-2">
                           <div className="min-w-0">
+                            <p className="inline-flex items-center gap-1.5 text-[10px] font-medium text-[#5B7A52] mb-1">
+                              <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-[#E0E8DC] text-[9px]">
+                                ★
+                              </span>
+                              <span>Pinned</span>
+                            </p>
                             <p className="text-sm md:text-base text-[#2F3E34] whitespace-pre-wrap">
                               {vow.content}
                             </p>
                             <p className="mt-1 text-[11px] text-[#8A8A8A]">
-                              Pinned{" "}
+                              Active •{" "}
                               {new Date(vow.created_at).toLocaleDateString(undefined, {
                                 month: "short",
                                 day: "numeric",
@@ -431,71 +440,26 @@ export function MyVowClient({ initialVows }: Props) {
               )}
             </section>
 
-            {/* Your Communication stats row */}
-            <section className="space-y-2">
-              <div>
-                <h2 className="font-heading text-sm font-semibold text-[#3D3D3D]">
-                  Your Communication
-                </h2>
-                <p className="text-[11px] text-foreground-secondary mt-0.5">
-                  Last 30 days. Private to you.
-                </p>
-              </div>
-              <div className="flex flex-wrap items-stretch gap-3">
-                <div className="min-w-0 flex-1 rounded-xl border border-[#E8E4DC] bg-[#FDFBF7] p-4">
-                  <p className="text-[28px] font-semibold leading-none text-[#5B7A52]">
-                    {statsLoading
-                      ? "…"
-                      : hasNoMessages
-                        ? "—"
-                        : stats?.messages_sent ?? "—"}
-                  </p>
-                  <p className="mt-1 text-xs text-foreground-secondary">
-                    Messages sent
-                  </p>
-                </div>
-                <div className="min-w-0 flex-1 rounded-xl border border-[#E8E4DC] bg-[#FDFBF7] p-4">
-                  <p className="text-[28px] font-semibold leading-none text-[#5B7A52]">
-                    {statsLoading
-                      ? "…"
-                      : hasNoMessages
-                        ? "—"
-                        : stats?.messages_softened ?? "—"}
-                  </p>
-                  <p className="mt-1 text-xs text-foreground-secondary">
-                    Softened by Sage
-                  </p>
-                </div>
-                <div className="min-w-0 flex-1 rounded-xl border border-[#E8E4DC] bg-[#FDFBF7] p-4">
-                  <p className="text-[28px] font-semibold leading-none text-[#5B7A52]">
-                    {statsLoading
-                      ? "…"
-                      : hasNoMessages
-                        ? "—"
-                        : stats?.calm_streak_days != null
-                          ? `${stats.calm_streak_days} days`
-                          : "—"}
-                  </p>
-                  <p className="mt-1 text-xs text-foreground-secondary">
-                    Calm streak
-                  </p>
-                </div>
-              </div>
-              {!statsLoading && hasNoMessages && (
-                <p className="text-[11px] text-foreground-secondary">
-                  No messages in this period
-                </p>
-              )}
-            </section>
+            {/* Analytics & reflection */}
+            <VowAnalytics
+              stats={stats}
+              loading={statsLoading}
+              onViewDetails={
+                stats && (stats.top_vow_text || stats.top_trigger_tag)
+                  ? () => detailsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })
+                  : undefined
+              }
+            />
+            <SageReflection stats={stats} pinned={pinnedVows} />
 
-            {/* Your vows list */}
+            {/* All vows list */}
             <div ref={vowListRef}>
               <div>
                 <h2 className="font-heading text-lg font-semibold text-[#3D3D3D]">
-                  Your Vows
+                  All vows
                 </h2>
                 <p className="text-[11px] text-foreground-secondary mt-1">
-                  Pin up to 3 vows for Sage to reference during coaching.
+                  Pin up to 3 anchors for Sage to reference during coaching.
                 </p>
               </div>
 
@@ -516,25 +480,35 @@ export function MyVowClient({ initialVows }: Props) {
                       <li
                         key={v.id}
                         className={cn(
-                          "rounded-xl border px-3 py-2.5 transition-colors",
-                          isPinned
-                            ? "border-[#D2DECF] bg-[#F2F5EF]"
-                            : "border-[#E8E4DC] bg-[#FDFBF7]"
+                          "rounded-2xl border px-3 py-3 md:px-4 md:py-3.5 transition-colors bg-[#FDFBF7] border-[#E8E4DC] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.7)]",
+                          isPinned && "border-[#D2DECF] bg-[#F2F5EF]"
                         )}
                       >
-                        <div className="flex items-start gap-2">
+                        <div className="flex items-start gap-3">
+                          <div className="mt-0.5 h-7 w-7 shrink-0 rounded-full bg-[#E0E8DC] text-[#4F6B55] flex items-center justify-center text-[11px]">
+                            ✧
+                          </div>
                           <div className="flex-1">
-                            {isPinned && (
-                              <p className="text-[10px] font-medium text-[#5B7A52] mb-1">
-                                🕊 Active
-                              </p>
-                            )}
-                            <p className="text-sm text-foreground whitespace-pre-wrap leading-snug">
-                              {v.content}
-                            </p>
-                            <p className="text-[10px] text-foreground-secondary mt-1.5">
-                              {dateLabel}
-                            </p>
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="min-w-0">
+                                <p className="text-[10px] text-[#8A8A8A] mb-1">
+                                  Active • {dateLabel}
+                                </p>
+                                <p className="text-sm text-foreground whitespace-pre-wrap leading-snug">
+                                  {v.content}
+                                </p>
+                              </div>
+                              {isPinned && (
+                                <span className="inline-flex items-center rounded-full bg-[#E0E8DC] px-2 py-0.5 text-[10px] font-medium text-[#4F6B55]">
+                                  Pinned
+                                </span>
+                              )}
+                            </div>
+                            <div className="mt-2 flex items-center gap-1.5">
+                              <span className="text-[10px] text-foreground-secondary">
+                                Status: Active
+                              </span>
+                            </div>
                           </div>
                           <div className="ml-1 flex items-center gap-2">
                             <button
@@ -581,6 +555,26 @@ export function MyVowClient({ initialVows }: Props) {
             </div>
           </div>
         </div>
+      </div>
+
+      {/* Optional details anchor for analytics */}
+      <div ref={detailsRef} className="px-3 md:px-4 pb-6">
+        {stats && (stats.top_vow_text || stats.top_trigger_tag) && (
+          <div className="mx-auto max-w-2xl rounded-2xl border border-[#E8E4DC] bg-[#FDFBF7] px-3 py-3 md:px-4 md:py-4 space-y-1.5">
+            {stats.top_vow_text && (
+              <p className="text-[11px] text-foreground-secondary">
+                <span className="font-medium text-foreground">Top vow supported this month: </span>
+                “{stats.top_vow_text}”
+              </p>
+            )}
+            {stats.top_trigger_tag && (
+              <p className="text-[11px] text-foreground-secondary">
+                <span className="font-medium text-foreground">Top trigger detected: </span>
+                {stats.top_trigger_tag}
+              </p>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Edit Vow modal */}

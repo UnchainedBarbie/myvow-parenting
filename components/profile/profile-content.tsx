@@ -1220,7 +1220,9 @@ export function ProfileContent({
             </div>
           ) : !showAddCoparentForm && !showAddChildForm ? (
             <div className="rounded-card border border-border bg-background overflow-hidden">
-              <p className="text-sm text-foreground-secondary py-4 px-3">Upload a court order to auto-fill, or add manually.</p>
+              <p className="text-sm text-foreground-secondary py-4 px-3">
+                No family members added yet.
+              </p>
             </div>
           ) : null}
         </div>

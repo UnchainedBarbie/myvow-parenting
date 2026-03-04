@@ -49,6 +49,8 @@ export function MyVowClient({ initialVows }: Props) {
   const [editModalVow, setEditModalVow] = useState<Vow | null>(null);
   const [editDraft, setEditDraft] = useState("");
   const [savingEdit, setSavingEdit] = useState(false);
+  const [stats, setStats] = useState<VowStats | null>(null);
+  const [statsLoading, setStatsLoading] = useState(true);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const vowListRef = useRef<HTMLDivElement | null>(null);
 
@@ -72,7 +74,30 @@ export function MyVowClient({ initialVows }: Props) {
     autoResizeTextarea(textareaRef.current);
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setStatsLoading(true);
+      try {
+        const res = await fetch("/api/vows/stats");
+        const data = await res.json().catch(() => ({}));
+        if (!cancelled && res.ok)
+          setStats(data as VowStats);
+        else if (!cancelled)
+          setStats(null);
+      } catch {
+        if (!cancelled) setStats(null);
+      } finally {
+        if (!cancelled) setStatsLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const pinnedVows = vows.filter((v) => v.is_pinned);
+  const hasNoMessages = stats ? stats.messages_sent === 0 : true;
 
   async function handleSaveVow() {
     const content = draft.trim();
@@ -403,6 +428,63 @@ export function MyVowClient({ initialVows }: Props) {
                     </div>
                   ))}
                 </>
+              )}
+            </section>
+
+            {/* Your Communication stats row */}
+            <section className="space-y-2">
+              <div>
+                <h2 className="font-heading text-sm font-semibold text-[#3D3D3D]">
+                  Your Communication
+                </h2>
+                <p className="text-[11px] text-foreground-secondary mt-0.5">
+                  Last 30 days. Private to you.
+                </p>
+              </div>
+              <div className="flex flex-wrap items-stretch gap-3">
+                <div className="min-w-0 flex-1 rounded-xl border border-[#E8E4DC] bg-[#FDFBF7] p-4">
+                  <p className="text-[28px] font-semibold leading-none text-[#5B7A52]">
+                    {statsLoading
+                      ? "…"
+                      : hasNoMessages
+                        ? "—"
+                        : stats?.messages_sent ?? "—"}
+                  </p>
+                  <p className="mt-1 text-xs text-foreground-secondary">
+                    Messages sent
+                  </p>
+                </div>
+                <div className="min-w-0 flex-1 rounded-xl border border-[#E8E4DC] bg-[#FDFBF7] p-4">
+                  <p className="text-[28px] font-semibold leading-none text-[#5B7A52]">
+                    {statsLoading
+                      ? "…"
+                      : hasNoMessages
+                        ? "—"
+                        : stats?.messages_softened ?? "—"}
+                  </p>
+                  <p className="mt-1 text-xs text-foreground-secondary">
+                    Softened by Sage
+                  </p>
+                </div>
+                <div className="min-w-0 flex-1 rounded-xl border border-[#E8E4DC] bg-[#FDFBF7] p-4">
+                  <p className="text-[28px] font-semibold leading-none text-[#5B7A52]">
+                    {statsLoading
+                      ? "…"
+                      : hasNoMessages
+                        ? "—"
+                        : stats?.calm_streak_days != null
+                          ? `${stats.calm_streak_days} days`
+                          : "—"}
+                  </p>
+                  <p className="mt-1 text-xs text-foreground-secondary">
+                    Calm streak
+                  </p>
+                </div>
+              </div>
+              {!statsLoading && hasNoMessages && (
+                <p className="text-[11px] text-foreground-secondary">
+                  No messages in this period
+                </p>
               )}
             </section>
 

@@ -765,6 +765,10 @@ export function MessagesSplitView({
                   <div
                     key={c.id}
                     data-conversation-card={c.id}
+                    onClick={() => void handleSelectConversation(c.id)}
+                    onMouseLeave={() => {
+                      if (menuOpenId === c.id) setMenuOpenId(null);
+                    }}
                     className={cn(
                       "group relative flex w-full items-start gap-2 rounded-xl border-l-4 px-2.5 py-2 text-left text-xs transition-colors",
                       isActive
@@ -772,12 +776,6 @@ export function MessagesSplitView({
                         : "border-l-transparent bg-white hover:bg-[#FDFBF7]"
                     )}
                   >
-                    <button
-                      type="button"
-                      onClick={() => void handleSelectConversation(c.id)}
-                      className="absolute inset-0 z-0 rounded-xl"
-                      aria-label={`Open ${c.subject}`}
-                    />
                     <div className="relative z-10 mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#E8EDE3] text-[13px] font-semibold text-[#5B7A52]">
                       {coparentInitial}
                     </div>

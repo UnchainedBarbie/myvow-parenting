@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
-import { getServiceRoleClient } from "@/lib/supabase/server";
+import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
+import { computeAllocationFromParentingPlan } from "@/lib/expenses-allocation";
 
 /**
  * Submit expense with optional receipt. Service role for writes.
@@ -32,32 +32,43 @@ export async function POST(request: NextRequest) {
       split_percent?: number;
       receipt_file_id?: string;
     };
-    if (!case_id || !description || amount == null) {
+    const descTrimmed = (description ?? "").trim();
+    if (!case_id || !descTrimmed || amount == null) {
       return NextResponse.json(
         { message: "Missing case_id, description, or amount" },
         { status: 400 }
       );
     }
+    if (descTrimmed.length > 80) {
+      return NextResponse.json(
+        { message: "Description must be 80 characters or less." },
+        { status: 400 }
+      );
+    }
     const admin = getServiceRoleClient();
     const amountNum = Number(amount);
-    const { data: caseRow } = await admin
-      .from("cases")
-      .select("custody_split_percent")
-      .eq("id", case_id)
-      .single();
-    const splitPct = split_percent ?? caseRow?.custody_split_percent ?? 50;
-    const amountOwed = amountNum * (Number(splitPct) / 100);
+
+    const allocation = await computeAllocationFromParentingPlan({
+      caseId: case_id,
+      amount: amountNum,
+      category: category ?? "other",
+      childId: child_id ?? null,
+    });
     const { data: expense, error } = await admin
       .from("expenses")
       .insert({
         case_id,
         submitted_by: user.id,
-        description,
+        description: descTrimmed,
         amount: amountNum,
         category: category ?? "other",
         child_id: child_id ?? null,
-        split_percent: split_percent ?? null,
-        amount_owed: amountOwed,
+        split_percent: allocation.other_parent_percent,
+        amount_owed: allocation.other_parent_share,
+        allocation_status: allocation.allocation_status,
+        other_parent_percent: allocation.other_parent_percent,
+        other_parent_share: allocation.other_parent_share,
+        split_label: allocation.split_label,
         receipt_file_id: receipt_file_id ?? null,
         status: "submitted",
       })

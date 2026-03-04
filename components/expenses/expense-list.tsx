@@ -58,6 +58,8 @@ export type ExpenseRow = {
   payment_method?: string | null;
   payment_reference?: string | null;
   payment_notes?: string | null;
+  allocation_status?: "ALLOCATED" | "NONE" | "MANUAL_REQUIRED" | null;
+  split_label?: string | null;
 };
 
 interface ExpenseListProps {
@@ -330,17 +332,10 @@ export function ExpenseList({
     const rows = filtered.map((exp, idx) => {
       const id = expenseIdFromIndex(idx);
       const amountNum = Number(exp.amount);
-      const splitOther = custodySplitPercent;
-      const splitYou = 100 - splitOther;
-      const splitLabel = `${splitYou}/${splitOther}`;
       const owedNum = exp.amount_owed != null ? Number(exp.amount_owed) : null;
       const isMine = exp.submitted_by === currentUserId;
       const theirShare =
-        owedNum != null
-          ? isMine
-            ? owedNum
-            : amountNum - owedNum
-          : null;
+        owedNum != null ? (isMine ? owedNum : amountNum - owedNum) : null;
       const statusLabel = STATUS_LABELS[exp.status] ?? exp.status;
       return [
         id,
@@ -349,7 +344,7 @@ export function ExpenseList({
         exp.child_name ?? "—",
         formatDate(exp.created_at),
         Number.isNaN(amountNum) ? "" : amountNum.toFixed(2),
-        splitLabel,
+        exp.split_label ?? "",
         theirShare != null ? theirShare.toFixed(2) : "",
         statusLabel,
       ]
@@ -389,17 +384,10 @@ export function ExpenseList({
         const idx = filtered.findIndex((e) => e.id === exp.id);
         const idLabel = expenseIdFromIndex(idx >= 0 ? idx : 0);
         const amountNum = Number(exp.amount);
-        const splitOther = custodySplitPercent;
-        const splitYou = 100 - splitOther;
-        const splitLabel = `${splitYou}/${splitOther}`;
         const owedNum = exp.amount_owed != null ? Number(exp.amount_owed) : null;
         const isMine = exp.submitted_by === currentUserId;
         const theirShare =
-          owedNum != null
-            ? isMine
-              ? owedNum
-              : amountNum - owedNum
-            : null;
+          owedNum != null ? (isMine ? owedNum : amountNum - owedNum) : null;
         const statusLabel = STATUS_LABELS[exp.status] ?? exp.status;
         const paymentMethod = (exp as any).payment_method ?? "";
         const paidAt = (exp as any).paid_at
@@ -892,15 +880,8 @@ export function ExpenseList({
                   const amountNum = Number(exp.amount);
                   const owedNum = exp.amount_owed != null ? Number(exp.amount_owed) : null;
                   const isMine = exp.submitted_by === currentUserId;
-                  const splitOther = custodySplitPercent;
-                  const splitYou = 100 - splitOther;
-                  const splitLabel = `${splitYou}/${splitOther}`;
                   const theirShare =
-                    owedNum != null
-                      ? isMine
-                        ? owedNum
-                        : amountNum - owedNum
-                      : null;
+                    owedNum != null ? (isMine ? owedNum : amountNum - owedNum) : null;
                   const catColors = getCategoryColor(exp.category);
                   const statusLabel = STATUS_LABELS[exp.status] ?? exp.status;
                   const statusClasses =
@@ -955,16 +936,39 @@ export function ExpenseList({
                         <div className="flex flex-col gap-0.5 min-w-0">
                           <div className="flex items-center gap-1 min-w-0">
                             <span
-                              className="font-semibold text-foreground overflow-hidden text-ellipsis whitespace-nowrap block"
+                              className="font-semibold text-foreground truncate max-w-[400px] block"
                               title={exp.description}
                             >
                               {exp.description || "—"}
                             </span>
-                            {exp.receipt_file_id && (
-                              <Paperclip
-                                className="h-3 w-3 text-[#8A8A8A] shrink-0"
-                                aria-hidden
-                              />
+                            {exp.receipt_file_id && exp.receipt_file_name && (
+                              <button
+                                type="button"
+                                className="p-0.5 rounded-full text-[#8A8A8A] hover:text-[#5B7A52] hover:bg-muted transition-colors"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void (async () => {
+                                    try {
+                                      const res = await fetch(
+                                        `/api/documents/${exp.receipt_file_id}/download`
+                                      );
+                                      const data = await res.json().catch(() => ({}));
+                                      const url = (data as { url?: string }).url;
+                                      if (!url) {
+                                        showErrorToast("Download failed");
+                                        return;
+                                      }
+                                      window.open(url, "_blank");
+                                    } catch {
+                                      showErrorToast("Download failed");
+                                    }
+                                  })();
+                                }}
+                                aria-label="Download receipt"
+                                title="Download receipt"
+                              >
+                                <Download className="h-3 w-3" aria-hidden />
+                              </button>
                             )}
                           </div>
                           <span className="text-[11px] text-foreground-secondary overflow-hidden text-ellipsis whitespace-nowrap block">
@@ -1017,10 +1021,16 @@ export function ExpenseList({
                         {Number.isNaN(amountNum) ? "—" : `$${amountNum.toFixed(2)}`}
                       </td>
                       <td className="px-2 py-1.5 align-middle text-foreground-secondary whitespace-nowrap">
-                        {splitLabel}
+                        {exp.allocation_status === "NONE"
+                          ? "—"
+                          : exp.split_label || ""}
                       </td>
                       <td className="px-2 py-1.5 align-middle whitespace-nowrap">
-                        {theirShare != null && !Number.isNaN(theirShare) ? `$${theirShare.toFixed(2)}` : "—"}
+                        {exp.allocation_status === "NONE"
+                          ? "$0.00"
+                          : theirShare != null && !Number.isNaN(theirShare)
+                          ? `$${theirShare.toFixed(2)}`
+                          : "—"}
                       </td>
                       <td className="px-3 py-1.5 align-middle whitespace-nowrap">
                         <div className="flex flex-col items-start gap-1">
@@ -1030,7 +1040,9 @@ export function ExpenseList({
                               statusClasses
                             )}
                           >
-                            {statusLabel}
+                            {exp.allocation_status === "NONE"
+                              ? "No allocation"
+                              : statusLabel}
                           </span>
                           {exp.submitted_by !== currentUserId ? (
                             <div className="flex flex-wrap gap-1 text-[11px]">
@@ -1412,13 +1424,23 @@ export function ExpenseList({
                 )}
               </Label>
               {editExpense.submitted_by === currentUserId ? (
-                <Input
-                  value={editForm.description}
-                  onChange={(e) => setEditForm((f) => ({ ...f, description: e.target.value }))}
-                  className="h-8 text-sm border-[#E8E4DC]"
-                />
+                <div className="space-y-1">
+                  <Input
+                    value={editForm.description}
+                    onChange={(e) =>
+                      setEditForm((f) => ({ ...f, description: e.target.value }))
+                    }
+                    maxLength={80}
+                    className="h-8 text-sm border-[#E8E4DC]"
+                  />
+                  <div className="text-[10px] text-muted-foreground text-right">
+                    {editForm.description.length}/80
+                  </div>
+                </div>
               ) : (
-                <p className="text-sm text-foreground-secondary py-1.5">{editExpense.description || "—"}</p>
+                <p className="text-sm text-foreground-secondary py-1.5">
+                  {editExpense.description || "—"}
+                </p>
               )}
             </div>
 

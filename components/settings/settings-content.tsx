@@ -82,6 +82,12 @@ export function SettingsContent({ profile }: SettingsContentProps) {
   const [openSage, setOpenSage] = useState(false);
   const [openCoolOff, setOpenCoolOff] = useState(false);
   const [openPrivacy, setOpenPrivacy] = useState(false);
+  const [openAccount, setOpenAccount] = useState(false);
+
+  const [currentPlan, setCurrentPlan] = useState<"FREE" | "PLUS" | "PRO">("FREE");
+  const [subscriptionStatus, setSubscriptionStatus] = useState<"active" | "canceled" | "none">(
+    "none"
+  );
 
   const [caseSettings, setCaseSettings] = useState<CaseSettings | null>(null);
   const [settingsLoading, setSettingsLoading] = useState(true);
@@ -93,6 +99,11 @@ export function SettingsContent({ profile }: SettingsContentProps) {
   const [messagingWindowStart, setMessagingWindowStart] = useState("");
   const [messagingWindowEnd, setMessagingWindowEnd] = useState("");
   const [quietHoursEnabled, setQuietHoursEnabled] = useState(false);
+  const [timezone, setTimezone] = useState<string>(
+    typeof Intl !== "undefined"
+      ? Intl.DateTimeFormat().resolvedOptions().timeZone
+      : "America/Denver"
+  );
 
   const [emailNotifications, setEmailNotifications] = useState(true);
   const [pushNotifications, setPushNotifications] = useState(false);
@@ -159,6 +170,104 @@ export function SettingsContent({ profile }: SettingsContentProps) {
     load();
     return () => { cancelled = true; };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadSubscription() {
+      try {
+        const res = await fetch("/api/subscription");
+        if (!res.ok) return;
+        const data = await res.json().catch(() => ({}));
+        if (cancelled) return;
+        const tier = (data.tier as string | undefined)?.toUpperCase();
+        if (tier === "PLUS" || tier === "PRO" || tier === "FREE") {
+          setCurrentPlan(tier);
+        } else if (tier === "STANDARD") {
+          setCurrentPlan("PLUS");
+        } else if (tier === "PREMIUM") {
+          setCurrentPlan("PRO");
+        } else {
+          setCurrentPlan("FREE");
+        }
+        const status = (data.status as string | undefined)?.toLowerCase();
+        if (status === "active" || status === "trialing") {
+          setSubscriptionStatus("active");
+        } else if (status === "canceled" || status === "cancel_at_period_end") {
+          setSubscriptionStatus("canceled");
+        } else {
+          setSubscriptionStatus("none");
+        }
+      } catch {
+        // ignore; fallback is FREE
+      }
+    }
+    loadSubscription();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const billingConfigured =
+    typeof process !== "undefined" &&
+    !!process.env.NEXT_PUBLIC_BILLING_ENABLED &&
+    process.env.NEXT_PUBLIC_BILLING_ENABLED === "true";
+
+  const goToBillingPlaceholder = useCallback(
+    (target?: string) => {
+      router.push("/billing");
+      showSuccessToast("Billing setup coming soon.");
+    },
+    [router]
+  );
+
+  const handleUpgrade = useCallback(
+    async (plan: "PLUS" | "PRO") => {
+      if (!billingConfigured) {
+        goToBillingPlaceholder(plan);
+        return;
+      }
+      try {
+        const res = await fetch("/api/billing/checkout", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ plan }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.url) {
+          showErrorToast(
+            (data as { error?: string }).error ?? "Unable to start checkout. Please try again."
+          );
+          return;
+        }
+        window.location.href = data.url as string;
+      } catch {
+        showErrorToast("Unable to start checkout. Please try again.");
+      }
+    },
+    [billingConfigured, goToBillingPlaceholder]
+  );
+
+  const handleManagePlan = useCallback(async () => {
+    if (!billingConfigured) {
+      goToBillingPlaceholder("manage");
+      return;
+    }
+    try {
+      const res = await fetch("/api/billing/portal", {
+        method: "POST",
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.url) {
+        showErrorToast(
+          (data as { error?: string }).error ?? "Unable to open billing portal. Please try again."
+        );
+        return;
+      }
+      window.location.href = data.url as string;
+    } catch {
+      showErrorToast("Unable to open billing portal. Please try again.");
+    }
+  }, [billingConfigured, goToBillingPlaceholder]);
 
   useEffect(() => {
     let cancelled = false;
@@ -260,7 +369,8 @@ export function SettingsContent({ profile }: SettingsContentProps) {
     openSubscription &&
     openSage &&
     openCoolOff &&
-    openPrivacy;
+    openPrivacy &&
+    openAccount;
 
   return (
     <div className="space-y-6">
@@ -279,6 +389,7 @@ export function SettingsContent({ profile }: SettingsContentProps) {
               setOpenSage(false);
               setOpenCoolOff(false);
               setOpenPrivacy(false);
+              setOpenAccount(false);
             } else {
               setOpenCommunication(true);
               setOpenNotifications(true);
@@ -286,6 +397,7 @@ export function SettingsContent({ profile }: SettingsContentProps) {
               setOpenSage(true);
               setOpenCoolOff(true);
               setOpenPrivacy(true);
+              setOpenAccount(true);
             }
           }}
         >
@@ -299,22 +411,102 @@ export function SettingsContent({ profile }: SettingsContentProps) {
         title="Subscription"
       >
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <div className="rounded-lg border border-border bg-background p-4 flex flex-col gap-2">
+          <div className="rounded-lg border border-border bg-background p-4 flex flex-col gap-3">
             <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-xs font-semibold uppercase tracking-wide text-foreground-secondary">Free</span>
-              <span className="rounded-full bg-emerald-600 text-white px-2.5 py-1 text-xs font-medium">Current plan</span>
+              <span className="text-xs font-semibold uppercase tracking-wide text-foreground-secondary">
+                Free
+              </span>
+              {currentPlan === "FREE" ? (
+                <span className="rounded-full bg-emerald-600 text-white px-2.5 py-1 text-xs font-medium">
+                  Current plan
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  className="text-xs text-foreground-secondary underline hover:text-foreground bg-transparent border-none p-0"
+                  onClick={handleManagePlan}
+                >
+                  Downgrade to Free
+                </button>
+              )}
             </div>
-            <p className="text-sm text-foreground-secondary flex-1">Basic scheduling, documents, calendar</p>
+            <p className="text-sm text-foreground-secondary flex-1">
+              Basic scheduling, documents, calendar
+            </p>
           </div>
-          <div className="rounded-lg border border-border bg-background p-4 flex flex-col gap-2">
-            <span className="text-xs font-semibold uppercase tracking-wide text-foreground-secondary">Plus</span>
-            <p className="text-sm text-foreground-secondary flex-1">Expense tracking, exports, shared visibility</p>
-            <span className="text-xs text-foreground-secondary">Upgrade to unlock</span>
+          <div className="rounded-lg border border-border bg-background p-4 flex flex-col gap-3">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-xs font-semibold uppercase tracking-wide text-foreground-secondary">
+                Plus
+              </span>
+              {currentPlan === "PLUS" && (
+                <span className="rounded-full bg-emerald-600 text-white px-2.5 py-1 text-xs font-medium">
+                  Current plan
+                </span>
+              )}
+            </div>
+            <p className="text-sm text-foreground-secondary flex-1">
+              Expense tracking, exports, shared visibility
+            </p>
+            <Button
+              size="sm"
+              className="mt-1 rounded-full h-8 text-xs"
+              disabled={currentPlan === "PLUS"}
+              onClick={() => handleUpgrade("PLUS")}
+            >
+              {currentPlan === "PLUS" ? "Current plan" : "Upgrade to Plus"}
+            </Button>
           </div>
-          <div className="rounded-lg border border-border bg-background p-4 flex flex-col gap-2">
-            <span className="text-xs font-semibold uppercase tracking-wide text-foreground-secondary">Pro</span>
-            <p className="text-sm text-foreground-secondary flex-1">AI moderation, court-ready reports, email ingestion, advanced analytics</p>
-            <span className="text-xs text-foreground-secondary">Upgrade to unlock</span>
+          <div className="rounded-lg border border-border bg-background p-4 flex flex-col gap-3">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-xs font-semibold uppercase tracking-wide text-foreground-secondary">
+                Pro
+              </span>
+              {currentPlan === "PRO" && (
+                <span className="rounded-full bg-emerald-600 text-white px-2.5 py-1 text-xs font-medium">
+                  Current plan
+                </span>
+              )}
+            </div>
+            <p className="text-sm text-foreground-secondary flex-1">
+              AI moderation, court-ready reports, email ingestion, advanced analytics
+            </p>
+            <Button
+              size="sm"
+              className="mt-1 rounded-full h-8 text-xs"
+              disabled={currentPlan === "PRO"}
+              onClick={() => handleUpgrade("PRO")}
+            >
+              {currentPlan === "PRO" ? "Current plan" : "Upgrade to Pro"}
+            </Button>
+            {subscriptionStatus === "canceled" && (
+              <p className="mt-1 text-[11px] text-foreground-secondary">
+                Canceling at end of billing period.
+              </p>
+            )}
+          </div>
+        </div>
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+          <div className="text-xs text-foreground-secondary">
+            {subscriptionStatus === "canceled" && "Your subscription will end at the period end."}
+          </div>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              className="text-xs text-foreground-secondary underline hover:text-foreground bg-transparent border-none p-0"
+              onClick={handleManagePlan}
+            >
+              Manage plan
+            </button>
+            {(currentPlan === "PLUS" || currentPlan === "PRO") && (
+              <button
+                type="button"
+                className="text-xs text-[#B3583B] underline hover:text-[#8F4630] bg-transparent border-none p-0"
+                onClick={handleManagePlan}
+              >
+                Cancel plan
+              </button>
+            )}
           </div>
         </div>
       </CollapsibleCard>
@@ -479,13 +671,11 @@ export function SettingsContent({ profile }: SettingsContentProps) {
           <p className="text-xs text-foreground-secondary">Notification preferences are device-specific.</p>
 
           <div className="mt-4 border-t border-border pt-4 space-y-3">
-            <div className="flex items-center justify-between gap-2">
-              <div>
-                <p className="text-sm font-medium text-foreground">Delivery window</p>
-                <p className="text-xs text-foreground-secondary">
-                  Control when co-parent messages are delivered to you.
-                </p>
-              </div>
+            <div className="space-y-2">
+              <p className="text-sm font-medium text-foreground">Delivery window</p>
+              <p className="text-xs text-foreground-secondary">
+                Control when co-parent messages are delivered to you.
+              </p>
               <div className="flex items-center gap-2">
                 <input
                   type="checkbox"
@@ -509,41 +699,43 @@ export function SettingsContent({ profile }: SettingsContentProps) {
               </div>
             </div>
 
-            <div className="space-y-2">
-              <Label className="text-xs font-medium text-foreground-secondary">
-                Deliver messages between:
-              </Label>
-              <div className="flex flex-wrap items-center gap-2">
-                <input
-                  type="time"
-                  value={userSettings?.delivery_start_time ?? ""}
-                  onChange={async (e) => {
-                    const v = e.target.value || null;
-                    setUserSettings((prev) =>
-                      prev ? { ...prev, delivery_start_time: v } : null
-                    );
-                    await saveUserSetting("delivery_start_time", v ?? "");
-                  }}
-                  className="flex h-8 w-28 rounded-md border border-input bg-background px-2 py-1 text-xs"
-                />
-                <span className="text-xs text-foreground-secondary">to</span>
-                <input
-                  type="time"
-                  value={userSettings?.delivery_end_time ?? ""}
-                  onChange={async (e) => {
-                    const v = e.target.value || null;
-                    setUserSettings((prev) =>
-                      prev ? { ...prev, delivery_end_time: v } : null
-                    );
-                    await saveUserSetting("delivery_end_time", v ?? "");
-                  }}
-                  className="flex h-8 w-28 rounded-md border border-input bg-background px-2 py-1 text-xs"
-                />
+            {userSettings?.delivery_window_enabled && (
+              <div className="space-y-2">
+                <Label className="text-xs font-medium text-foreground-secondary">
+                  Deliver messages between:
+                </Label>
+                <div className="flex flex-wrap items-center gap-2">
+                  <input
+                    type="time"
+                    value={userSettings?.delivery_start_time ?? ""}
+                    onChange={async (e) => {
+                      const v = e.target.value || null;
+                      setUserSettings((prev) =>
+                        prev ? { ...prev, delivery_start_time: v } : null
+                      );
+                      await saveUserSetting("delivery_start_time", v ?? "");
+                    }}
+                    className="flex h-8 w-28 rounded-md border border-input bg-background px-2 py-1 text-xs"
+                  />
+                  <span className="text-xs text-foreground-secondary">to</span>
+                  <input
+                    type="time"
+                    value={userSettings?.delivery_end_time ?? ""}
+                    onChange={async (e) => {
+                      const v = e.target.value || null;
+                      setUserSettings((prev) =>
+                        prev ? { ...prev, delivery_end_time: v } : null
+                      );
+                      await saveUserSetting("delivery_end_time", v ?? "");
+                    }}
+                    className="flex h-8 w-28 rounded-md border border-input bg-background px-2 py-1 text-xs"
+                  />
+                </div>
+                <p className="text-[11px] text-foreground-secondary">
+                  Messages outside this window will be delivered when your window opens. Emergency messages always come through immediately.
+                </p>
               </div>
-              <p className="text-[11px] text-foreground-secondary">
-                Messages outside this window will be delivered when your window opens. Emergency messages always come through immediately.
-              </p>
-            </div>
+            )}
           </div>
         </div>
       </CollapsibleCard>
@@ -765,6 +957,59 @@ export function SettingsContent({ profile }: SettingsContentProps) {
             Structured pauses appear in reports as neutral events
           </li>
         </ul>
+      </CollapsibleCard>
+
+      <CollapsibleCard
+        open={openAccount}
+        onToggle={() => setOpenAccount((o) => !o)}
+        title="Account"
+      >
+        <div className="space-y-4">
+          <div>
+            <p className="text-xs font-medium text-foreground-secondary mb-0.5">
+              Timezone
+            </p>
+            <p className="text-[11px] text-foreground-secondary mb-1">
+              Used for delivery windows, reports, and calendar events.
+            </p>
+            <select
+              value={timezone}
+              onChange={(e) => setTimezone(e.target.value)}
+              className="flex h-9 w-full max-w-xs rounded-md border border-input bg-background px-2 py-1 text-sm"
+            >
+              <option value="America/Denver">Mountain (America/Denver)</option>
+              <option value="America/Los_Angeles">Pacific (America/Los_Angeles)</option>
+              <option value="America/Chicago">Central (America/Chicago)</option>
+              <option value="America/New_York">Eastern (America/New_York)</option>
+              <option value={timezone}>Use browser default ({timezone})</option>
+            </select>
+          </div>
+
+          <div className="border-t border-border pt-4">
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                className="rounded-md border border-[#E8E4DC] px-4 py-2 text-sm font-medium text-[#3D3D3D] hover:bg-[#F2F5EF] transition-colors"
+                onClick={() => {
+                  router.push("/settings/change-password");
+                }}
+              >
+                Change Password
+              </button>
+              <button
+                type="button"
+                className="ml-auto rounded-md border border-[#D4A843] px-4 py-2 text-sm font-medium text-[#8A8A8A] hover:bg-[#F2F5EF] transition-colors"
+                onClick={() => {
+                  showErrorToast(
+                    "Account deletion will permanently remove your data. This flow is not yet enabled."
+                  );
+                }}
+              >
+                Delete Account
+              </button>
+            </div>
+          </div>
+        </div>
       </CollapsibleCard>
     </div>
   );

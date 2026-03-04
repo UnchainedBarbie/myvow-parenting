@@ -766,26 +766,7 @@ export function ProfileContent({
               </div>
             )}
           </div>
-          <div className="pt-4 mt-4 border-t border-border space-y-3">
-            <div>
-              <Link
-                href="/settings/change-password"
-                className="text-sm text-primary hover:underline"
-              >
-                Change password
-              </Link>
-            </div>
-            <div>
-              <Button
-                variant="outline"
-                size="sm"
-                className="rounded-full h-8 text-xs text-red-600 border-red-600/70 hover:bg-red-50 hover:text-red-700 hover:border-red-700 dark:text-red-400 dark:border-red-400/70 dark:hover:bg-red-950/30 dark:hover:text-red-300"
-              >
-                Delete account
-              </Button>
-              <p className="text-xs text-foreground-secondary mt-1">Permanently remove your account and data.</p>
-            </div>
-          </div>
+          <div className="pt-4 mt-4 border-t border-border space-y-3" />
         </div>
       </CollapsibleCard>
 

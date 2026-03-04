@@ -19,6 +19,7 @@ export default async function ExpensesPage() {
     .maybeSingle();
 
   const caseId = membership?.case_id ?? null;
+  const custodySplitPercent = 50;
 
   if (!caseId) {
     return (
@@ -40,14 +41,6 @@ export default async function ExpensesPage() {
     );
   }
 
-  const { data: caseRow } = await admin
-    .from("cases")
-    .select("custody_split_percent")
-    .eq("id", caseId)
-    .single();
-
-  const custodySplitPercent = Number(caseRow?.custody_split_percent ?? 50);
-
   const { data: children } = await admin
     .from("children")
     .select("id, first_name, profile_image")
@@ -57,7 +50,7 @@ export default async function ExpensesPage() {
   const { data: expensesRaw } = await admin
     .from("expenses")
     .select(
-      "id, description, amount, category, child_id, amount_owed, status, created_at, submitted_by, receipt_file_id, dispute_reason, paid_at, payment_method, payment_reference, payment_notes, deleted_at"
+      "id, description, amount, category, child_id, amount_owed, status, created_at, submitted_by, receipt_file_id, dispute_reason, paid_at, payment_method, payment_reference, payment_notes, deleted_at, allocation_status, split_label"
     )
     .eq("case_id", caseId)
     .is("deleted_at", null)

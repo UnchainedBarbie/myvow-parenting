@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
+import { computeAllocationFromParentingPlan } from "@/lib/expenses-allocation";
 
 /**
  * PATCH /api/expenses/[id] — update expense. Role-based: owner can edit all fields; co-parent can edit status, dispute_reason, and payment fields only.
@@ -26,7 +27,9 @@ export async function PATCH(
 
     const { data: expense, error: fetchError } = await admin
       .from("expenses")
-      .select("id, case_id, submitted_by, amount, amount_owed, split_percent, deleted_at")
+      .select(
+        "id, case_id, submitted_by, amount, amount_owed, split_percent, allocation_status, deleted_at"
+      )
       .eq("id", expenseId)
       .maybeSingle();
 
@@ -85,15 +88,23 @@ export async function PATCH(
       updates.approved_at = now;
     }
 
-    if (isOwner && body.amount !== undefined) {
-      const { data: caseRow } = await admin
-        .from("cases")
-        .select("custody_split_percent")
-        .eq("id", expense.case_id)
-        .single();
-      const splitPct = Number(expense.split_percent ?? caseRow?.custody_split_percent ?? 50);
-      const amountNum = Number(body.amount);
-      updates.amount_owed = amountNum * (splitPct / 100);
+    if (isOwner && (body.amount !== undefined || body.category !== undefined || body.child_id !== undefined)) {
+      const amountNum = Number(body.amount ?? expense.amount);
+      const allocation = await computeAllocationFromParentingPlan({
+        caseId: expense.case_id,
+        amount: amountNum,
+        category: body.category ?? (expense as { category?: string }).category ?? "other",
+        childId:
+          body.child_id !== undefined
+            ? (body.child_id as string | null)
+            : ((expense as { child_id?: string | null }).child_id ?? null),
+      });
+      updates.split_percent = allocation.other_parent_percent;
+      updates.amount_owed = allocation.other_parent_share;
+      updates.allocation_status = allocation.allocation_status;
+      updates.other_parent_percent = allocation.other_parent_percent;
+      updates.other_parent_share = allocation.other_parent_share;
+      updates.split_label = allocation.split_label;
     }
 
     const { error: updateError } = await admin

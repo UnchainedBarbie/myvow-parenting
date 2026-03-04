@@ -185,7 +185,7 @@ export function ExpenseForm({
         // Use the expense description as the document title/description for the receipt
         const descTrimmed = description.trim();
         const fallbackTitle = receiptFile.name || "Receipt";
-        const title = (descTrimmed || fallbackTitle).slice(0, 120);
+        const title = (descTrimmed || fallbackTitle).slice(0, 80);
         formData.set("title", title);
         formData.set("description", descTrimmed || fallbackTitle);
         formData.set("visibility", visibility);
@@ -239,17 +239,12 @@ export function ExpenseForm({
     }
   }
 
-  const otherShare =
-    amount && !isNaN(parseFloat(amount))
-      ? (parseFloat(amount) * (custodySplitPercent / 100)).toFixed(2)
-      : "—";
-
   return (
     <Card className="shadow-card border-border rounded-card">
       <CardHeader className="pb-2 px-4 pt-4">
         <CardTitle className="font-heading text-lg text-foreground">Add expense</CardTitle>
         <p className="text-[11px] text-foreground-secondary mt-0.5">
-          Split based on case custody ({custodySplitPercent}% other parent’s share).
+          Allocation is based on your parenting plan.
         </p>
       </CardHeader>
       <CardContent className="px-4 pb-4 space-y-4">
@@ -369,7 +364,7 @@ export function ExpenseForm({
               Fields auto-filled from your receipt. Review before saving.
             </p>
           )}
-          <div className="space-y-2">
+          <div className="space-y-1.5">
             <div className="flex items-center justify-between">
               <Label htmlFor="exp-description" className="text-xs font-medium">
                 Description
@@ -392,11 +387,15 @@ export function ExpenseForm({
               }}
               placeholder="e.g. Pediatrician visit"
               required
+              maxLength={80}
               className={cn(
                 "flex h-8 w-full rounded-card border border-input bg-background px-3 py-1 text-xs",
                 "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
               )}
             />
+            <div className="text-[10px] text-muted-foreground text-right">
+              {description.length}/80
+            </div>
           </div>
           <div className="space-y-2">
             <div className="flex items-center justify-between">
@@ -539,11 +538,6 @@ export function ExpenseForm({
               ))}
             </select>
           </div>
-          {amount && !isNaN(parseFloat(amount)) && (
-            <p className="text-xs text-foreground-secondary">
-              Other parent’s share ({custodySplitPercent}%): ${otherShare}
-            </p>
-          )}
           <Button
             type="submit"
             disabled={loading}

@@ -17,6 +17,8 @@ export type MessageRow = {
   intensity_flag?: boolean;
   delivery_status?: string;
   delivered_at?: string | null;
+   deliver_at?: string | null;
+   notification_suppressed?: boolean;
   is_emergency?: boolean;
   emergency_type?: string | null;
   emergency_note?: string | null;

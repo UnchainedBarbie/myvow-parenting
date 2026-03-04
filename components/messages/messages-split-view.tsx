@@ -117,6 +117,7 @@ export function MessagesSplitView({
     proactive_sage_drafts_enabled: boolean;
     structured_pause_enabled: boolean;
     cool_off_enabled: boolean;
+    delivery_window_enabled: boolean;
   } | null>(null);
   const [conversationSettings, setConversationSettings] = useState<{
     proactive_sage_enabled: boolean | null;
@@ -246,6 +247,7 @@ export function MessagesSplitView({
             proactive_sage_drafts_enabled: d.proactive_sage_drafts_enabled ?? true,
             structured_pause_enabled: d.structured_pause_enabled ?? true,
             cool_off_enabled: d.cool_off_enabled ?? true,
+            delivery_window_enabled: d.delivery_window_enabled ?? false,
           });
         }
       })
@@ -274,11 +276,37 @@ export function MessagesSplitView({
       .catch(() => {});
   }, [selectedId]);
 
+  const releaseDeliveryWindow = useCallback(() => {
+    if (!userSettings?.delivery_window_enabled) return;
+    fetch("/api/messages/delivery-window/release", { method: "POST" })
+      .then((r) => r.json())
+      .then(async (d) => {
+        const { released, summary_notification } = d as {
+          released?: number;
+          summary_notification?: string | null;
+        };
+        if ((released ?? 0) > 0 && selectedId) {
+          await loadMessages(selectedId);
+        }
+        if (summary_notification) {
+          showSuccessToast(summary_notification);
+        }
+      })
+      .catch(() => {});
+  }, [selectedId, userSettings?.delivery_window_enabled]);
+
   useEffect(() => {
     releaseCoolOff();
     const t = setInterval(releaseCoolOff, 60 * 1000);
     return () => clearInterval(t);
   }, [releaseCoolOff]);
+
+  useEffect(() => {
+    if (!userSettings?.delivery_window_enabled) return;
+    releaseDeliveryWindow();
+    const t = setInterval(releaseDeliveryWindow, 60 * 1000);
+    return () => clearInterval(t);
+  }, [releaseDeliveryWindow, userSettings?.delivery_window_enabled]);
 
   // Close conversation card menu on click outside
   useEffect(() => {

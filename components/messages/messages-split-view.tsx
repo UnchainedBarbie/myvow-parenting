@@ -679,16 +679,16 @@ export function MessagesSplitView({
               <Plus className="h-4 w-4" />
             </button>
           </div>
-          <div className="mt-2 flex flex-wrap items-center gap-2">
+          <div className="mt-2 flex items-center gap-1.5 whitespace-nowrap">
             <select
               value={filterTopic}
               onChange={(e) => setFilterTopic(e.target.value)}
               className={cn(
-                "h-6 min-w-0 max-w-[7.5rem] shrink-0 rounded-full border px-1.5 text-xs text-[#3D3D3D] bg-[#FDFBF7] border-[#E8E4DC] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E]",
+                "h-6 min-w-[72px] max-w-[6.5rem] shrink-0 rounded-full border px-2 py-1 text-[11px] text-[#3D3D3D] bg-[#FDFBF7] border-[#E8E4DC] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E]",
                 filterTopic !== "all" && "bg-[#F2F5EF] border-[#7C8B6E]"
               )}
             >
-              <option value="all">All topics</option>
+              <option value="all">Topics</option>
               <option value="medical">Medical</option>
               <option value="schedule">Schedule</option>
               <option value="school">School</option>
@@ -701,11 +701,11 @@ export function MessagesSplitView({
               value={filterChild}
               onChange={(e) => setFilterChild(e.target.value)}
               className={cn(
-                "h-6 min-w-0 max-w-[7.5rem] shrink-0 rounded-full border px-1.5 text-xs text-[#3D3D3D] bg-[#FDFBF7] border-[#E8E4DC] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E]",
+                "h-6 min-w-[78px] max-w-[6.5rem] shrink-0 rounded-full border px-2 py-1 text-[11px] text-[#3D3D3D] bg-[#FDFBF7] border-[#E8E4DC] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E]",
                 filterChild !== "all" && "bg-[#F2F5EF] border-[#7C8B6E]"
               )}
             >
-              <option value="all">All children</option>
+              <option value="all">Children</option>
               {children.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.first_name}
@@ -720,11 +720,11 @@ export function MessagesSplitView({
                 )
               }
               className={cn(
-                "h-6 min-w-0 max-w-[8.5rem] shrink-0 rounded-full border px-1.5 text-xs text-[#3D3D3D] bg-[#FDFBF7] border-[#E8E4DC] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E]",
+                "h-6 min-w-[70px] max-w-[6rem] shrink-0 rounded-full border px-2 py-1 text-[11px] text-[#3D3D3D] bg-[#FDFBF7] border-[#E8E4DC] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E]",
                 filterStatus !== "open" && "bg-[#F2F5EF] border-[#7C8B6E]"
               )}
             >
-              <option value="open">Open</option>
+              <option value="open">Status</option>
               <option value="archived">Archived</option>
               <option value="flagged">Flagged</option>
               <option value="all">All conversations</option>

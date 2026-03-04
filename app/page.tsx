@@ -14,13 +14,9 @@ export default function LandingPage() {
       <header className="border-b border-border bg-background/95 backdrop-blur">
         <div className="container mx-auto flex h-16 items-center justify-between px-4">
           <Link href="/" className="flex items-center">
-            <Image
-              src="/Horiztonal%20log.png"
-              alt="MyVow Parenting"
-              width={140}
-              height={40}
-              className="h-auto w-[140px] object-contain object-left"
-            />
+            <span className="font-heading text-lg md:text-xl font-semibold tracking-tight text-foreground">
+              MyVow
+            </span>
           </Link>
           <nav className="flex items-center gap-4">
             <Link
@@ -95,21 +91,9 @@ function Hero() {
             </p>
           </div>
 
-          {/* Right: Product preview with dove watermark */}
-          <div className="relative mt-6 md:mt-0 flex justify-end">
-            <div className="pointer-events-none absolute -right-10 bottom-0 hidden md:block">
-              <Image
-                src="/dove-translucent.png"
-                alt=""
-                width={400}
-                height={400}
-                aria-hidden
-                className="w-[320px] lg:w-[380px] opacity-20 mix-blend-multiply select-none"
-              />
-            </div>
-            <div className="relative z-10">
-              <ProductPreviewPanel />
-            </div>
+          {/* Right: Product preview */}
+          <div className="mt-6 md:mt-0">
+            <ProductPreviewPanel />
           </div>
         </div>
       </div>
@@ -194,57 +178,70 @@ function VowSection() {
   return (
     <section className="border-b border-border/60 bg-background">
       <div className="container mx-auto px-4 py-10 md:py-12">
-        <div className="max-w-3xl space-y-6">
-          <h2 className="font-heading text-xl md:text-2xl font-semibold text-foreground">
-            The MyVow
-          </h2>
-          <p className="text-sm md:text-base text-foreground-secondary max-w-xl">
-            Every parent using MyVow begins with a simple commitment:
-          </p>
-          <div className="rounded-2xl border border-border bg-muted/60 px-4 py-4 md:px-5 md:py-5">
-            <p className="text-sm md:text-base font-medium italic text-foreground">
-              “I vow not to let adult conflict harm my children.”
+        <div className="grid gap-8 md:grid-cols-2 items-start">
+          <div className="max-w-3xl space-y-6">
+            <h2 className="font-heading text-xl md:text-2xl font-semibold text-foreground">
+              The MyVow
+            </h2>
+            <p className="text-sm md:text-base text-foreground-secondary max-w-xl">
+              Every parent using MyVow begins with a simple commitment:
             </p>
-          </div>
-          <p className="text-sm md:text-base text-foreground-secondary max-w-xl">
-            MyVow helps parents keep that promise through calm structure, clear
-            coordination, and guidance when communication gets hard.
-          </p>
+            <div className="rounded-2xl border border-border bg-muted/60 px-4 py-4 md:px-5 md:py-5">
+              <p className="text-sm md:text-base font-medium italic text-foreground">
+                “I vow not to let adult conflict harm my children.”
+              </p>
+            </div>
+            <p className="text-sm md:text-base text-foreground-secondary max-w-xl">
+              MyVow helps parents keep that promise through calm structure, clear
+              coordination, and guidance when communication gets hard.
+            </p>
 
-          <div className="mt-4 grid gap-3 md:grid-cols-2">
-            <div className="rounded-xl border border-border bg-background-secondary/40 px-3 py-3">
-              <p className="text-sm font-medium text-foreground">
-                Calm, structured communication
-              </p>
-              <p className="mt-1 text-[11px] md:text-xs text-foreground-secondary">
-                Keep conversations focused on children instead of old arguments.
-              </p>
+            <div className="mt-4 grid gap-3 md:grid-cols-2">
+              <div className="rounded-xl border border-border bg-background-secondary/40 px-3 py-3">
+                <p className="text-sm font-medium text-foreground">
+                  Calm, structured communication
+                </p>
+                <p className="mt-1 text-[11px] md:text-xs text-foreground-secondary">
+                  Keep conversations focused on children instead of old arguments.
+                </p>
+              </div>
+              <div className="rounded-xl border border-border bg-background-secondary/40 px-3 py-3">
+                <p className="text-sm font-medium text-foreground">
+                  Shared parenting coordination tools
+                </p>
+                <p className="mt-1 text-[11px] md:text-xs text-foreground-secondary">
+                  See schedules, costs, and key information in one calm place.
+                </p>
+              </div>
+              <div className="rounded-xl border border-border bg-background-secondary/40 px-3 py-3">
+                <p className="text-sm font-medium text-foreground">
+                  AI guidance when conversations become difficult
+                </p>
+                <p className="mt-1 text-[11px] md:text-xs text-foreground-secondary">
+                  Get gentle suggestions when you need help finding the right
+                  words.
+                </p>
+              </div>
+              <div className="rounded-xl border border-border bg-background-secondary/40 px-3 py-3">
+                <p className="text-sm font-medium text-foreground">
+                  Clear documentation when accountability matters
+                </p>
+                <p className="mt-1 text-[11px] md:text-xs text-foreground-secondary">
+                  Keep a calm record of what was shared, decided, and paid.
+                </p>
+              </div>
             </div>
-            <div className="rounded-xl border border-border bg-background-secondary/40 px-3 py-3">
-              <p className="text-sm font-medium text-foreground">
-                Shared parenting coordination tools
-              </p>
-              <p className="mt-1 text-[11px] md:text-xs text-foreground-secondary">
-                See schedules, costs, and key information in one calm place.
-              </p>
-            </div>
-            <div className="rounded-xl border border-border bg-background-secondary/40 px-3 py-3">
-              <p className="text-sm font-medium text-foreground">
-                AI guidance when conversations become difficult
-              </p>
-              <p className="mt-1 text-[11px] md:text-xs text-foreground-secondary">
-                Get gentle suggestions when you need help finding the right
-                words.
-              </p>
-            </div>
-            <div className="rounded-xl border border-border bg-background-secondary/40 px-3 py-3">
-              <p className="text-sm font-medium text-foreground">
-                Clear documentation when accountability matters
-              </p>
-              <p className="mt-1 text-[11px] md:text-xs text-foreground-secondary">
-                Keep a calm record of what was shared, decided, and paid.
-              </p>
-            </div>
+          </div>
+
+          <div className="hidden md:flex items-center justify-end">
+            <Image
+              src="/dove-translucent.png"
+              alt=""
+              width={400}
+              height={400}
+              aria-hidden
+              className="w-[320px] lg:w-[380px] opacity-20 mix-blend-multiply select-none"
+            />
           </div>
         </div>
       </div>

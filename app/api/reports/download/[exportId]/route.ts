@@ -41,10 +41,18 @@ export async function GET(
         { status: 404 }
       );
     }
+    const ext = row.file_path.split(".").pop()?.toLowerCase() ?? "pdf";
+    const contentType =
+      ext === "csv"
+        ? "text/csv"
+        : ext === "xlsx"
+          ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+          : "application/pdf";
+    const filename = `export-${exportId}.${ext}`;
     return new NextResponse(file, {
       headers: {
-        "Content-Type": "application/pdf",
-        "Content-Disposition": `attachment; filename="export-${exportId}.pdf"`,
+        "Content-Type": contentType,
+        "Content-Disposition": `attachment; filename="${filename}"`,
       },
     });
   } catch (e) {

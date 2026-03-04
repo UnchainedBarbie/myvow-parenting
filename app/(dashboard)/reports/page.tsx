@@ -1,6 +1,6 @@
 import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
-import { ExportForm } from "@/components/reports/export-form";
+import { ReportsHub } from "@/components/reports/reports-hub";
 import { ExportList, type ExportRow } from "@/components/reports/export-list";
 
 export default async function ReportsPage() {
@@ -27,7 +27,7 @@ export default async function ReportsPage() {
           Reports
         </h1>
         <p className="text-foreground-secondary mb-8">
-          Court-ready exports with date range and verification hash.
+          Generate court-ready documentation from your case data.
         </p>
         <div className="rounded-card border border-border bg-background-secondary p-8 text-center">
           <p className="text-foreground-secondary">
@@ -63,11 +63,10 @@ export default async function ReportsPage() {
         Reports
       </h1>
       <p className="text-foreground-secondary mb-8">
-        Generate court-ready PDF exports. Each export is logged for the audit trail
-        and includes a verification hash.
+        Generate court-ready documentation from your case data.
       </p>
       <div className="space-y-8">
-        <ExportForm caseId={caseId} />
+        <ReportsHub caseId={caseId} children={[]} />
         <ExportList exports={exports} />
       </div>
     </div>

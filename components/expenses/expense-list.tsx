@@ -9,9 +9,10 @@ import { cn } from "@/lib/utils";
 import { ColumnFilterPopover } from "@/components/documents/column-filter-popover";
 import { DateFilterPopover, type DateFilterValue } from "@/components/documents/date-filter-popover";
 import { getCategoryColor } from "@/lib/categoryColors";
-import { Download, Trash2, Check, XCircle, Receipt, Filter, Paperclip, Pencil } from "lucide-react";
+import { Download, Trash2, Check, XCircle, Receipt, Filter, Paperclip, Pencil, Lock } from "lucide-react";
 import { showErrorToast, showSuccessToast } from "@/components/ui/toaster";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
+import { Label } from "@/components/ui/label";
 
 const CATEGORY_LABELS: Record<string, string> = {
   medical: "Medical",
@@ -53,6 +54,10 @@ export type ExpenseRow = {
   receipt_file_id: string | null;
   receipt_file_name: string | null;
   dispute_reason?: string | null;
+  paid_at?: string | null;
+  payment_method?: string | null;
+  payment_reference?: string | null;
+  payment_notes?: string | null;
 };
 
 interface ExpenseListProps {
@@ -122,6 +127,81 @@ export function ExpenseList({
   const [markPaidRef, setMarkPaidRef] = useState<string>("");
   const [markPaidNotes, setMarkPaidNotes] = useState<string>("");
   const [exportingSelected, setExportingSelected] = useState(false);
+  const [editExpense, setEditExpense] = useState<ExpenseRow | null>(null);
+  const [editForm, setEditForm] = useState({
+    description: "",
+    amount: "",
+    category: "other",
+    child_id: "",
+    status: "submitted",
+    dispute_reason: "",
+    paid_at: "",
+    payment_method: "",
+    payment_reference: "",
+    payment_notes: "",
+  });
+  const [savingEdit, setSavingEdit] = useState(false);
+
+  function openEditModal(exp: ExpenseRow) {
+    setEditExpense(exp);
+    setEditForm({
+      description: exp.description ?? "",
+      amount: exp.amount ?? "",
+      category: exp.category ?? "other",
+      child_id: exp.child_id ?? "",
+      status: exp.status ?? "submitted",
+      dispute_reason: exp.dispute_reason ?? "",
+      paid_at: (exp as { paid_at?: string | null }).paid_at
+        ? new Date((exp as { paid_at: string }).paid_at).toISOString().slice(0, 10)
+        : "",
+      payment_method: (exp as { payment_method?: string | null }).payment_method ?? "",
+      payment_reference: (exp as { payment_reference?: string | null }).payment_reference ?? "",
+      payment_notes: (exp as { payment_notes?: string | null }).payment_notes ?? "",
+    });
+  }
+
+  function closeEditModal() {
+    setEditExpense(null);
+    setSavingEdit(false);
+  }
+
+  async function handleSaveEdit() {
+    if (!editExpense) return;
+    const amountNum = parseFloat(editForm.amount);
+    if (Number.isNaN(amountNum) && editForm.amount.trim() !== "") {
+      showErrorToast("Enter a valid amount.");
+      return;
+    }
+    setSavingEdit(true);
+    try {
+      const res = await fetch(`/api/expenses/${editExpense.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          description: editForm.description.trim() || undefined,
+          amount: editForm.amount.trim() ? amountNum : undefined,
+          category: editForm.category || undefined,
+          child_id: editForm.child_id || null,
+          status: editForm.status || undefined,
+          dispute_reason: editForm.dispute_reason.trim() || null,
+          paid_at: editForm.paid_at || null,
+          payment_method: editForm.payment_method.trim() || null,
+          payment_reference: editForm.payment_reference.trim() || null,
+          payment_notes: editForm.payment_notes.trim() || null,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showErrorToast((data as { message?: string }).message ?? "Failed to update expense.");
+        return;
+      }
+      showSuccessToast("Expense updated");
+      closeEditModal();
+      router.refresh();
+    } finally {
+      setSavingEdit(false);
+    }
+  }
 
   const debouncedSearch = searchInput.trim().toLowerCase();
 
@@ -1035,15 +1115,20 @@ export function ExpenseList({
                               <Receipt className="h-3.5 w-3.5" />
                             </button>
                           )}
-                          {canRespond(exp) && null}
+                          <button
+                            type="button"
+                            className="p-1.5 rounded text-[#8A8A8A] hover:text-[#5B7A52] hover:bg-[#E8EDE3]/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            aria-label="Edit expense"
+                            onClick={() => openEditModal(exp)}
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </button>
                           {!canRespond(exp) && (
                             <button
                               type="button"
                               className="p-1.5 rounded text-foreground-secondary hover:text-foreground hover:bg-muted/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                               aria-label="Delete expense"
-                              onClick={async () => {
-                                setDeleteSingleId(exp.id);
-                              }}
+                              onClick={() => setDeleteSingleId(exp.id)}
                             >
                               <Trash2 className="h-3.5 w-3.5" />
                             </button>
@@ -1252,6 +1337,210 @@ export function ExpenseList({
               }}
             >
               Mark Paid
+            </Button>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {editExpense && (
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="edit-expense-title"
+        onClick={(e) => {
+          if (e.target === e.currentTarget) closeEditModal();
+        }}
+      >
+        <div
+          className="w-full max-w-lg rounded-xl border border-[#E8E4DC] bg-[#FDFBF7] p-4 shadow-lg max-h-[90vh] overflow-y-auto"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <h2 id="edit-expense-title" className="font-heading text-lg font-semibold text-[#3D3D3D]">
+            Edit Expense
+          </h2>
+
+          <div className="mt-4 space-y-3">
+            <div className="space-y-1">
+              <Label className="text-xs font-medium text-[#3D3D3D] flex items-center gap-1">
+                Description
+                {editExpense.submitted_by !== currentUserId && (
+                  <Lock className="h-3 w-3 text-foreground-secondary" aria-hidden />
+                )}
+              </Label>
+              {editExpense.submitted_by === currentUserId ? (
+                <Input
+                  value={editForm.description}
+                  onChange={(e) => setEditForm((f) => ({ ...f, description: e.target.value }))}
+                  className="h-8 text-sm border-[#E8E4DC]"
+                />
+              ) : (
+                <p className="text-sm text-foreground-secondary py-1.5">{editExpense.description || "—"}</p>
+              )}
+            </div>
+
+            <div className="space-y-1">
+              <Label className="text-xs font-medium text-[#3D3D3D] flex items-center gap-1">
+                Amount
+                {editExpense.submitted_by !== currentUserId && (
+                  <Lock className="h-3 w-3 text-foreground-secondary" aria-hidden />
+                )}
+              </Label>
+              {editExpense.submitted_by === currentUserId ? (
+                <Input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={editForm.amount}
+                  onChange={(e) => setEditForm((f) => ({ ...f, amount: e.target.value }))}
+                  className="h-8 text-sm border-[#E8E4DC]"
+                />
+              ) : (
+                <p className="text-sm text-foreground-secondary py-1.5">
+                  ${Number(editExpense.amount).toFixed(2)}
+                </p>
+              )}
+            </div>
+
+            <div className="space-y-1">
+              <Label className="text-xs font-medium text-[#3D3D3D] flex items-center gap-1">
+                Category
+                {editExpense.submitted_by !== currentUserId && (
+                  <Lock className="h-3 w-3 text-foreground-secondary" aria-hidden />
+                )}
+              </Label>
+              {editExpense.submitted_by === currentUserId ? (
+                <select
+                  value={editForm.category}
+                  onChange={(e) => setEditForm((f) => ({ ...f, category: e.target.value }))}
+                  className="h-8 w-full rounded-md border border-[#E8E4DC] bg-white px-2 text-sm text-[#3D3D3D] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E]"
+                >
+                  {Object.entries(CATEGORY_LABELS).map(([value, label]) => (
+                    <option key={value} value={value}>{label}</option>
+                  ))}
+                </select>
+              ) : (
+                <p className="text-sm text-foreground-secondary py-1.5">
+                  {CATEGORY_LABELS[editExpense.category] ?? editExpense.category}
+                </p>
+              )}
+            </div>
+
+            <div className="space-y-1">
+              <Label className="text-xs font-medium text-[#3D3D3D] flex items-center gap-1">
+                Child
+                {editExpense.submitted_by !== currentUserId && (
+                  <Lock className="h-3 w-3 text-foreground-secondary" aria-hidden />
+                )}
+              </Label>
+              {editExpense.submitted_by === currentUserId ? (
+                <select
+                  value={editForm.child_id}
+                  onChange={(e) => setEditForm((f) => ({ ...f, child_id: e.target.value }))}
+                  className="h-8 w-full rounded-md border border-[#E8E4DC] bg-white px-2 text-sm text-[#3D3D3D] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E]"
+                >
+                  <option value="">All children</option>
+                  {children.map((c) => (
+                    <option key={c.id} value={c.id}>{c.first_name}</option>
+                  ))}
+                </select>
+              ) : (
+                <p className="text-sm text-foreground-secondary py-1.5">
+                  {editExpense.child_name ?? "—"}
+                </p>
+              )}
+            </div>
+
+            <div className="space-y-1">
+              <Label className="text-xs font-medium text-[#3D3D3D]">Status</Label>
+              <select
+                value={editForm.status}
+                onChange={(e) => setEditForm((f) => ({ ...f, status: e.target.value }))}
+                className="h-8 w-full rounded-md border border-[#E8E4DC] bg-white px-2 text-sm text-[#3D3D3D] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E]"
+              >
+                {STATUS_FILTER_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="space-y-1">
+              <Label className="text-xs font-medium text-[#3D3D3D]">Dispute reason</Label>
+              <Input
+                value={editForm.dispute_reason}
+                onChange={(e) => setEditForm((f) => ({ ...f, dispute_reason: e.target.value }))}
+                placeholder="Optional"
+                className="h-8 text-sm border-[#E8E4DC]"
+              />
+            </div>
+
+            <div className="space-y-1">
+              <Label className="text-xs font-medium text-[#3D3D3D]">Date paid</Label>
+              <Input
+                type="date"
+                value={editForm.paid_at}
+                onChange={(e) => setEditForm((f) => ({ ...f, paid_at: e.target.value }))}
+                className="h-8 text-sm border-[#E8E4DC]"
+              />
+            </div>
+
+            <div className="space-y-1">
+              <Label className="text-xs font-medium text-[#3D3D3D]">Payment method</Label>
+              <select
+                value={editForm.payment_method}
+                onChange={(e) => setEditForm((f) => ({ ...f, payment_method: e.target.value }))}
+                className="h-8 w-full rounded-md border border-[#E8E4DC] bg-white px-2 text-sm text-[#3D3D3D] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E]"
+              >
+                <option value="">—</option>
+                <option value="Venmo">Venmo</option>
+                <option value="Zelle">Zelle</option>
+                <option value="Cash">Cash</option>
+                <option value="Check">Check</option>
+                <option value="Bank Transfer">Bank Transfer</option>
+                <option value="Other">Other</option>
+              </select>
+            </div>
+
+            <div className="space-y-1">
+              <Label className="text-xs font-medium text-[#3D3D3D]">Payment reference</Label>
+              <Input
+                value={editForm.payment_reference}
+                onChange={(e) => setEditForm((f) => ({ ...f, payment_reference: e.target.value }))}
+                placeholder="Optional"
+                className="h-8 text-sm border-[#E8E4DC]"
+              />
+            </div>
+
+            <div className="space-y-1">
+              <Label className="text-xs font-medium text-[#3D3D3D]">Payment notes</Label>
+              <Input
+                value={editForm.payment_notes}
+                onChange={(e) => setEditForm((f) => ({ ...f, payment_notes: e.target.value }))}
+                placeholder="Optional"
+                className="h-8 text-sm border-[#E8E4DC]"
+              />
+            </div>
+          </div>
+
+          <div className="mt-4 flex justify-end gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="rounded-full"
+              onClick={closeEditModal}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              className="rounded-full bg-[#5B7A52] text-white hover:bg-[#476242]"
+              disabled={savingEdit}
+              onClick={() => void handleSaveEdit()}
+            >
+              {savingEdit ? "Saving…" : "Save"}
             </Button>
           </div>
         </div>

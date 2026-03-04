@@ -95,9 +95,21 @@ function Hero() {
             </p>
           </div>
 
-          {/* Right: Product preview */}
-          <div className="mt-6 md:mt-0">
-            <ProductPreviewPanel />
+          {/* Right: Product preview with dove watermark */}
+          <div className="relative mt-6 md:mt-0 flex justify-end">
+            <div className="pointer-events-none absolute -right-10 bottom-0 hidden md:block">
+              <Image
+                src="/dove-translucent.png"
+                alt=""
+                width={400}
+                height={400}
+                aria-hidden
+                className="w-[320px] lg:w-[380px] opacity-20 mix-blend-multiply select-none"
+              />
+            </div>
+            <div className="relative z-10">
+              <ProductPreviewPanel />
+            </div>
           </div>
         </div>
       </div>

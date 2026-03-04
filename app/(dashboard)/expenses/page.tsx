@@ -57,7 +57,7 @@ export default async function ExpensesPage() {
   const { data: expensesRaw } = await admin
     .from("expenses")
     .select(
-      "id, description, amount, category, child_id, amount_owed, status, created_at, submitted_by, receipt_file_id, dispute_reason, paid_at, payment_method, payment_reference, deleted_at"
+      "id, description, amount, category, child_id, amount_owed, status, created_at, submitted_by, receipt_file_id, dispute_reason, paid_at, payment_method, payment_reference, payment_notes, deleted_at"
     )
     .eq("case_id", caseId)
     .is("deleted_at", null)
@@ -121,7 +121,11 @@ export default async function ExpensesPage() {
       e.receipt_file_id && typeof e.receipt_file_id === "string"
         ? receiptNameMap[e.receipt_file_id] ?? null
         : null,
-    dispute_reason: (e as any).dispute_reason ?? null,
+    dispute_reason: (e as { dispute_reason?: string | null }).dispute_reason ?? null,
+    paid_at: (e as { paid_at?: string | null }).paid_at ?? null,
+    payment_method: (e as { payment_method?: string | null }).payment_method ?? null,
+    payment_reference: (e as { payment_reference?: string | null }).payment_reference ?? null,
+    payment_notes: (e as { payment_notes?: string | null }).payment_notes ?? null,
   }));
 
   return (

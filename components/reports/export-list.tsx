@@ -8,6 +8,11 @@ const TYPE_LABELS: Record<string, string> = {
   expenses: "Expense ledger",
   patterns: "Pattern summary",
   full_report: "Full case report",
+  communication_report: "Communication Report",
+  expense_report: "Expense Report",
+  calendar_report: "Calendar & Custody Report",
+  document_index: "Document Index",
+  full_case_report: "Full Case Report",
 };
 
 export type ExportRow = {
@@ -46,7 +51,7 @@ export function ExportList({ exports: exportList }: ExportListProps) {
   return (
     <Card className="shadow-card">
       <CardHeader>
-        <CardTitle className="font-heading text-lg">Previous exports</CardTitle>
+        <CardTitle className="font-heading text-lg">Previous Reports</CardTitle>
       </CardHeader>
       <CardContent>
         {exportList.length === 0 ? (

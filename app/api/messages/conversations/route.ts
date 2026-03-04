@@ -10,7 +10,6 @@ type ConversationRow = {
   created_at: string;
   updated_at: string;
   status?: string | null;
-  is_emergency?: boolean | null;
 };
 
 type MessageRow = {
@@ -29,7 +28,7 @@ type MessageRow = {
 export async function GET() {
   try {
     const supabase = await createClient();
-    const {
+  const {
       data: { user },
     } = await supabase.auth.getUser();
     if (!user) {
@@ -46,6 +45,11 @@ export async function GET() {
       .maybeSingle();
 
     const caseId = membership?.case_id as string | null;
+    console.log("[conversations.GET] membership", {
+      userId: user.id,
+      membership,
+      caseId,
+    });
     if (!caseId) {
       return NextResponse.json({ conversations: [] });
     }
@@ -53,10 +57,16 @@ export async function GET() {
     const { data: conversationsRaw, error: convError } = await admin
       .from("conversations")
       .select(
-        "id, case_id, subject, child_id, category, created_at, updated_at, status, is_emergency"
+        "id, case_id, subject, child_id, category, created_at, updated_at, status"
       )
       .eq("case_id", caseId)
       .order("updated_at", { ascending: false });
+
+    console.log("[conversations.GET] conversations query result", {
+      caseId,
+      count: conversationsRaw?.length ?? 0,
+      error: convError,
+    });
 
     if (convError) {
       return NextResponse.json(
@@ -78,6 +88,12 @@ export async function GET() {
         "id, conversation_id, original_content, ai_rewritten_content, direction, created_at, read_at, category, ai_classification, emotional_intensity_score"
       )
       .in("conversation_id", convIds);
+
+    console.log("[conversations.GET] messages query result", {
+      convIdsCount: convIds.length,
+      msgCount: messagesRaw?.length ?? 0,
+      error: msgError,
+    });
 
     if (msgError) {
       return NextResponse.json(
@@ -212,7 +228,6 @@ export async function GET() {
         pinned_by_me: pinnedConversationIds.has(c.id),
         status,
         tone,
-        is_emergency: (c as { is_emergency?: boolean | null }).is_emergency ?? false,
       };
     });
 

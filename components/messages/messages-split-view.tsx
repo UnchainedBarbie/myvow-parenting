@@ -49,7 +49,6 @@ type ConversationSummary = {
   has_flagged_by_me?: boolean;
   conversation_flagged_by_me?: boolean;
   pinned_by_me?: boolean;
-  is_emergency?: boolean;
 };
 
 type SageMessage = {
@@ -181,6 +180,12 @@ export function MessagesSplitView({
     try {
       const res = await fetch("/api/messages/conversations");
       const data = await res.json().catch(() => ({}));
+      // eslint-disable-next-line no-console
+      console.log("[Messages] loadConversations response", {
+        ok: res.ok,
+        status: res.status,
+        data,
+      });
       if (!res.ok) return;
       setConversations((data.conversations ?? []) as ConversationSummary[]);
     } finally {
@@ -790,8 +795,9 @@ export function MessagesSplitView({
                       day: "numeric",
                     });
                 const isDeletable = (c.message_count ?? 0) === 0;
-
-                const isEmergency = c.is_emergency === true;
+                const isEmergencyConversation =
+                  (c.category && c.category.toLowerCase() === "medical") ||
+                  (c.subject && c.subject.toLowerCase().includes("emergency"));
                 return (
                   <div
                     key={c.id}
@@ -804,8 +810,8 @@ export function MessagesSplitView({
                       "group relative flex w-full items-start rounded-xl border-l-4 px-2.5 py-2 text-left text-xs transition-colors",
                       isActive
                         ? "border-l-[#7C8B6E] bg-[#F2F5EF]"
-                        : isEmergency
-                        ? "border-l-red-400 bg-red-50/60 hover:bg-red-50"
+                        : isEmergencyConversation
+                        ? "border-l-red-400 bg-red-50 border border-red-200 hover:bg-red-50"
                         : "border-l-transparent bg-white hover:bg-[#FDFBF7]"
                     )}
                   >
@@ -813,7 +819,7 @@ export function MessagesSplitView({
                       <div className="flex items-center justify-between gap-2">
                         <p className="truncate text-[13px] font-semibold text-[#3D3D3D]">
                           <span className="truncate align-middle">{c.subject}</span>
-                          {isEmergency && (
+                          {isEmergencyConversation && (
                             <span className="ml-1 inline-flex items-center gap-0.5 align-middle text-[10px] font-medium text-red-500">
                               <AlertCircle className="h-3 w-3" aria-hidden />
                             </span>

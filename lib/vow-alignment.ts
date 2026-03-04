@@ -1,4 +1,9 @@
-import type { NextRequest } from "next/server";
+/**
+ * Vow alignment: hybrid deterministic + optional LLM.
+ * Layer 1: deterministic markers (hard fail → off_vow; negative/positive adjust score).
+ * Layer 2: LLM classification can be hooked here (return score, label, reasons).
+ * Layer 3: reconciliation — hard fail overrides downward; else map score to aligned/at_risk/off_vow.
+ */
 
 export type VowAlignmentLabel = "aligned" | "at_risk" | "off_vow";
 

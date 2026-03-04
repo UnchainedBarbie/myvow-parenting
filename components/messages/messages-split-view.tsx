@@ -146,7 +146,6 @@ export function MessagesSplitView({
   const [confirmArchiveOpen, setConfirmArchiveOpen] = useState(false);
   const [discardDraftOpen, setDiscardDraftOpen] = useState(false);
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
-  const menuAnchorRef = useRef<HTMLDivElement | null>(null);
 
   const [attachExpenses, setAttachExpenses] = useState<
     { id: string; description: string; amount: number; category: string; status: string; created_at: string }[]
@@ -763,18 +762,23 @@ export function MessagesSplitView({
                 const isDeletable = (c.message_count ?? 0) === 0;
 
                 return (
-                  <button
+                  <div
                     key={c.id}
-                    type="button"
-                    onClick={() => void handleSelectConversation(c.id)}
+                    data-conversation-card={c.id}
                     className={cn(
-                      "group flex w-full items-start gap-2 rounded-xl border-l-4 px-2.5 py-2 text-left text-xs transition-colors",
+                      "group relative flex w-full items-start gap-2 rounded-xl border-l-4 px-2.5 py-2 text-left text-xs transition-colors",
                       isActive
                         ? "border-l-[#7C8B6E] bg-[#F2F5EF]"
                         : "border-l-transparent bg-white hover:bg-[#FDFBF7]"
                     )}
                   >
-                    <div className="mt-0.5 flex h-8 w-8 items-center justify-center rounded-full bg-[#E8EDE3] text-[13px] font-semibold text-[#5B7A52]">
+                    <button
+                      type="button"
+                      onClick={() => void handleSelectConversation(c.id)}
+                      className="absolute inset-0 z-0 rounded-xl"
+                      aria-label={`Open ${c.subject}`}
+                    />
+                    <div className="relative z-10 mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#E8EDE3] text-[13px] font-semibold text-[#5B7A52]">
                       {coparentInitial}
                     </div>
                     <div className="min-w-0 flex-1 space-y-0.5">
@@ -783,6 +787,16 @@ export function MessagesSplitView({
                           {c.subject}
                         </p>
                         <div className="flex items-center gap-1.5">
+                          {c.pinned_by_me && (
+                            <span className="text-[#5B7A52]" title="Pinned">
+                              <Pin className="h-3.5 w-3.5" />
+                            </span>
+                          )}
+                          {c.conversation_flagged_by_me && (
+                            <span className="text-[#B45309]" title="Flagged (private)">
+                              <Flag className="h-3.5 w-3.5 fill-current" />
+                            </span>
+                          )}
                           <span className="shrink-0 text-[10px] text-[#8A8A8A]">
                             {dateLabel}
                           </span>
@@ -791,42 +805,169 @@ export function MessagesSplitView({
                               Archived
                             </span>
                           )}
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              setMenuOpenId(menuOpenId === c.id ? null : c.id);
+                            }}
+                            className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded hover:bg-[#E8E4DC] text-[#B0A899] hover:text-[#6A7A6E]"
+                            aria-label="Conversation options"
+                            aria-expanded={menuOpenId === c.id}
+                          >
+                            <MoreVertical className="h-4 w-4" />
+                          </button>
+                        </div>
+                      </div>
+                      {menuOpenId === c.id && (
+                        <div
+                          data-conversation-menu
+                          className="absolute right-0 top-9 z-20 min-w-[180px] rounded-lg border border-[#E8E4DC] bg-white py-1 shadow-lg"
+                        >
+                          {c.status === "open" && (
+                            <>
+                              {c.pinned_by_me ? (
+                                <button
+                                  type="button"
+                                  className="flex w-full items-center gap-2 px-3 py-2 text-[13px] text-[#3D3D3D] hover:bg-[#F2F5EF] text-left"
+                                  onClick={async (e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    try {
+                                      await fetch(`/api/messages/conversations/${c.id}/pin`, { method: "DELETE" });
+                                      await loadConversations();
+                                      setMenuOpenId(null);
+                                    } catch {
+                                      showErrorToast("Could not unpin");
+                                    }
+                                  }}
+                                >
+                                  <Pin className="h-3.5 w-3.5" /> Unpin conversation
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  className="flex w-full items-center gap-2 px-3 py-2 text-[13px] text-[#3D3D3D] hover:bg-[#F2F5EF] text-left"
+                                  onClick={async (e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    try {
+                                      await fetch(`/api/messages/conversations/${c.id}/pin`, { method: "POST" });
+                                      await loadConversations();
+                                      setMenuOpenId(null);
+                                    } catch {
+                                      showErrorToast("Could not pin");
+                                    }
+                                  }}
+                                >
+                                  <Pin className="h-3.5 w-3.5" /> Pin conversation
+                                </button>
+                              )}
+                              {c.conversation_flagged_by_me ? (
+                                <button
+                                  type="button"
+                                  className="flex w-full items-center gap-2 px-3 py-2 text-[13px] text-[#3D3D3D] hover:bg-[#F2F5EF] text-left"
+                                  onClick={async (e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    try {
+                                      await fetch(`/api/messages/conversations/${c.id}/flag`, { method: "DELETE" });
+                                      await loadConversations();
+                                      setMenuOpenId(null);
+                                    } catch {
+                                      showErrorToast("Could not remove flag");
+                                    }
+                                  }}
+                                >
+                                  <Flag className="h-3.5 w-3.5" /> Remove flag
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  className="flex w-full items-center gap-2 px-3 py-2 text-[13px] text-[#3D3D3D] hover:bg-[#F2F5EF] text-left"
+                                  onClick={async (e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    try {
+                                      await fetch(`/api/messages/conversations/${c.id}/flag`, { method: "POST" });
+                                      await loadConversations();
+                                      setMenuOpenId(null);
+                                    } catch {
+                                      showErrorToast("Could not flag");
+                                    }
+                                  }}
+                                >
+                                  <Flag className="h-3.5 w-3.5" /> Flag conversation
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                className="flex w-full items-center gap-2 px-3 py-2 text-[13px] text-[#3D3D3D] hover:bg-[#F2F5EF] text-left"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  setSelectedId(c.id);
+                                  setConfirmArchiveOpen(true);
+                                  setMenuOpenId(null);
+                                }}
+                              >
+                                <Archive className="h-3.5 w-3.5" /> Archive conversation
+                              </button>
+                            </>
+                          )}
+                          {c.status === "archived" && (
+                            <button
+                              type="button"
+                              className="flex w-full items-center gap-2 px-3 py-2 text-[13px] text-[#3D3D3D] hover:bg-[#F2F5EF] text-left"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                setSelectedId(c.id);
+                                setConfirmArchiveOpen(true);
+                                setMenuOpenId(null);
+                              }}
+                            >
+                              <ArchiveRestore className="h-3.5 w-3.5" /> Unarchive conversation
+                            </button>
+                          )}
                           {isDeletable && (
                             <button
                               type="button"
+                              className="flex w-full items-center gap-2 px-3 py-2 text-[13px] text-[#C3442D] hover:bg-[#FDF2F0] text-left"
                               onClick={(e) => {
+                                e.preventDefault();
                                 e.stopPropagation();
                                 setDeleteConversationId(c.id);
+                                setMenuOpenId(null);
                               }}
-                              className="opacity-0 group-hover:opacity-100 transition-opacity text-[#B0A899] hover:text-[#8A8A8A]"
-                              aria-label="Delete empty conversation"
                             >
-                              <Trash2 className="h-3.5 w-3.5" />
+                              <Trash2 className="h-3.5 w-3.5" /> Delete conversation
                             </button>
                           )}
                         </div>
-                      </div>
+                      )}
                       <p className="line-clamp-1 text-[11px] text-[#8A8A8A]">
                         {c.last_message_preview || "No messages yet."}
                       </p>
                       <div className="flex items-center justify-between gap-2 pt-0.5">
-                      <div className="flex items-center gap-1.5">
-                        <span className="inline-flex items-center gap-1 rounded-full bg-[#F2F5EF] px-2 py-0.5 text-[10px] text-[#5B7A52]">
-                          <span className="h-1.5 w-1.5 rounded-full bg-[#7C8B6E]" />
-                          {c.category === "medical"
-                            ? "Medical"
-                            : c.category === "schedule"
-                              ? "Schedule"
-                              : c.category === "school"
-                                ? "School"
-                                : c.category === "expense"
-                                  ? "Expense"
-                                  : c.category === "therapy"
-                                    ? "Therapy"
-                                    : c.category === "behavior"
-                                      ? "Behavior"
-                                      : "General"}
-                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <span className="inline-flex items-center gap-1 rounded-full bg-[#F2F5EF] px-2 py-0.5 text-[10px] text-[#5B7A52]">
+                            <span className="h-1.5 w-1.5 rounded-full bg-[#7C8B6E]" />
+                            {c.category === "medical"
+                              ? "Medical"
+                              : c.category === "schedule"
+                                ? "Schedule"
+                                : c.category === "school"
+                                  ? "School"
+                                  : c.category === "expense"
+                                    ? "Expense"
+                                    : c.category === "therapy"
+                                      ? "Therapy"
+                                      : c.category === "behavior"
+                                        ? "Behavior"
+                                        : "General"}
+                          </span>
                           <span className="inline-flex items-center gap-1 rounded-full bg-[#F2F5EF] px-2 py-0.5 text-[10px] text-[#5B7A52]">
                             <span className="h-1.5 w-1.5 rounded-full bg-[#7C8B6E]" />
                             {childName}
@@ -839,25 +980,12 @@ export function MessagesSplitView({
                           <span
                             className={cn(
                               "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium",
-                              c.status === "resolved"
-                                ? "bg-[#E3F2E6] text-[#5B7A52]"
-                                : c.status === "archived"
-                                  ? "bg-[#F5F5F5] text-[#8A8A8A]"
-                                  : "bg-[#F2F5EF] text-[#5B7A52]"
+                              c.status === "archived"
+                                ? "bg-[#F5F5F5] text-[#8A8A8A]"
+                                : "bg-[#F2F5EF] text-[#5B7A52]"
                             )}
                           >
-                            {c.status === "resolved" && (
-                              <span aria-hidden className="text-[11px]">
-                                ✓
-                              </span>
-                            )}
-                            <span>
-                              {c.status === "resolved"
-                                ? "Resolved"
-                                : c.status === "archived"
-                                  ? "Archived"
-                                  : "Open"}
-                            </span>
+                            {c.status === "archived" ? "Archived" : "Open"}
                           </span>
                           {c.unread_count > 0 && (
                             <span className="h-2 w-2 rounded-full bg-[#D0705A]" />
@@ -865,7 +993,7 @@ export function MessagesSplitView({
                         </div>
                       </div>
                     </div>
-                  </button>
+                  </div>
                 );
               })
             )}

@@ -96,6 +96,10 @@ export function MyVowClient({ initialVows }: Props) {
       setAlignmentData(null);
       return;
     }
+    if (alignmentRange === "custom" && (!alignmentFrom || !alignmentTo)) {
+      setAlignmentData(null);
+      return;
+    }
 
     const controller = new AbortController();
     async function loadAlignment() {
@@ -306,7 +310,7 @@ export function MyVowClient({ initialVows }: Props) {
           {/* RIGHT COLUMN — Alignment + Your vows list */}
           <div className="rounded-2xl border border-[#E8E4DC]/60 bg-white/80 p-3 md:p-4 space-y-3">
             {/* Alignment section */}
-            <section className="rounded-xl border border-[#E8E4DC]/70 bg-[#FBF7F0] px-3 py-2.5 md:px-3.5 md:py-3 space-y-2.5">
+            <section className="rounded-xl border border-[#E0E0E0] bg-[#F8F8F8] px-3 py-2.5 md:px-3.5 md:py-3 space-y-2.5">
               <div className="flex items-start justify-between gap-2">
                 <div>
                   <h2 className="font-heading text-sm md:text-base font-semibold text-[#2F3E34]">
@@ -340,9 +344,9 @@ export function MyVowClient({ initialVows }: Props) {
               </div>
 
               {!pinnedVow ? (
-                <div className="rounded-lg border border-dashed border-[#E0D6C4] bg-[#FDFBF7] px-3 py-2.5 text-xs text-foreground-secondary flex items-center justify-between gap-2">
+                <div className="rounded-lg border border-dashed border-[#D0D0D0] bg-[#F5F5F5] px-3 py-2.5 text-xs text-[#6A6A6A] flex items-center justify-between gap-2">
                   <div>
-                    <p className="font-medium text-[#4A5A4A]">Pin a vow to see alignment.</p>
+                    <p className="font-medium text-[#3D3D3D]">Pin a vow to see alignment.</p>
                     <p className="text-[11px]">
                       When a vow is active, we&apos;ll quietly summarize how closely recent messages match it.
                     </p>
@@ -351,7 +355,7 @@ export function MyVowClient({ initialVows }: Props) {
                     type="button"
                     size="sm"
                     variant="outline"
-                    className="h-7 rounded-full px-3 text-[11px] border-[#D2DECF] text-[#3D4A3A] hover:bg-[#EEF3E8]"
+                    className="h-7 rounded-full px-3 text-[11px] border-[#A0A0A0] text-[#3D3D3D] hover:bg-[#E8E8E8]"
                     onClick={() => {
                       vowListRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
                     }}
@@ -371,7 +375,7 @@ export function MyVowClient({ initialVows }: Props) {
               ) : alignmentError ? (
                 <p className="text-xs text-[#9A6B54]">{alignmentError}</p>
               ) : !alignmentData || !alignmentData.alignment ? (
-                <p className="text-xs text-foreground-secondary">
+                <p className="text-xs text-[#6A6A6A]">
                   {pinnedVow
                     ? "No messages in this period."
                     : "Pin a vow to see alignment."}
@@ -380,11 +384,14 @@ export function MyVowClient({ initialVows }: Props) {
                 <>
                   <div className="flex items-end justify-between gap-3">
                     <div>
-                      <p className="text-[11px] uppercase tracking-wide text-foreground-secondary">
+                      <p className="text-[11px] uppercase tracking-wide text-[#6A6A6A]">
                         Alignment score
                       </p>
-                      <p className="text-2xl md:text-3xl font-semibold text-[#2F3E34]">
+                      <p className="text-2xl md:text-3xl font-semibold text-[#3D3D3D]">
                         {Math.round(alignmentData.alignment.score_avg_0_to_100)}
+                      </p>
+                      <p className="text-[10px] text-[#6A6A6A] mt-0.5">
+                        Based on messages you sent in this period.
                       </p>
                     </div>
                     <div className="flex flex-1 justify-end gap-1.5">
@@ -402,12 +409,12 @@ export function MyVowClient({ initialVows }: Props) {
                         return (
                           <div
                             key={key}
-                            className="min-w-[72px] rounded-lg border border-[#E1D9C8] bg-[#F9F4EB] px-2 py-1.5"
+                            className="min-w-[72px] rounded-lg border border-[#D0D0D0] bg-[#F5F5F5] px-2 py-1.5"
                           >
-                            <p className="text-[10px] text-foreground-secondary">{label}</p>
-                            <p className="text-xs font-medium text-[#2F3E34]">
+                            <p className="text-[10px] text-[#6A6A6A]">{label}</p>
+                            <p className="text-xs font-medium text-[#3D3D3D]">
                               {count}{" "}
-                              <span className="text-[10px] text-foreground-secondary">
+                              <span className="text-[10px] text-[#6A6A6A]">
                                 ({pct}%)
                               </span>
                             </p>
@@ -419,16 +426,16 @@ export function MyVowClient({ initialVows }: Props) {
 
                   {alignmentData.alignment.reasons_top.length > 0 && (
                     <div className="space-y-1.5">
-                      <p className="text-[11px] font-medium text-[#3D4A3A]">
+                      <p className="text-[11px] font-medium text-[#3D3D3D]">
                         What we&apos;re noticing, in neutral terms:
                       </p>
                       <ul className="space-y-0.5">
                         {alignmentData.alignment.reasons_top.slice(0, 4).map((r) => (
                           <li
                             key={r.reason}
-                            className="text-[11px] text-foreground-secondary flex items-start gap-1.5"
+                            className="text-[11px] text-[#6A6A6A] flex items-start gap-1.5"
                           >
-                            <span className="mt-[5px] h-1.5 w-1.5 rounded-full bg-[#D2DECF]" />
+                            <span className="mt-[5px] h-1.5 w-1.5 rounded-full bg-[#A0A0A0]" />
                             <span>{r.reason}</span>
                           </li>
                         ))}
@@ -436,13 +443,13 @@ export function MyVowClient({ initialVows }: Props) {
                     </div>
                   )}
 
-                  <div className="border-t border-[#E6DFD1] pt-2 mt-1">
+                  <div className="border-t border-[#E0E0E0] pt-2 mt-1">
                     <button
                       type="button"
                       onClick={() => setShowExamples((prev) => !prev)}
-                      className="flex w-full items-center justify-between text-[11px] text-foreground-secondary hover:text-foreground transition-colors"
+                      className="flex w-full items-center justify-between text-[11px] text-[#6A6A6A] hover:text-[#3D3D3D] transition-colors"
                     >
-                      <span>Examples from this period (private)</span>
+                      <span>Examples from this period</span>
                       {showExamples ? (
                         <ChevronDown className="h-3 w-3" aria-hidden />
                       ) : (
@@ -467,21 +474,21 @@ export function MyVowClient({ initialVows }: Props) {
                           return (
                             <div
                               key={bucket}
-                              className="rounded-lg border border-[#E4DDCF] bg-[#FDFBF7] px-2.5 py-2"
+                              className="rounded-lg border border-[#D0D0D0] bg-[#FAFAFA] px-2.5 py-2"
                             >
                               <div className="flex items-center justify-between gap-2">
-                                <p className="text-[11px] font-medium text-[#3D4A3A]">
+                                <p className="text-[11px] font-medium text-[#3D3D3D]">
                                   {title}
                                 </p>
-                                <p className="text-[10px] text-foreground-secondary">
+                                <p className="text-[10px] text-[#6A6A6A]">
                                   {dateLabel}
                                 </p>
                               </div>
-                              <p className="mt-1 text-xs text-foreground line-clamp-2">
+                              <p className="mt-1 text-xs text-[#3D3D3D] line-clamp-2">
                                 {example.snippet}
                               </p>
                               {example.reasons.length > 0 && (
-                                <p className="mt-1 text-[10px] text-foreground-secondary">
+                                <p className="mt-1 text-[10px] text-[#6A6A6A]">
                                   {example.reasons[0]}
                                 </p>
                               )}
@@ -491,7 +498,7 @@ export function MyVowClient({ initialVows }: Props) {
                         {(!alignmentData.examples.aligned &&
                           !alignmentData.examples.at_risk &&
                           !alignmentData.examples.off_vow) && (
-                          <p className="text-[11px] text-foreground-secondary">
+                          <p className="text-[11px] text-[#6A6A6A]">
                             No specific examples surfaced for this period.
                           </p>
                         )}

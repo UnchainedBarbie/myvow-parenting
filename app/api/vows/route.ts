@@ -113,6 +113,52 @@ export async function POST(request: NextRequest) {
 
     const now = new Date().toISOString();
 
+    const MAX_PINNED = 3;
+
+    if (is_pinned === true) {
+      const { count: pinnedCount, error: countError } = await admin
+        .from("vows")
+        .select("*", { count: "exact", head: true })
+        .eq("case_id", caseId)
+        .eq("user_id", user.id)
+        .eq("is_pinned", true)
+        .is("deleted_at", null);
+
+      if (countError) {
+        return NextResponse.json(
+          { message: countError.message },
+          { status: 500 }
+        );
+      }
+
+      const currentPinnedCount = pinnedCount ?? 0;
+
+      if (id) {
+        const { data: existing } = await admin
+          .from("vows")
+          .select("is_pinned")
+          .eq("id", id)
+          .eq("case_id", caseId)
+          .eq("user_id", user.id)
+          .maybeSingle();
+
+        const wasAlreadyPinned = (existing?.is_pinned as boolean) ?? false;
+        if (!wasAlreadyPinned && currentPinnedCount >= MAX_PINNED) {
+          return NextResponse.json(
+            { message: "You can pin up to 3 vows at a time" },
+            { status: 400 }
+          );
+        }
+      } else {
+        if (currentPinnedCount >= MAX_PINNED) {
+          return NextResponse.json(
+            { message: "You can pin up to 3 vows at a time" },
+            { status: 400 }
+          );
+        }
+      }
+    }
+
     let saved: VowRow | null = null;
 
     if (id) {
@@ -181,16 +227,6 @@ export async function POST(request: NextRequest) {
         created_at: data.created_at as string,
         updated_at: data.updated_at as string,
       };
-    }
-
-    if (saved && saved.is_pinned) {
-      // Unpin other vows for this user/case
-      await admin
-        .from("vows")
-        .update({ is_pinned: false, updated_at: now })
-        .eq("case_id", saved.case_id)
-        .eq("user_id", saved.user_id)
-        .neq("id", saved.id);
     }
 
     return NextResponse.json({ vow: saved });

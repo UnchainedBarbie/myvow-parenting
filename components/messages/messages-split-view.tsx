@@ -14,7 +14,6 @@ import {
   Lock,
   X,
   Trash2,
-  Bookmark,
   MoreVertical,
   Pin,
   Flag,
@@ -685,7 +684,7 @@ export function MessagesSplitView({
               value={filterTopic}
               onChange={(e) => setFilterTopic(e.target.value)}
               className={cn(
-                "h-7 rounded-full border px-2 text-[11px] text-[#3D3D3D] bg-[#FDFBF7] border-[#E8E4DC] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E]",
+                "h-6 min-w-0 max-w-[7.5rem] shrink-0 rounded-full border px-1.5 text-xs text-[#3D3D3D] bg-[#FDFBF7] border-[#E8E4DC] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E]",
                 filterTopic !== "all" && "bg-[#F2F5EF] border-[#7C8B6E]"
               )}
             >
@@ -702,7 +701,7 @@ export function MessagesSplitView({
               value={filterChild}
               onChange={(e) => setFilterChild(e.target.value)}
               className={cn(
-                "h-7 rounded-full border px-2 text-[11px] text-[#3D3D3D] bg-[#FDFBF7] border-[#E8E4DC] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E]",
+                "h-6 min-w-0 max-w-[7.5rem] shrink-0 rounded-full border px-1.5 text-xs text-[#3D3D3D] bg-[#FDFBF7] border-[#E8E4DC] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E]",
                 filterChild !== "all" && "bg-[#F2F5EF] border-[#7C8B6E]"
               )}
             >
@@ -721,7 +720,7 @@ export function MessagesSplitView({
                 )
               }
               className={cn(
-                "h-7 rounded-full border px-2 text-[11px] text-[#3D3D3D] bg-[#FDFBF7] border-[#E8E4DC] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E]",
+                "h-6 min-w-0 max-w-[8.5rem] shrink-0 rounded-full border px-1.5 text-xs text-[#3D3D3D] bg-[#FDFBF7] border-[#E8E4DC] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E]",
                 filterStatus !== "open" && "bg-[#F2F5EF] border-[#7C8B6E]"
               )}
             >
@@ -823,96 +822,99 @@ export function MessagesSplitView({
                           data-conversation-menu
                           className="absolute right-0 top-9 z-20 min-w-[180px] rounded-lg border border-[#E8E4DC] bg-white py-1 shadow-lg"
                         >
-                          {c.status === "open" && (
-                            <>
-                              {c.pinned_by_me ? (
-                                <button
-                                  type="button"
-                                  className="flex w-full items-center gap-2 px-3 py-2 text-[13px] text-[#3D3D3D] hover:bg-[#F2F5EF] text-left"
-                                  onClick={async (e) => {
-                                    e.preventDefault();
-                                    e.stopPropagation();
-                                    try {
-                                      await fetch(`/api/messages/conversations/${c.id}/pin`, { method: "DELETE" });
-                                      await loadConversations();
-                                      setMenuOpenId(null);
-                                    } catch {
-                                      showErrorToast("Could not unpin");
-                                    }
-                                  }}
-                                >
-                                  <Pin className="h-3.5 w-3.5" /> Unpin conversation
-                                </button>
-                              ) : (
-                                <button
-                                  type="button"
-                                  className="flex w-full items-center gap-2 px-3 py-2 text-[13px] text-[#3D3D3D] hover:bg-[#F2F5EF] text-left"
-                                  onClick={async (e) => {
-                                    e.preventDefault();
-                                    e.stopPropagation();
-                                    try {
-                                      await fetch(`/api/messages/conversations/${c.id}/pin`, { method: "POST" });
-                                      await loadConversations();
-                                      setMenuOpenId(null);
-                                    } catch {
-                                      showErrorToast("Could not pin");
-                                    }
-                                  }}
-                                >
-                                  <Pin className="h-3.5 w-3.5" /> Pin conversation
-                                </button>
-                              )}
-                              {c.conversation_flagged_by_me ? (
-                                <button
-                                  type="button"
-                                  className="flex w-full items-center gap-2 px-3 py-2 text-[13px] text-[#3D3D3D] hover:bg-[#F2F5EF] text-left"
-                                  onClick={async (e) => {
-                                    e.preventDefault();
-                                    e.stopPropagation();
-                                    try {
-                                      await fetch(`/api/messages/conversations/${c.id}/flag`, { method: "DELETE" });
-                                      await loadConversations();
-                                      setMenuOpenId(null);
-                                    } catch {
-                                      showErrorToast("Could not remove flag");
-                                    }
-                                  }}
-                                >
-                                  <Flag className="h-3.5 w-3.5" /> Remove flag
-                                </button>
-                              ) : (
-                                <button
-                                  type="button"
-                                  className="flex w-full items-center gap-2 px-3 py-2 text-[13px] text-[#3D3D3D] hover:bg-[#F2F5EF] text-left"
-                                  onClick={async (e) => {
-                                    e.preventDefault();
-                                    e.stopPropagation();
-                                    try {
-                                      await fetch(`/api/messages/conversations/${c.id}/flag`, { method: "POST" });
-                                      await loadConversations();
-                                      setMenuOpenId(null);
-                                    } catch {
-                                      showErrorToast("Could not flag");
-                                    }
-                                  }}
-                                >
-                                  <Flag className="h-3.5 w-3.5" /> Flag conversation
-                                </button>
-                              )}
-                              <button
-                                type="button"
-                                className="flex w-full items-center gap-2 px-3 py-2 text-[13px] text-[#3D3D3D] hover:bg-[#F2F5EF] text-left"
-                                onClick={(e) => {
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                  setSelectedId(c.id);
-                                  setConfirmArchiveOpen(true);
+                          {/* Pin / Unpin always available */}
+                          {c.pinned_by_me ? (
+                            <button
+                              type="button"
+                              className="flex w-full items-center gap-2 px-3 py-2 text-[13px] text-[#3D3D3D] hover:bg-[#F2F5EF] text-left"
+                              onClick={async (e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                try {
+                                  await fetch(`/api/messages/conversations/${c.id}/pin`, { method: "DELETE" });
+                                  await loadConversations();
                                   setMenuOpenId(null);
-                                }}
-                              >
-                                <Archive className="h-3.5 w-3.5" /> Archive conversation
-                              </button>
-                            </>
+                                } catch {
+                                  showErrorToast("Could not unpin");
+                                }
+                              }}
+                            >
+                              <Pin className="h-3.5 w-3.5" /> Unpin conversation
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              className="flex w-full items-center gap-2 px-3 py-2 text-[13px] text-[#3D3D3D] hover:bg-[#F2F5EF] text-left"
+                              onClick={async (e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                try {
+                                  await fetch(`/api/messages/conversations/${c.id}/pin`, { method: "POST" });
+                                  await loadConversations();
+                                  setMenuOpenId(null);
+                                } catch {
+                                  showErrorToast("Could not pin");
+                                }
+                              }}
+                            >
+                              <Pin className="h-3.5 w-3.5" /> Pin conversation
+                            </button>
+                          )}
+
+                          {/* Flag / Remove flag always available */}
+                          {c.conversation_flagged_by_me ? (
+                            <button
+                              type="button"
+                              className="flex w-full items-center gap-2 px-3 py-2 text-[13px] text-[#3D3D3D] hover:bg-[#F2F5EF] text-left"
+                              onClick={async (e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                try {
+                                  await fetch(`/api/messages/conversations/${c.id}/flag`, { method: "DELETE" });
+                                  await loadConversations();
+                                  setMenuOpenId(null);
+                                } catch {
+                                  showErrorToast("Could not remove flag");
+                                }
+                              }}
+                            >
+                              <Flag className="h-3.5 w-3.5" /> Remove flag
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              className="flex w-full items-center gap-2 px-3 py-2 text-[13px] text-[#3D3D3D] hover:bg-[#F2F5EF] text-left"
+                              onClick={async (e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                try {
+                                  await fetch(`/api/messages/conversations/${c.id}/flag`, { method: "POST" });
+                                  await loadConversations();
+                                  setMenuOpenId(null);
+                                } catch {
+                                  showErrorToast("Could not flag");
+                                }
+                              }}
+                            >
+                              <Flag className="h-3.5 w-3.5" /> Flag conversation
+                            </button>
+                          )}
+
+                          {/* Status-specific actions */}
+                          {c.status === "open" && (
+                            <button
+                              type="button"
+                              className="flex w-full items-center gap-2 px-3 py-2 text-[13px] text-[#3D3D3D] hover:bg-[#F2F5EF] text-left"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                setSelectedId(c.id);
+                                setConfirmArchiveOpen(true);
+                                setMenuOpenId(null);
+                              }}
+                            >
+                              <Archive className="h-3.5 w-3.5" /> Archive conversation
+                            </button>
                           )}
                           {c.status === "archived" && (
                             <button
@@ -929,6 +931,8 @@ export function MessagesSplitView({
                               <ArchiveRestore className="h-3.5 w-3.5" /> Unarchive conversation
                             </button>
                           )}
+
+                          {/* Delete for empty conversations only */}
                           {isDeletable && (
                             <button
                               type="button"
@@ -1285,45 +1289,7 @@ export function MessagesSplitView({
                         }).intensity_flag;
                         return (
                           <div key={m.id} className="flex flex-col gap-1">
-                            <MessageBubble
-                              message={m}
-                              onToggleFlag={async () => {
-                                try {
-                                  if (m.flagged_by_me) {
-                                    await fetch(
-                                      `/api/messages/flags?message_id=${encodeURIComponent(m.id)}`,
-                                      { method: "DELETE" }
-                                    );
-                                  } else {
-                                    await fetch("/api/messages/flags", {
-                                      method: "POST",
-                                      headers: { "Content-Type": "application/json" },
-                                      body: JSON.stringify({ message_id: m.id }),
-                                    });
-                                  }
-                                  setMessages((prev) =>
-                                    prev.map((msg) =>
-                                      msg.id === m.id
-                                        ? { ...msg, flagged_by_me: !m.flagged_by_me }
-                                        : msg
-                                    )
-                                  );
-                                  setConversations((prev) =>
-                                    prev.map((c) =>
-                                      c.id === (activeConversation?.id ?? "")
-                                        ? {
-                                            ...c,
-                                            has_flagged_by_me:
-                                              c.has_flagged_by_me || !m.flagged_by_me,
-                                          }
-                                        : c
-                                    )
-                                  );
-                                } catch {
-                                  // Best-effort; errors are quiet for now to avoid noise.
-                                }
-                              }}
-                            />
+                            <MessageBubble message={m} />
                             {m.direction === "incoming" &&
                               intensityFlag &&
                               showIncomingNudge && (
@@ -2059,7 +2025,7 @@ export function MessagesSplitView({
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({
                           type: "expense",
-                          expense_id: attachSelectedExpenseId,
+                          attachment_id: attachSelectedExpenseId,
                         }),
                       }
                     );

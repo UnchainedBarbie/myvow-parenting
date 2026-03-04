@@ -120,6 +120,7 @@ export async function GET(req: Request) {
       .order("created_at", { ascending: true });
 
     if (msgError) {
+      console.error("VOW ALIGNMENT ERROR (messages query):", msgError);
       return NextResponse.json(
         { message: "Failed to load messages" },
         { status: 500 }
@@ -270,7 +271,7 @@ export async function GET(req: Request) {
       examples,
     });
   } catch (err) {
-    console.error("Error in /api/vows/alignment", err);
+    console.error("VOW ALIGNMENT ERROR:", err);
     return NextResponse.json(
       { message: "Unexpected error" },
       { status: 500 }

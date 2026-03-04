@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { Bookmark } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export type MessageRow = {
@@ -76,25 +75,6 @@ export function MessageBubble({
                 👁️
               </span>
               <span>{showOriginal ? "Hide original" : "View original"}</span>
-            </button>
-          )}
-          {onToggleFlag && (
-            <button
-              type="button"
-              onClick={onToggleFlag}
-              className={cn(
-                "inline-flex h-5 w-5 items-center justify-center rounded-full text-[#A19A8C] hover:text-[#5B7A52] hover:bg-[#ECE6D8] transition-colors opacity-0 group-hover:opacity-100",
-                message.flagged_by_me && "opacity-100 text-[#5B7A52]"
-              )}
-              aria-label={message.flagged_by_me ? "Unflag (private)" : "Flag (private)"}
-              title={message.flagged_by_me ? "Unflag (private)" : "Flag (private)"}
-            >
-              <Bookmark
-                className={cn(
-                  "h-3.5 w-3.5",
-                  message.flagged_by_me ? "fill-current" : "stroke-current"
-                )}
-              />
             </button>
           )}
         </div>

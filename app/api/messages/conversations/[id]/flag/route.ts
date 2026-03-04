@@ -3,9 +3,14 @@ import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
 
 export async function POST(
   _request: Request,
-  { params }: { params: { id: string } }
+  context: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id: conversationId } = await context.params;
+    if (!conversationId) {
+      return NextResponse.json({ error: "Missing conversation id" }, { status: 400 });
+    }
+
     const supabase = await createClient();
     const {
       data: { user },
@@ -15,7 +20,6 @@ export async function POST(
     }
 
     const admin = getServiceRoleClient();
-    const conversationId = params.id;
 
     const { data: conv, error: convError } = await admin
       .from("conversations")
@@ -46,6 +50,7 @@ export async function POST(
       );
 
     if (insertError) {
+      console.error("FLAG ERROR (upsert):", insertError);
       return NextResponse.json(
         { error: insertError.message ?? "Failed to flag" },
         { status: 500 }
@@ -54,6 +59,7 @@ export async function POST(
 
     return NextResponse.json({ ok: true });
   } catch (e) {
+    console.error("FLAG ERROR:", e);
     return NextResponse.json(
       { error: e instanceof Error ? e.message : "Failed to flag conversation" },
       { status: 500 }
@@ -63,9 +69,14 @@ export async function POST(
 
 export async function DELETE(
   _request: Request,
-  { params }: { params: { id: string } }
+  context: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id: conversationId } = await context.params;
+    if (!conversationId) {
+      return NextResponse.json({ error: "Missing conversation id" }, { status: 400 });
+    }
+
     const supabase = await createClient();
     const {
       data: { user },
@@ -75,7 +86,6 @@ export async function DELETE(
     }
 
     const admin = getServiceRoleClient();
-    const conversationId = params.id;
 
     const { error } = await admin
       .from("conversation_user_flags")
@@ -84,6 +94,7 @@ export async function DELETE(
       .eq("conversation_id", conversationId);
 
     if (error) {
+      console.error("UNFLAG ERROR:", error);
       return NextResponse.json(
         { error: error.message ?? "Failed to remove flag" },
         { status: 500 }
@@ -92,6 +103,7 @@ export async function DELETE(
 
     return NextResponse.json({ ok: true });
   } catch (e) {
+    console.error("UNFLAG ERROR:", e);
     return NextResponse.json(
       { error: e instanceof Error ? e.message : "Failed to remove flag" },
       { status: 500 }

@@ -118,25 +118,33 @@ export function ExpenseForm({
     try {
       const formData = new FormData();
       formData.set("file", file);
-      const res = await fetch("/api/inbox/classify", { method: "POST", body: formData });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Classification failed");
-      const payload = data as {
-        type?: string;
-        title?: string;
-        description?: string;
-        category?: string;
-        child_names?: string[];
-        amount?: number | null;
-      };
-      if (!descriptionTouched && (payload.title || payload.description)) {
-        const desc = [payload.title, payload.description].filter(Boolean).join(" — ").trim();
-        if (desc) {
-          setDescription(desc);
-          setDescriptionSuggested(true);
-        }
+      const res = await fetch("/api/expenses/extract-receipt", {
+        method: "POST",
+        body: formData,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(
+          (data as { message?: string }).message ||
+            "Couldn't read receipt. Please fill in manually."
+        );
       }
-      if (!amountTouched && payload.amount != null && Number.isFinite(payload.amount)) {
+      const payload = data as {
+        description: string | null;
+        amount: number | null;
+        date: string | null;
+        merchant: string | null;
+        category: string | null;
+      };
+      if (!descriptionTouched && payload.description) {
+        setDescription(payload.description);
+        setDescriptionSuggested(true);
+      }
+      if (
+        !amountTouched &&
+        payload.amount != null &&
+        Number.isFinite(payload.amount)
+      ) {
         setAmount(String(payload.amount));
         setAmountSuggested(true);
       }
@@ -144,17 +152,15 @@ export function ExpenseForm({
         setCategory(mapCategory(payload.category));
         setCategorySuggested(true);
       }
-      if (!childTouched && payload.child_names?.length && children.length > 0) {
-        const ids = payload.child_names
-          .map((name) => children.find((c) => c.first_name.toLowerCase() === String(name).toLowerCase())?.id)
-          .filter(Boolean) as string[];
-        if (ids.length) {
-          setSelectedChildIds(ids);
-          setChildSuggested(true);
-        }
+      if (!incurredDate && payload.date) {
+        setIncurredDate(payload.date);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not analyze file");
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Couldn't read receipt. Please fill in manually."
+      );
     } finally {
       setClassifyLoading(false);
     }
@@ -176,6 +182,13 @@ export function ExpenseForm({
         formData.set("file", receiptFile);
         formData.set("case_id", caseId);
         formData.set("category", "financial");
+        // Use the expense description as the document title/description for the receipt
+        const descTrimmed = description.trim();
+        const fallbackTitle = receiptFile.name || "Receipt";
+        const title = (descTrimmed || fallbackTitle).slice(0, 120);
+        formData.set("title", title);
+        formData.set("description", descTrimmed || fallbackTitle);
+        formData.set("visibility", visibility);
         const uploadRes = await fetch("/api/documents/upload", {
           method: "POST",
           body: formData,
@@ -280,8 +293,12 @@ export function ExpenseForm({
                       e.target.value = "";
                     }}
                   />
-                  <p className="text-sm text-foreground-secondary">Drop file or click to browse</p>
-                  <p className="text-[11px] text-foreground-secondary mt-1">{ACCEPT_LABEL}</p>
+                  <p className="text-sm text-foreground-secondary">
+                    Drop file or click to browse
+                  </p>
+                  <p className="text-[11px] text-foreground-secondary mt-1">
+                    {classifyLoading ? "Reading receipt…" : ACCEPT_LABEL}
+                  </p>
                   <div className="mt-2 flex items-center gap-2">
                     <Button
                       type="button"
@@ -319,7 +336,11 @@ export function ExpenseForm({
                     {receiptFile.name}
                   </p>
                   <p className="text-[11px] text-foreground-secondary">
-                    {formatSize(receiptFile.size)} · {receiptFile.type.split("/")[1] || "file"}
+                    {classifyLoading
+                      ? "Reading receipt…"
+                      : `${formatSize(receiptFile.size)} · ${
+                          receiptFile.type.split("/")[1] || "file"
+                        }`}
                   </p>
                 </div>
                 <Button

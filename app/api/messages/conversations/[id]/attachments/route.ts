@@ -46,23 +46,39 @@ export async function POST(
     }
 
     const body = (await request.json().catch(() => ({}))) as {
-      type?: "document" | "expense";
+      type?: "document" | "expense" | "court_order";
+      attachment_id?: string;
       document_id?: string;
       expense_id?: string;
+      court_order_id?: string;
     };
 
-    if (body.type === "document" && body.document_id) {
+    if (body.type === "document" && (body.attachment_id ?? body.document_id)) {
       const { error } = await admin.from("conversation_attachments").insert({
         conversation_id: conversationId,
-        document_id: body.document_id,
+        attachment_id: body.attachment_id ?? body.document_id,
+        attachment_type: "document",
+        created_by: user.id,
       });
       if (error) {
         return NextResponse.json({ error: error.message }, { status: 500 });
       }
-    } else if (body.type === "expense" && body.expense_id) {
+    } else if (body.type === "expense" && (body.attachment_id ?? body.expense_id)) {
       const { error } = await admin.from("conversation_attachments").insert({
         conversation_id: conversationId,
-        expense_id: body.expense_id,
+        attachment_id: body.attachment_id ?? body.expense_id,
+        attachment_type: "expense",
+        created_by: user.id,
+      });
+      if (error) {
+        return NextResponse.json({ error: error.message }, { status: 500 });
+      }
+    } else if (body.type === "court_order" && body.court_order_id) {
+      const { error } = await admin.from("conversation_attachments").insert({
+        conversation_id: conversationId,
+        attachment_id: body.court_order_id,
+        attachment_type: "court_order",
+        created_by: user.id,
       });
       if (error) {
         return NextResponse.json({ error: error.message }, { status: 500 });

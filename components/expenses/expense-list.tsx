@@ -9,7 +9,7 @@ import { cn } from "@/lib/utils";
 import { ColumnFilterPopover } from "@/components/documents/column-filter-popover";
 import { DateFilterPopover, type DateFilterValue } from "@/components/documents/date-filter-popover";
 import { getCategoryColor } from "@/lib/categoryColors";
-import { Download, Trash2, Check, XCircle, Receipt, Filter, Paperclip, Pencil, Lock } from "lucide-react";
+import { Download, Trash2, Check, XCircle, Filter, Paperclip, Pencil, Lock } from "lucide-react";
 import { showErrorToast, showSuccessToast } from "@/components/ui/toaster";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { Label } from "@/components/ui/label";
@@ -941,35 +941,6 @@ export function ExpenseList({
                             >
                               {exp.description || "—"}
                             </span>
-                            {exp.receipt_file_id && exp.receipt_file_name && (
-                              <button
-                                type="button"
-                                className="p-0.5 rounded-full text-[#8A8A8A] hover:text-[#5B7A52] hover:bg-muted transition-colors"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  void (async () => {
-                                    try {
-                                      const res = await fetch(
-                                        `/api/documents/${exp.receipt_file_id}/download`
-                                      );
-                                      const data = await res.json().catch(() => ({}));
-                                      const url = (data as { url?: string }).url;
-                                      if (!url) {
-                                        showErrorToast("Download failed");
-                                        return;
-                                      }
-                                      window.open(url, "_blank");
-                                    } catch {
-                                      showErrorToast("Download failed");
-                                    }
-                                  })();
-                                }}
-                                aria-label="Download receipt"
-                                title="Download receipt"
-                              >
-                                <Download className="h-4 w-4" aria-hidden />
-                              </button>
-                            )}
                           </div>
                           <span className="text-[11px] text-foreground-secondary overflow-hidden text-ellipsis whitespace-nowrap block">
                             {(CATEGORY_LABELS[exp.category] ?? exp.category) || ""} 
@@ -1147,20 +1118,24 @@ export function ExpenseList({
                       <td className="px-2 py-1.5 align-middle" onClick={(e) => e.stopPropagation()}>
                         <span className="inline-flex items-center gap-0.5">
                           {exp.receipt_file_id && (
-                                  <button
+                            <button
                               type="button"
                               className="p-1.5 rounded text-foreground-secondary hover:text-foreground hover:bg-muted/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                              aria-label="View receipt"
-                                    onClick={async (e) => {
-                                      e.stopPropagation();
-                                      const res = await fetch(`/api/documents/${exp.receipt_file_id}/download`);
-                                      const data = await res.json().catch(() => ({}));
-                                      if ((data as { url?: string }).url) {
-                                        window.open((data as { url: string }).url, "_blank");
-                                      }
-                                    }}
+                              aria-label="Download receipt"
+                              onClick={async (e) => {
+                                e.stopPropagation();
+                                const res = await fetch(
+                                  `/api/documents/${exp.receipt_file_id}/download`
+                                );
+                                const data = await res.json().catch(() => ({}));
+                                if ((data as { url?: string }).url) {
+                                  window.open((data as { url: string }).url, "_blank");
+                                } else {
+                                  showErrorToast("Download failed");
+                                }
+                              }}
                             >
-                              <Receipt className="h-3.5 w-3.5" />
+                              <Download className="h-3.5 w-3.5" aria-hidden />
                             </button>
                           )}
                           <button

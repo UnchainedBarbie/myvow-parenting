@@ -19,9 +19,10 @@ type SageMessageRow = {
   role: "user" | "sage";
   content: string;
   created_at: string;
+  session_id?: string | null;
 };
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     const supabase = await createClient();
     const {
@@ -31,12 +32,22 @@ export async function GET() {
       return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
     }
 
+    const { searchParams } = new URL(request.url);
+    const sessionId = searchParams.get("session_id") ?? undefined;
+
     const admin = getServiceRoleClient();
-    const { data, error } = await admin
+    let query = admin
       .from("sage_journal_messages")
-      .select("id, user_id, role, content, created_at")
-      .eq("user_id", user.id)
-      .order("created_at", { ascending: true });
+      .select("id, user_id, role, content, created_at, session_id")
+      .eq("user_id", user.id);
+
+    if (sessionId) {
+      query = query.eq("session_id", sessionId);
+    } else {
+      query = query.is("session_id", null);
+    }
+
+    const { data, error } = await query.order("created_at", { ascending: true });
 
     if (error) {
       return NextResponse.json(
@@ -68,7 +79,11 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json().catch(() => ({}));
-    const { content } = body as { content?: string };
+    const { content, session_id: bodySessionId, category } = body as {
+      content?: string;
+      session_id?: string;
+      category?: string;
+    };
     const trimmed = (content ?? "").trim();
     if (!trimmed) {
       return NextResponse.json(
@@ -79,17 +94,38 @@ export async function POST(request: NextRequest) {
 
     const admin = getServiceRoleClient();
     const now = new Date().toISOString();
+    const sessionId =
+      typeof bodySessionId === "string" && bodySessionId.length > 0
+        ? bodySessionId
+        : null;
 
-    // Insert user message first.
+    if (sessionId) {
+      const { data: session } = await admin
+        .from("sage_sessions")
+        .select("id")
+        .eq("id", sessionId)
+        .eq("user_id", user.id)
+        .maybeSingle();
+      if (!session) {
+        return NextResponse.json(
+          { message: "Session not found." },
+          { status: 404 }
+        );
+      }
+    }
+
+    const insertPayload = {
+      user_id: user.id,
+      role: "user" as const,
+      content: trimmed,
+      created_at: now,
+      ...(sessionId ? { session_id: sessionId } : {}),
+    };
+
     const { data: userRow, error: insertUserError } = await admin
       .from("sage_journal_messages")
-      .insert({
-        user_id: user.id,
-        role: "user",
-        content: trimmed,
-        created_at: now,
-      })
-      .select("id, user_id, role, content, created_at")
+      .insert(insertPayload)
+      .select("id, user_id, role, content, created_at, session_id")
       .single();
 
     if (insertUserError || !userRow) {
@@ -132,15 +168,17 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    const sagePayload = {
+      user_id: user.id,
+      role: "sage" as const,
+      content: sageContent,
+      created_at: new Date().toISOString(),
+      ...(sessionId ? { session_id: sessionId } : {}),
+    };
     const { data: sageRow, error: insertSageError } = await admin
       .from("sage_journal_messages")
-      .insert({
-        user_id: user.id,
-        role: "sage",
-        content: sageContent,
-        created_at: new Date().toISOString(),
-      })
-      .select("id, user_id, role, content, created_at")
+      .insert(sagePayload)
+      .select("id, user_id, role, content, created_at, session_id")
       .single();
 
     if (insertSageError || !sageRow) {
@@ -148,6 +186,14 @@ export async function POST(request: NextRequest) {
         { message: insertSageError?.message ?? "Failed to save Sage response." },
         { status: 500 }
       );
+    }
+
+    if (sessionId) {
+      await admin
+        .from("sage_sessions")
+        .update({ updated_at: new Date().toISOString() })
+        .eq("id", sessionId)
+        .eq("user_id", user.id);
     }
 
     return NextResponse.json({

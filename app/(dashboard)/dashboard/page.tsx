@@ -6,6 +6,11 @@ import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { DashboardStatusCards } from "@/components/dashboard/dashboard-status-cards";
 import { KidsThisWeekCard, type KidsThisWeekChild } from "@/components/dashboard/kids-this-week-card";
+import {
+  ChildrenTodayCard,
+  type ChildrenTodayCustodyItem,
+  type NextExchange,
+} from "@/components/dashboard/children-today-card";
 
 type TodayEvent = {
   id: string;
@@ -201,6 +206,29 @@ export default async function DashboardPage() {
     .is("deleted_at", null)
     .order("start_time", { ascending: true });
 
+  // Today's custody events for Children Today card
+  const { data: todayCustodyRaw } = await admin
+    .from("calendar_events")
+    .select("id, title, child_id, start_time, all_day, deleted_at")
+    .eq("case_id", caseId)
+    .in("event_type", ["custody", "custody_exchange"])
+    .gte("start_time", todayStart)
+    .lte("start_time", todayEnd)
+    .is("deleted_at", null)
+    .order("start_time", { ascending: true });
+
+  // Next custody exchange (first after today)
+  const { data: nextCustodyRaw } = await admin
+    .from("calendar_events")
+    .select("id, title, child_id, start_time, deleted_at")
+    .eq("case_id", caseId)
+    .in("event_type", ["custody", "custody_exchange"])
+    .gt("start_time", todayEnd)
+    .is("deleted_at", null)
+    .order("start_time", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
   // This week events
   const { data: weekEventsRaw } = await admin
     .from("calendar_events")
@@ -245,6 +273,24 @@ export default async function DashboardPage() {
     all_day: (e.all_day as boolean) ?? false,
     child_name: e.child_id ? childMap[e.child_id as string]?.first_name ?? null : null,
   }));
+
+  const childrenTodayItems: ChildrenTodayCustodyItem[] = (todayCustodyRaw ?? []).map((e) => ({
+    child_id: (e.child_id as string) ?? "",
+    child_name: e.child_id ? childMap[e.child_id as string]?.first_name ?? "Child" : "—",
+    event_title: (e.title as string) ?? "",
+    start_time: (e.start_time as string) ?? "",
+    all_day: (e.all_day as boolean) ?? false,
+  }));
+
+  const nextExchange: NextExchange = nextCustodyRaw
+    ? {
+        start_time: (nextCustodyRaw.start_time as string) ?? "",
+        title: (nextCustodyRaw.title as string) ?? "",
+        child_name: nextCustodyRaw.child_id
+          ? childMap[nextCustodyRaw.child_id as string]?.first_name ?? null
+          : null,
+      }
+    : null;
 
   const weekEvents: TodayEvent[] = (weekEventsRaw ?? []).map((e) => ({
     id: e.id as string,
@@ -594,8 +640,8 @@ export default async function DashboardPage() {
           netLabel={netLabel}
         />
 
-        {/* Row 1: Today's events + Kids this week */}
-        <div className="grid gap-4 lg:grid-cols-2 items-start">
+        {/* Row 1: Today's events, Children today, Kids this week */}
+        <div className="grid gap-4 lg:grid-cols-3 items-start">
           <Card className="rounded-card border border-[#E8E4DC] bg-[#FDFBF7]">
             <CardHeader className="pb-2 px-4 pt-4">
               <CardTitle className="font-heading text-lg text-foreground">
@@ -645,6 +691,12 @@ export default async function DashboardPage() {
               </Button>
             </CardContent>
           </Card>
+
+          <ChildrenTodayCard
+            items={childrenTodayItems}
+            nextExchange={nextExchange}
+            timezone={timezone}
+          />
 
           <KidsThisWeekCard childrenSummaries={kidsThisWeekChildren} timezone={timezone} />
         </div>

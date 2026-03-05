@@ -32,6 +32,24 @@ import { AlertCircle } from "lucide-react";
 
 type ChildSummary = { id: string; first_name: string };
 
+const CONVERSATION_TOPICS = [
+  { value: "medical", label: "Medical" },
+  { value: "school", label: "School" },
+  { value: "schedule", label: "Schedule" },
+  { value: "expenses", label: "Expenses" },
+  { value: "general", label: "General" },
+  { value: "emergency", label: "Emergency" },
+] as const;
+
+function getTopicLabel(topic: string | undefined | null): string {
+  if (!topic) return "General";
+  const t = topic.toLowerCase();
+  const found = CONVERSATION_TOPICS.find((x) => x.value === t);
+  if (found) return found.label;
+  if (t === "expense") return "Expenses";
+  return topic.charAt(0).toUpperCase() + topic.slice(1);
+}
+
 type ConversationSummary = {
   id: string;
   case_id: string;
@@ -49,6 +67,7 @@ type ConversationSummary = {
   has_flagged_by_me?: boolean;
   conversation_flagged_by_me?: boolean;
   pinned_by_me?: boolean;
+  has_emergency?: boolean;
 };
 
 type SageMessage = {
@@ -230,17 +249,25 @@ export function MessagesSplitView({
     router.replace(u.pathname + (u.search || ""), { scroll: false });
   }, [searchParams, router, conversations]);
 
-  // Pre-fill and open new conversation from URL (e.g. dashboard "Send reminder")
+  const [newInitialMessage, setNewInitialMessage] = useState<string | null>(null);
+
+  // Pre-fill and open new conversation from URL (e.g. dashboard "Send reminder", Sage "Send" / "Document")
   useEffect(() => {
+    const openNew = searchParams.get("new");
     const topic = searchParams.get("topic");
     const subject = searchParams.get("subject");
-    if (!topic && !subject) return;
+    const body = searchParams.get("body");
+    if (!openNew && !topic && !subject && !body) return;
     if (topic) setNewTopic(topic);
+    else if (openNew || subject || body) setNewTopic("general");
     if (subject) setNewSubject(decodeURIComponent(subject));
+    if (body) setNewInitialMessage(decodeURIComponent(body));
     setNewModalOpen(true);
     const u = new URL(window.location.href);
+    u.searchParams.delete("new");
     u.searchParams.delete("topic");
     u.searchParams.delete("subject");
+    u.searchParams.delete("body");
     router.replace(u.pathname + (u.search || ""), { scroll: false });
   }, [searchParams, router]);
 
@@ -433,7 +460,11 @@ export function MessagesSplitView({
       });
     }
     if (filterTopic !== "all") {
-      list = list.filter((c) => (c.category ?? "general") === filterTopic);
+      list = list.filter((c) => {
+        const t = (c.category ?? "general").toLowerCase();
+        const norm = t === "expense" ? "expenses" : t;
+        return norm === filterTopic;
+      });
     }
     if (filterChild !== "all") {
       list = list.filter((c) => c.child_id === filterChild);
@@ -472,6 +503,7 @@ export function MessagesSplitView({
         subject: newSubject.trim(),
         child_id: newChildId === "general" ? null : newChildId,
         category: newTopic,
+        topic: newTopic,
         is_emergency: newIsEmergency,
       };
       const res = await fetch("/api/messages/conversations", {
@@ -487,13 +519,16 @@ export function MessagesSplitView({
         return;
       }
       const conv = (data as { conversation: ConversationSummary }).conversation;
+      const initialMessage = newInitialMessage;
       setNewSubject("");
       setNewChildId("general");
       setNewTopic("");
       setNewModalOpen(false);
+      setNewInitialMessage(null);
       await loadConversations();
       setSelectedId(conv.id);
       await loadMessages(conv.id);
+      if (initialMessage?.trim()) setComposeText(initialMessage.trim());
       showSuccessToast("Conversation created");
     } finally {
       setCreating(false);
@@ -681,8 +716,8 @@ export function MessagesSplitView({
 
   return (
     <div className="flex h-[calc(100vh-4.5rem)] bg-[#FDFBF7]">
-      {/* LEFT PANEL */}
-      <div className="flex h-full w-[340px] flex-col border-r border-[#E8E4DC] bg-white">
+      {/* LEFT PANEL — min 320px so tags, filters, and previews fit */}
+      <div className="flex h-full w-80 min-w-[320px] flex-col shrink-0 border-r border-[#E8E4DC] bg-white">
         <div className="border-b border-[#E8E4DC] px-4 py-3">
           <div className="flex items-center justify-between gap-2">
             <div>
@@ -715,7 +750,7 @@ export function MessagesSplitView({
               <Plus className="h-4 w-4" />
             </button>
           </div>
-          <div className="mt-2 flex items-center gap-1.5 whitespace-nowrap">
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
             <select
               value={filterTopic}
               onChange={(e) => setFilterTopic(e.target.value)}
@@ -724,14 +759,12 @@ export function MessagesSplitView({
                 filterTopic !== "all" && "bg-[#F2F5EF] border-[#7C8B6E]"
               )}
             >
-              <option value="all">Topics</option>
-              <option value="medical">Medical</option>
-              <option value="schedule">Schedule</option>
-              <option value="school">School</option>
-              <option value="expense">Expense</option>
-              <option value="therapy">Therapy</option>
-              <option value="behavior">Behavior</option>
-              <option value="general">General</option>
+              <option value="all">All topics</option>
+              {CONVERSATION_TOPICS.map(({ value, label }) => (
+                <option key={value} value={value}>
+                  {label}
+                </option>
+              ))}
             </select>
             <select
               value={filterChild}
@@ -756,11 +789,12 @@ export function MessagesSplitView({
                 )
               }
               className={cn(
-                "h-6 min-w-[70px] max-w-[6rem] shrink-0 rounded-full border px-2 py-1 text-[11px] text-[#3D3D3D] bg-[#FDFBF7] border-[#E8E4DC] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E]",
+                "h-6 min-w-[90px] max-w-[8rem] shrink-0 rounded-full border px-2 py-1 text-[11px] text-[#3D3D3D] bg-[#FDFBF7] border-[#E8E4DC] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E]",
                 filterStatus !== "open" && "bg-[#F2F5EF] border-[#7C8B6E]"
               )}
+              aria-label="Filter by status"
             >
-              <option value="open">Status</option>
+              <option value="open">Open</option>
               <option value="archived">Archived</option>
               <option value="flagged">Flagged</option>
               <option value="all">All conversations</option>
@@ -796,8 +830,8 @@ export function MessagesSplitView({
                     });
                 const isDeletable = (c.message_count ?? 0) === 0;
                 const isEmergencyConversation =
-                  (c.category && c.category.toLowerCase() === "medical") ||
-                  (c.subject && c.subject.toLowerCase().includes("emergency"));
+                  c.has_emergency === true ||
+                  (c.category?.toLowerCase() === "emergency");
                 return (
                   <div
                     key={c.id}
@@ -807,12 +841,12 @@ export function MessagesSplitView({
                       if (menuOpenId === c.id) setMenuOpenId(null);
                     }}
                     className={cn(
-                      "group relative flex w-full items-start rounded-xl border-l-4 px-2.5 py-2 text-left text-xs transition-colors",
+                      "group relative flex w-full items-start rounded-xl px-2.5 py-2 text-left text-xs transition-colors",
                       isActive
-                        ? "border-l-[#7C8B6E] bg-[#F2F5EF]"
+                        ? "border-l-4 border-l-[#7C8B6E] bg-[#F2F5EF]"
                         : isEmergencyConversation
-                        ? "border-l-red-400 bg-red-50 border border-red-200 hover:bg-red-50"
-                        : "border-l-transparent bg-white hover:bg-[#FDFBF7]"
+                        ? "border-l-2 border-l-red-400 bg-red-50 border border-red-200 hover:bg-red-50"
+                        : "border-l-4 border-l-transparent bg-white hover:bg-[#FDFBF7]"
                     )}
                   >
                     <div className="min-w-0 flex-1 space-y-0.5">
@@ -820,8 +854,8 @@ export function MessagesSplitView({
                         <p className="truncate text-[13px] font-semibold text-[#3D3D3D]">
                           <span className="truncate align-middle">{c.subject}</span>
                           {isEmergencyConversation && (
-                            <span className="ml-1 inline-flex items-center gap-0.5 align-middle text-[10px] font-medium text-red-500">
-                              <AlertCircle className="h-3 w-3" aria-hidden />
+                            <span className="ml-1 inline-flex shrink-0 items-center gap-0.5 align-middle text-red-400" aria-hidden>
+                              <AlertCircle className="h-3 w-3" />
                             </span>
                           )}
                         </p>
@@ -998,19 +1032,7 @@ export function MessagesSplitView({
                         <div className="flex items-center gap-1.5">
                           <span className="inline-flex items-center gap-1 rounded-full bg-[#F2F5EF] px-2 py-0.5 text-[10px] text-[#5B7A52]">
                             <span className="h-1.5 w-1.5 rounded-full bg-[#7C8B6E]" />
-                            {c.category === "medical"
-                              ? "Medical"
-                              : c.category === "schedule"
-                                ? "Schedule"
-                                : c.category === "school"
-                                  ? "School"
-                                  : c.category === "expense"
-                                    ? "Expense"
-                                    : c.category === "therapy"
-                                      ? "Therapy"
-                                      : c.category === "behavior"
-                                        ? "Behavior"
-                                        : "General"}
+                            {getTopicLabel(c.category)}
                           </span>
                           <span className="inline-flex items-center gap-1 rounded-full bg-[#F2F5EF] px-2 py-0.5 text-[10px] text-[#5B7A52]">
                             <span className="h-1.5 w-1.5 rounded-full bg-[#7C8B6E]" />
@@ -1133,19 +1155,7 @@ export function MessagesSplitView({
                       </p>
                       <p>
                         <span className="font-medium text-[#5B7A52]">Category:</span>{" "}
-                        {activeConversation?.category === "medical"
-                          ? "Medical"
-                          : activeConversation?.category === "schedule"
-                            ? "Schedule"
-                            : activeConversation?.category === "school"
-                              ? "School"
-                              : activeConversation?.category === "expense"
-                                ? "Expense"
-                                : activeConversation?.category === "therapy"
-                                  ? "Therapy"
-                                  : activeConversation?.category === "behavior"
-                                    ? "Behavior"
-                                    : "General"}
+                        {getTopicLabel(activeConversation?.category)}
                       </p>
                     </div>
                   </details>
@@ -1319,7 +1329,7 @@ export function MessagesSplitView({
                             ? "medical"
                             : activeConversation.category === "school"
                               ? "school"
-                              : activeConversation.category === "expense"
+                              : activeConversation.category === "expense" || activeConversation.category === "expenses"
                                 ? "other"
                                 : undefined;
 
@@ -1714,7 +1724,7 @@ export function MessagesSplitView({
                       const showCalendar =
                         cat === "schedule" || cat === "school" || cat === "general";
                       const showExpense =
-                        cat === "medical" || cat === "expense" || cat === "general";
+                        cat === "medical" || cat === "expense" || cat === "expenses" || cat === "general";
                       const showDocument =
                         cat === "medical" ||
                         cat === "expense" ||
@@ -1846,13 +1856,11 @@ export function MessagesSplitView({
                   required
                 >
                   <option value="">Select a topic</option>
-                  <option value="medical">Medical</option>
-                  <option value="schedule">Schedule</option>
-                  <option value="school">School</option>
-                  <option value="expense">Expense</option>
-                  <option value="therapy">Therapy</option>
-                  <option value="behavior">Behavior</option>
-                  <option value="general">General</option>
+                  {CONVERSATION_TOPICS.map(({ value, label }) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ))}
                 </select>
               </div>
               <div className="space-y-1">

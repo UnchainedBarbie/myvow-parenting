@@ -704,18 +704,58 @@ export function ProfileContent({
                 </span>
               )}
             </button>
-            <div className="space-y-0.5">
+            <div className="flex flex-col items-start gap-1.5">
               <p className="text-xs text-foreground-secondary">
                 Profile photo
               </p>
-              <button
-                type="button"
-                disabled={userAvatarUploading}
-                onClick={() => userAvatarFileRef.current?.click()}
-                className="text-xs text-primary hover:underline disabled:opacity-60"
-              >
-                {userAvatarUploading ? "Uploading…" : "Upload photo"}
-              </button>
+              {profile?.profile_image ? (
+                <>
+                  <button
+                    type="button"
+                    disabled={userAvatarUploading}
+                    onClick={() => userAvatarFileRef.current?.click()}
+                    className="text-xs text-primary hover:underline disabled:opacity-60"
+                  >
+                    {userAvatarUploading ? "Uploading…" : "Change photo"}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={userAvatarUploading}
+                    onClick={() => {
+                      void (async () => {
+                        try {
+                          const res = await fetch("/api/profile/avatar/delete", {
+                            method: "POST",
+                          });
+                          const data = await res.json().catch(() => ({}));
+                          if (!res.ok) {
+                            const msg =
+                              (data as { message?: string }).message ??
+                              "Could not delete photo.";
+                            showErrorToast(msg);
+                            return;
+                          }
+                          router.refresh();
+                        } catch {
+                          showErrorToast("Could not delete photo.");
+                        }
+                      })();
+                    }}
+                    className="text-xs text-foreground-secondary hover:underline disabled:opacity-60"
+                  >
+                    Delete photo
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  disabled={userAvatarUploading}
+                  onClick={() => userAvatarFileRef.current?.click()}
+                  className="text-xs text-primary hover:underline disabled:opacity-60"
+                >
+                  {userAvatarUploading ? "Uploading…" : "Upload photo"}
+                </button>
+              )}
             </div>
           </div>
           <div>
@@ -1167,29 +1207,37 @@ export function ProfileContent({
                         <span className="w-20 shrink-0 text-xs text-foreground-secondary">Child</span>
                         <span className="w-16 shrink-0 text-xs text-foreground-secondary">{formatAge(c.date_of_birth)}</span>
                         <span className="w-32 shrink-0 text-xs text-foreground-secondary">{formatDate(c.date_of_birth)}</span>
-                        <span className="w-20 shrink-0">
-                          {c.member_status === "not_invited" && (
-                            <button
-                              type="button"
-                              className="text-xs text-primary hover:underline"
-                              onClick={() => { setChildInviteTarget(c); setChildInviteEmail(""); setChildInvitePhone(""); setChildInviteError(null); }}
-                            >
-                              Invite
-                            </button>
-                          )}
-                          {c.member_status === "invited" && (
-                            <span className="text-xs rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200 px-2 py-0.5 font-medium">Pending</span>
-                          )}
-                          {c.member_status === "active" && (
-                            <span className="text-xs rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200 px-2 py-0.5 font-medium">Active</span>
-                          )}
-                        </span>
+                        <span className="w-20 shrink-0 text-xs text-foreground-secondary">—</span>
                         <div className="flex-1 min-w-0" />
-                        <div className="flex items-center gap-0.5 shrink-0">
-                          <button type="button" onClick={() => startEditChild(c)} className="p-1 rounded text-gray-400 hover:text-gray-600" aria-label="Edit child">
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <button
+                            type="button"
+                            className="text-xs text-primary hover:underline"
+                            onClick={() => {
+                              setChildInviteTarget(c);
+                              setChildInviteEmail(c.invited_email ?? "");
+                              setChildInvitePhone(c.invited_phone ?? "");
+                              setChildInviteError(null);
+                            }}
+                            disabled={childInviteSaving}
+                          >
+                            {c.invited_email || c.invited_phone ? "Resend invite" : "Invite"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => startEditChild(c)}
+                            className="p-1 rounded text-gray-400 hover:text-gray-600"
+                            aria-label="Edit child"
+                          >
                             <Pencil className="h-3.5 w-3.5" />
                           </button>
-                          <button type="button" onClick={() => openDeleteChildConfirm(c.id, c.first_name)} disabled={deletingChildId === c.id} className="p-1 rounded text-gray-400 hover:text-gray-600" aria-label="Remove child">
+                          <button
+                            type="button"
+                            onClick={() => openDeleteChildConfirm(c.id, c.first_name)}
+                            disabled={deletingChildId === c.id}
+                            className="p-1 rounded text-gray-400 hover:text-gray-600"
+                            aria-label="Remove child"
+                          >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
                         </div>

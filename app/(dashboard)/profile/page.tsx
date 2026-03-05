@@ -52,7 +52,9 @@ export default async function ProfilePage() {
     // All children with deleted_at IS NULL; do not filter by member_status — all appear in Family table
     const childrenResult = await admin
       .from("children")
-      .select("id, first_name, date_of_birth, member_status, invited_email, invited_phone, case_id, profile_image")
+      .select(
+        "id, first_name, date_of_birth, member_status, invited_email, invited_phone, case_id, profile_image"
+      )
       .eq("case_id", caseId)
       .is("deleted_at", null)
       .order("first_name");

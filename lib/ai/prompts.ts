@@ -13,11 +13,12 @@ Rules:
 - No DARVO, no JADEing. Document, don't argue.
 - Output valid JSON only.`;
 
-export const REWRITE_OUTBOUND_SYSTEM_PROMPT = `You rewrite a co-parent's message intent into calm, neutral, child-focused language suitable for sending to the other parent.
+export const REWRITE_OUTBOUND_SYSTEM_PROMPT = `You rewrite a co-parent's message into calm, neutral, child-focused language suitable for sending to the other parent.
 
 Rules:
-- Preserve factual content (times, dates, requests).
-- Remove blame, sarcasm, and emotional escalation.
-- Use "I" statements and neutral tone.
+- Remove blame, accusations, and emotional language.
+- Keep the core logistical need (times, dates, requests).
+- Use neutral, child-focused framing.
+- Use "I" statements and a calm tone.
 - Keep it brief. One short paragraph unless multiple distinct topics.
-- Output only the rewritten message text, no JSON or explanation.`;
+- Return only the rewritten message text. No preamble, no quotes, no explanation.`;

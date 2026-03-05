@@ -7,6 +7,7 @@ type ConversationRow = {
   subject: string;
   child_id: string | null;
   category: string | null;
+  topic: string | null;
   created_at: string;
   updated_at: string;
   status?: string | null;
@@ -23,6 +24,7 @@ type MessageRow = {
   category: string | null;
   ai_classification: string | null;
   emotional_intensity_score: number | null;
+  is_emergency?: boolean | null;
 };
 
 export async function GET() {
@@ -57,10 +59,14 @@ export async function GET() {
     const { data: conversationsRaw, error: convError } = await admin
       .from("conversations")
       .select(
-        "id, case_id, subject, child_id, category, created_at, updated_at, status"
+        "id, case_id, subject, child_id, category, topic, created_at, updated_at, status"
       )
       .eq("case_id", caseId)
       .order("updated_at", { ascending: false });
+
+    console.log("conversations query error:", convError);
+    console.log("conversations data:", conversationsRaw);
+    console.log("conversations count:", conversationsRaw?.length);
 
     console.log("[conversations.GET] conversations query result", {
       caseId,
@@ -85,7 +91,7 @@ export async function GET() {
     const { data: messagesRaw, error: msgError } = await admin
       .from("messages")
       .select(
-        "id, conversation_id, original_content, ai_rewritten_content, direction, created_at, read_at, category, ai_classification, emotional_intensity_score"
+        "id, conversation_id, original_content, ai_rewritten_content, direction, created_at, read_at, category, ai_classification, emotional_intensity_score, is_emergency"
       )
       .in("conversation_id", convIds);
 
@@ -193,14 +199,23 @@ export async function GET() {
 
       // Derive tone (calm / elevated) from AI classification / intensity
       let tone: "calm" | "elevated" = "calm";
+      let hasEmergencyMessage = false;
       for (const m of list) {
         const cls = (m.ai_classification ?? "").toLowerCase();
-        const intensity = typeof m.emotional_intensity_score === "number" ? Number(m.emotional_intensity_score) : 0;
+        const intensity =
+          typeof m.emotional_intensity_score === "number"
+            ? Number(m.emotional_intensity_score)
+            : 0;
         if (
           ["escalatory", "threatening", "coercive", "manipulative"].includes(cls) ||
           intensity >= 0.7
         ) {
           tone = "elevated";
+        }
+        if (m.is_emergency) {
+          hasEmergencyMessage = true;
+        }
+        if (tone === "elevated" && hasEmergencyMessage) {
           break;
         }
       }
@@ -210,6 +225,7 @@ export async function GET() {
       const normalizedStatus =
         rawStatus === "archived" || rawStatus === "resolved" ? "archived" : "open";
       const status: "open" | "archived" = normalizedStatus === "archived" ? "archived" : "open";
+      const topicTag = (c.topic as string | null) ?? category ?? "general";
 
       return {
         id: c.id,
@@ -221,13 +237,14 @@ export async function GET() {
         last_message_preview: lastPreview,
         last_message_created_at: last?.created_at ?? null,
         unread_count: unreadCount,
-        category,
+        category: topicTag,
         message_count: list.length,
         has_flagged_by_me: flaggedByConversation.has(c.id),
         conversation_flagged_by_me: conversationFlaggedIds.has(c.id),
         pinned_by_me: pinnedConversationIds.has(c.id),
         status,
         tone,
+        has_emergency: hasEmergencyMessage,
       };
     });
 
@@ -287,10 +304,11 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { subject, child_id, category } = body as {
+    const { subject, child_id, category, topic } = body as {
       subject?: string;
       child_id?: string | null;
       category?: string | null;
+      topic?: string | null;
     };
 
     const trimmedSubject = (subject ?? "").trim();
@@ -301,19 +319,19 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const rawCategory = (category ?? "").toLowerCase().trim();
-    const allowedCategories = new Set([
+    const rawTopic = (topic ?? category ?? "").toLowerCase().trim();
+    const allowedTopics = new Set([
       "medical",
-      "schedule",
       "school",
-      "expense",
-      "therapy",
-      "behavior",
+      "schedule",
+      "expenses",
       "general",
+      "emergency",
     ]);
-    if (!allowedCategories.has(rawCategory)) {
+    const topicValue = rawTopic === "expense" ? "expenses" : rawTopic;
+    if (!allowedTopics.has(topicValue)) {
       return NextResponse.json(
-        { error: "Topic is required" },
+        { error: "Topic is required (Medical, School, Schedule, Expenses, General, Emergency)" },
         { status: 400 }
       );
     }
@@ -324,7 +342,8 @@ export async function POST(request: NextRequest) {
         case_id: caseId,
         subject: trimmedSubject,
         child_id: child_id || null,
-        category: rawCategory,
+        category: topicValue,
+        topic: topicValue,
         created_by: user.id,
       })
       .select("id, case_id, subject, child_id, created_at, updated_at")

@@ -139,22 +139,17 @@ export async function DELETE(
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    const { count: messageCount, error: countError } = await admin
+    // First delete all messages in this conversation so we can safely
+    // remove the conversation row (messages.conversation_id FK is not ON DELETE CASCADE).
+    const { error: deleteMessagesError } = await admin
       .from("messages")
-      .select("id", { count: "exact", head: true })
+      .delete()
       .eq("conversation_id", conversationId);
 
-    if (countError) {
+    if (deleteMessagesError) {
       return NextResponse.json(
-        { error: countError.message },
+        { error: deleteMessagesError.message },
         { status: 500 }
-      );
-    }
-
-    if ((messageCount ?? 0) > 0) {
-      return NextResponse.json(
-        { error: "Cannot delete a conversation that has messages" },
-        { status: 400 }
       );
     }
 

@@ -1755,16 +1755,10 @@ export function MessagesSplitView({
                     {(() => {
                       const cat = activeConversation.category ?? "General";
                       const childId = activeConversation.child_id;
-                      const showCalendar =
-                        cat === "Schedule" || cat === "School" || cat === "General";
-                      const showExpense =
-                        cat === "Medical" || cat === "Expenses" || cat === "General";
-                      const showDocument =
-                        cat === "Medical" ||
-                        cat === "Expenses" ||
-                        cat === "School" ||
-                        cat === "General";
-                      const showCourt = cat === "General";
+                      const showCalendar = true;
+                      const showExpense = true;
+                      const showDocument = true;
+                      const showCourt = true;
 
                       const expenseCategoryParam =
                         cat === "Medical"
@@ -2285,7 +2279,7 @@ export function MessagesSplitView({
         </div>
       )}
 
-      {showCourtOrderModal && (
+      {showCourtOrderModal && activeConversation && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-3"
           onClick={(e) => {
@@ -2297,8 +2291,64 @@ export function MessagesSplitView({
               Reference Court Order
             </h2>
             <p className="mt-1 text-[11px] text-[#8A8A8A]">
-              View or reference a court order from your profile. You&apos;ll manage court orders on the Profile page.
+              Select a court order to attach to this conversation. This link is private to this case.
             </p>
+            <div className="mt-3 space-y-2">
+              <div className="max-h-[300px] overflow-y-auto rounded-xl border border-[#F0E6D6] bg-[#FDFBF7]">
+                {attachCourtOrdersLoading ? (
+                  <div className="flex items-center justify-center py-8 text-[11px] text-[#8A8A8A]">
+                    Loading court orders…
+                  </div>
+                ) : attachCourtOrders.length === 0 ? (
+                  <div className="py-6 text-center text-[11px] text-[#8A8A8A]">
+                    No court orders yet. Add them on the Profile page.
+                  </div>
+                ) : (
+                  <ul className="divide-y divide-[#EDE2D1]">
+                    {attachCourtOrders.map((co) => {
+                      const selected = attachSelectedCourtOrderId === co.id;
+                      const dateVal = co.effective_date ?? co.created_at;
+                      const dateLabel = dateVal
+                        ? new Date(dateVal).toLocaleDateString(undefined, {
+                            month: "short",
+                            day: "numeric",
+                            year: "numeric",
+                          })
+                        : "—";
+                      const typeLabel = co.custody_type ?? "Court order";
+                      return (
+                        <li key={co.id}>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setAttachSelectedCourtOrderId(selected ? null : co.id)
+                            }
+                            className={cn(
+                              "flex w-full items-center gap-2 px-3 py-2 text-left text-[11px] transition-colors",
+                              selected
+                                ? "border-l-2 border-l-[#7C8B6E] bg-[#F2F5EF]"
+                                : "border-l-2 border-l-transparent hover:bg-[#FBF3E4]"
+                            )}
+                          >
+                            <div className="flex h-7 w-7 items-center justify-center rounded-full bg-[#E8EDE3] text-[#5B7A52]">
+                              <ScrollText className="h-3.5 w-3.5" />
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <p className="truncate text-[12px] font-medium text-[#3D3D3D]">
+                                {co.title || "Untitled court order"}
+                              </p>
+                              <p className="mt-0.5 text-[10px] text-[#8A8A8A]">
+                                {typeLabel} · {dateLabel}
+                              </p>
+                            </div>
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </div>
+            </div>
             <div className="mt-4 flex justify-end gap-2">
               <Button
                 type="button"
@@ -2313,12 +2363,37 @@ export function MessagesSplitView({
                 type="button"
                 size="sm"
                 className="h-8 rounded-full bg-[#5B7A52] text-xs text-white hover:bg-[#476242]"
-                onClick={() => {
-                  router.push("/profile?section=court-orders");
-                  setShowCourtOrderModal(false);
+                disabled={!attachSelectedCourtOrderId}
+                onClick={async () => {
+                  if (!attachSelectedCourtOrderId) return;
+                  try {
+                    const res = await fetch(
+                      `/api/messages/conversations/${activeConversation.id}/attachments`,
+                      {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          type: "court_order",
+                          court_order_id: attachSelectedCourtOrderId,
+                        }),
+                      }
+                    );
+                    const data = await res.json().catch(() => ({}));
+                    if (!res.ok) {
+                      showErrorToast(
+                        (data as { error?: string }).error ??
+                          "Unable to attach court order right now."
+                      );
+                      return;
+                    }
+                    showSuccessToast("Court order attached");
+                    setShowCourtOrderModal(false);
+                  } catch {
+                    showErrorToast("Unable to attach court order right now.");
+                  }
                 }}
               >
-                Open court orders
+                Attach
               </Button>
             </div>
           </div>

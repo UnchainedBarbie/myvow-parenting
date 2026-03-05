@@ -40,20 +40,9 @@ export function DashboardStatusCards({
   netLabel,
 }: Props) {
   const router = useRouter();
-  const [showCoolOff, setShowCoolOff] = useState(false);
-  const [coolOffHours, setCoolOffHours] = useState(4);
-  const [startingCoolOff, setStartingCoolOff] = useState(false);
-  const [coolOffActive, setCoolOffActive] = useState<{ ends_at: string } | null>(null);
   const [showReminderModal, setShowReminderModal] = useState(false);
   const [reminderText, setReminderText] = useState("");
   const [sendingReminder, setSendingReminder] = useState(false);
-
-  useEffect(() => {
-    fetch("/api/messages/cool-off")
-      .then((r) => r.json())
-      .then((d) => setCoolOffActive((d as { active?: { ends_at: string } }).active ?? null))
-      .catch(() => {});
-  }, []);
 
   useEffect(() => {
     const match = netLabel.match(/\$([0-9][0-9,]*\.\d{2})/);
@@ -123,7 +112,7 @@ export function DashboardStatusCards({
   }
 
   function handleCommunicationClick(e: React.MouseEvent) {
-    if ((e.target as HTMLElement).closest("a") || (e.target as HTMLElement).closest("[data-cooloff-trigger]")) return;
+    if ((e.target as HTMLElement).closest("a")) return;
     const url = firstUnreadConversationId
       ? `/messages?conversation_id=${encodeURIComponent(firstUnreadConversationId)}`
       : "/messages";
@@ -133,28 +122,6 @@ export function DashboardStatusCards({
   function handleSharedExpensesClick(e: React.MouseEvent) {
     if ((e.target as HTMLElement).closest("a")) return;
     router.push("/expenses");
-  }
-
-  async function startCoolOff() {
-    setStartingCoolOff(true);
-    try {
-      const res = await fetch("/api/messages/cool-off", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ hours: coolOffHours }),
-      });
-      const d = await res.json().catch(() => ({}));
-      if (res.ok && d.ends_at) {
-        setCoolOffActive({ ends_at: d.ends_at });
-        setShowCoolOff(false);
-      } else {
-        showErrorToast(
-          (d as { error?: string }).error ?? "Could not start cool-off."
-        );
-      }
-    } finally {
-      setStartingCoolOff(false);
-    }
   }
 
   return (
@@ -244,104 +211,6 @@ export function DashboardStatusCards({
             <p className="text-[11px] md:text-xs text-foreground-secondary">
               {communicationToneLabel}
             </p>
-            {!coolOffActive ? (
-              <button
-                type="button"
-                data-cooloff-trigger
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setShowCoolOff((v) => !v);
-                }}
-                className={cn("text-[11px] mt-0.5 block", SUB_LINK_CLASS)}
-              >
-                Take a cool-off break
-              </button>
-            ) : null}
-            {coolOffActive && (
-              <p className="text-[11px] md:text-xs text-foreground-secondary mt-1">
-                Cool-off active until{" "}
-                {new Date(coolOffActive.ends_at).toLocaleString(undefined, {
-                  month: "short",
-                  day: "numeric",
-                  hour: "numeric",
-                  minute: "2-digit",
-                })}
-              </p>
-            )}
-            {showCoolOff && !coolOffActive && (
-              <div
-                className="mt-2 rounded-lg border border-[#E8E4DC] bg-[#FDFBF7] p-2 space-y-2"
-                data-cooloff-trigger
-                onClick={(e) => e.stopPropagation()}
-              >
-                <Label className="text-[10px] font-medium text-foreground-secondary">Duration</Label>
-                <div className="flex flex-wrap gap-1.5">
-                  {[1, 4, 12, 24, 48].map((h) => (
-                    <button
-                      key={h}
-                      type="button"
-                      onClick={() => setCoolOffHours(h)}
-                      className={cn(
-                        "rounded-full px-2 py-1 text-[10px] border transition-colors",
-                        coolOffHours === h
-                          ? "border-[#7C8B6E] bg-[#F2F5EF] text-[#5B7A52]"
-                          : "border-border bg-background hover:bg-muted/50"
-                      )}
-                    >
-                      {h === 1 ? "1 hr" : `${h} hrs`}
-                    </button>
-                  ))}
-                </div>
-                <Button
-                  type="button"
-                  size="sm"
-                  className="rounded-full h-7 text-[10px] bg-[#5B7A52] hover:bg-[#476242] text-white"
-                  disabled={startingCoolOff}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    void startCoolOff();
-                  }}
-                >
-                  {startingCoolOff ? "Starting…" : "Start cool-off"}
-                </Button>
-              </div>
-            )}
-            {coolOffActive && (
-              <div className="mt-1 flex items-center gap-2">
-                <p className="text-[11px] md:text-xs text-foreground-secondary">
-                  Cool-off active until{" "}
-                  {new Date(coolOffActive.ends_at).toLocaleString(undefined, {
-                    month: "short",
-                    day: "numeric",
-                    hour: "numeric",
-                    minute: "2-digit",
-                  })}
-                </p>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-6 rounded-full text-[10px] px-2"
-                  onClick={async (e) => {
-                    e.stopPropagation();
-                    try {
-                      const res = await fetch("/api/messages/cool-off", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ end_early: true }),
-                      });
-                      if (res.ok) {
-                        setCoolOffActive(null);
-                      }
-                    } catch {
-                      // ignore
-                    }
-                  }}
-                >
-                  End early
-                </Button>
-              </div>
-            )}
           </CardContent>
         </Card>
 

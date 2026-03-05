@@ -5,12 +5,7 @@ import { Button } from "@/components/ui/button";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { DashboardStatusCards } from "@/components/dashboard/dashboard-status-cards";
-import { KidsThisWeekCard, type KidsThisWeekChild } from "@/components/dashboard/kids-this-week-card";
-import {
-  ChildrenTodayCard,
-  type ChildrenTodayCustodyItem,
-  type NextExchange,
-} from "@/components/dashboard/children-today-card";
+import type { ChildrenTodayCustodyItem, NextExchange } from "@/components/dashboard/children-today-card";
 
 type TodayEvent = {
   id: string;
@@ -42,6 +37,29 @@ function formatDateLabel(date: Date, timezone: string) {
     day: "numeric",
     timeZone: timezone,
   });
+}
+
+function formatCustodyTime(iso: string, timezone: string) {
+  const d = new Date(iso);
+  const hasTime = !(d.getHours() === 0 && d.getMinutes() === 0);
+  if (!hasTime) return null;
+  return d.toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: timezone,
+  });
+}
+
+function formatExchangeDateTime(iso: string, timezone: string) {
+  const d = new Date(iso);
+  const dateStr = d.toLocaleDateString("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    timeZone: timezone,
+  });
+  const timeStr = formatCustodyTime(iso, timezone);
+  return timeStr ? `${dateStr} at ${timeStr}` : dateStr;
 }
 
 function formatTimeLabel(iso: string, timezone: string) {
@@ -640,66 +658,103 @@ export default async function DashboardPage() {
           netLabel={netLabel}
         />
 
-        {/* Row 1: Today's events, Children today, Kids this week */}
-        <div className="grid gap-4 lg:grid-cols-3 items-start">
-          <Card className="rounded-card border border-[#E8E4DC] bg-[#FDFBF7]">
-            <CardHeader className="pb-2 px-4 pt-4">
-              <CardTitle className="font-heading text-lg text-foreground">
-                Today&apos;s events
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="px-4 pb-4 space-y-3">
-              {todayEvents.length === 0 ? (
-                <p className="text-sm text-foreground-secondary">
-                  Nothing scheduled today.
-                </p>
-              ) : (
-                <ul className="space-y-2">
-                  {todayEvents.map((e) => (
-                    <li key={e.id} className="flex items-start justify-between gap-2">
-                      <div>
-                        <p className="text-xs text-foreground-secondary">
-                          {(() => {
-                            const d = new Date(e.start_time);
-                            const hasSpecificTime =
-                              !(d.getHours() === 0 && d.getMinutes() === 0);
-                            return hasSpecificTime
-                              ? formatTimeLabel(e.start_time, timezone)
-                              : "All day";
-                          })()}
-                        </p>
-                        <p className="text-sm font-medium text-foreground">
-                          {e.title}
-                        </p>
-                        {e.child_name && (
+        {/* Today: events + custody */}
+        <Card className="rounded-card border border-[#E8E4DC] bg-[#FDFBF7]">
+          <CardHeader className="pb-2 px-4 pt-4">
+            <CardTitle className="font-heading text-lg text-foreground">
+              Today
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="px-4 pb-4">
+            <div className="grid gap-6 md:grid-cols-2">
+              <div className="space-y-3">
+                <p className="text-sm font-medium text-foreground">Today&apos;s events</p>
+                {todayEvents.length === 0 ? (
+                  <p className="text-sm text-foreground-secondary">
+                    Nothing scheduled today.
+                  </p>
+                ) : (
+                  <ul className="space-y-2">
+                    {todayEvents.map((e) => (
+                      <li key={e.id} className="flex items-start justify-between gap-2">
+                        <div>
                           <p className="text-xs text-foreground-secondary">
-                            {e.child_name}
+                            {(() => {
+                              const d = new Date(e.start_time);
+                              const hasSpecificTime =
+                                !(d.getHours() === 0 && d.getMinutes() === 0);
+                              return hasSpecificTime
+                                ? formatTimeLabel(e.start_time, timezone)
+                                : "All day";
+                            })()}
                           </p>
-                        )}
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              )}
-              <Button
-                asChild
-                size="sm"
-                variant="outline"
-                className="rounded-full h-8 text-xs mt-1"
-              >
-                <Link href="/calendar">Open calendar</Link>
-              </Button>
-            </CardContent>
-          </Card>
-
-          <ChildrenTodayCard
-            items={childrenTodayItems}
-            nextExchange={nextExchange}
-            timezone={timezone}
-          />
-
-          <KidsThisWeekCard childrenSummaries={kidsThisWeekChildren} timezone={timezone} />
-        </div>
+                          <p className="text-sm font-medium text-foreground">
+                            {e.title}
+                          </p>
+                          {e.child_name && (
+                            <p className="text-xs text-foreground-secondary">
+                              {e.child_name}
+                            </p>
+                          )}
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <Button
+                  asChild
+                  size="sm"
+                  variant="outline"
+                  className="rounded-full h-8 text-xs"
+                >
+                  <Link href="/calendar">Open calendar</Link>
+                </Button>
+              </div>
+              <div className="space-y-3">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-sm font-medium text-foreground">Children&apos;s custody</p>
+                  <Button asChild size="sm" variant="outline" className="rounded-full h-8 text-xs">
+                    <Link href="/calendar">Calendar</Link>
+                  </Button>
+                </div>
+                {childrenTodayItems.length === 0 && nextExchange == null ? (
+                  <p className="text-sm text-foreground-secondary">
+                    Add custody events to your calendar to see this.
+                  </p>
+                ) : (
+                  <>
+                    {childrenTodayItems.length > 0 && (
+                      <ul className="space-y-2">
+                        {childrenTodayItems.map((item) => {
+                          const timeStr = formatCustodyTime(item.start_time, timezone);
+                          return (
+                            <li key={`${item.child_id}-${item.start_time}`} className="flex flex-col gap-0.5">
+                              <p className="text-sm font-medium text-foreground">
+                                {item.child_name}
+                              </p>
+                              <p className="text-xs text-foreground-secondary">
+                                {item.event_title}
+                                {timeStr ? ` · ${timeStr}` : ""}
+                              </p>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    )}
+                    {nextExchange && (
+                      <p className="text-xs text-foreground-secondary border-t border-[#E8E4DC] pt-2 mt-1">
+                        <span className="font-medium text-foreground">Next custody exchange:</span>{" "}
+                        {formatExchangeDateTime(nextExchange.start_time, timezone)}
+                        {nextExchange.child_name ? ` (${nextExchange.child_name})` : ""}
+                        {nextExchange.title ? ` — ${nextExchange.title}` : ""}
+                      </p>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
 
         {/* Row 2: Review */}
         <div className="grid gap-4 lg:grid-cols-2 items-start">

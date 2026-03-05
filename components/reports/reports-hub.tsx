@@ -72,6 +72,20 @@ const REPORT_TYPES = [
     formats: ["pdf", "excel"] as const,
   },
   {
+    id: "interaction_log",
+    title: "Interaction Log",
+    description: "Documented interactions from Sage, with timestamps and linked messages when available",
+    icon: FileText,
+    hasDateRange: true,
+    filters: [] as const,
+    options: [
+      { id: "sage_documented", label: "Documented interactions from Sage", default: true },
+      { id: "timestamps_and_notes", label: "Timestamps and session notes", default: true },
+      { id: "linked_messages", label: "Linked messages (if any)", default: true },
+    ],
+    formats: ["pdf", "excel"] as const,
+  },
+  {
     id: "full_case_report",
     title: "Full Case Report",
     description: "Comprehensive report combining all sections above",

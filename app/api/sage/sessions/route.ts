@@ -8,9 +8,13 @@ type SessionRow = {
   category: string | null;
   created_at: string;
   updated_at: string;
+  flagged: boolean;
+  archived: boolean;
 };
 
-export async function GET() {
+type Filter = "all" | "flagged" | "documented" | "archived";
+
+export async function GET(request: NextRequest) {
   try {
     const supabase = await createClient();
     const {
@@ -20,12 +24,28 @@ export async function GET() {
       return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
     }
 
+    const { searchParams } = new URL(request.url);
+    const filter = (searchParams.get("filter") ?? "all") as Filter;
+
     const admin = getServiceRoleClient();
-    const { data, error } = await admin
+    let q = admin
       .from("sage_sessions")
-      .select("id, user_id, title, category, created_at, updated_at")
-      .eq("user_id", user.id)
-      .order("updated_at", { ascending: false });
+      .select(
+        "id, user_id, title, category, created_at, updated_at, flagged, archived, documented, documented_at"
+      )
+      .eq("user_id", user.id);
+
+    if (filter === "archived") {
+      q = q.eq("archived", true);
+    } else if (filter === "flagged") {
+      q = q.eq("flagged", true).eq("archived", false);
+    } else if (filter === "documented") {
+      q = q.eq("documented", true).eq("archived", false);
+    } else {
+      q = q.eq("archived", false);
+    }
+
+    const { data, error } = await q.order("updated_at", { ascending: false });
 
     if (error) {
       return NextResponse.json(
@@ -70,7 +90,9 @@ export async function POST(request: NextRequest) {
         created_at: nowIso,
         updated_at: nowIso,
       })
-      .select("id, user_id, title, category, created_at, updated_at")
+      .select(
+        "id, user_id, title, category, created_at, updated_at, flagged, archived, documented, documented_at"
+      )
       .single();
 
     if (error || !row) {

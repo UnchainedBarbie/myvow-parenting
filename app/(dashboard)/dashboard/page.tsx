@@ -576,6 +576,13 @@ export default async function DashboardPage() {
                   size="sm"
                   className="rounded-full h-8 text-xs bg-[#7B9E87] hover:bg-[#6A8A78] text-white"
                 >
+                  <Link href="/messages">Send message</Link>
+                </Button>
+                <Button
+                  asChild
+                  size="sm"
+                  className="rounded-full h-8 text-xs bg-[#7B9E87] hover:bg-[#6A8A78] text-white"
+                >
                   <Link href="/expenses">Add expense</Link>
                 </Button>
                 <Button

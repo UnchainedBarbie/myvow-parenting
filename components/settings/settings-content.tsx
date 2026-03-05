@@ -985,29 +985,27 @@ export function SettingsContent({ profile }: SettingsContentProps) {
             </select>
           </div>
 
-          <div className="border-t border-border pt-4">
-            <div className="flex items-center gap-3">
-              <button
-                type="button"
-                className="rounded-md border border-[#E8E4DC] px-4 py-2 text-sm font-medium text-[#3D3D3D] hover:bg-[#F2F5EF] transition-colors"
-                onClick={() => {
-                  router.push("/settings/change-password");
-                }}
-              >
-                Change Password
-              </button>
-              <button
-                type="button"
-                className="ml-auto rounded-md border border-[#D4A843] px-4 py-2 text-sm font-medium text-[#8A8A8A] hover:bg-[#F2F5EF] transition-colors"
-                onClick={() => {
-                  showErrorToast(
-                    "Account deletion will permanently remove your data. This flow is not yet enabled."
-                  );
-                }}
-              >
-                Delete Account
-              </button>
-            </div>
+          <div className="flex flex-wrap items-center gap-3 pt-2">
+            <button
+              type="button"
+              className="rounded-md border border-[#E8E4DC] px-4 py-2 text-sm font-medium text-[#3D3D3D] hover:bg-[#F2F5EF] transition-colors"
+              onClick={() => {
+                router.push("/settings/change-password");
+              }}
+            >
+              Change Password
+            </button>
+            <button
+              type="button"
+              className="rounded-md border border-[#C97B7B] px-4 py-2 text-sm font-medium text-[#A85C5C] hover:bg-[#FDF2F2] transition-colors"
+              onClick={() => {
+                showErrorToast(
+                  "Account deletion will permanently remove your data. This flow is not yet enabled."
+                );
+              }}
+            >
+              Delete Account
+            </button>
           </div>
         </div>
       </CollapsibleCard>

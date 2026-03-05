@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { showErrorToast } from "@/components/ui/toaster";
-import { MessageSquare, Clock, PenLine, FileText } from "lucide-react";
+import { MessageSquare, PenLine, FileText } from "lucide-react";
 
 export type SageMessage = {
   id: string;
@@ -45,7 +45,6 @@ export function SageClient({
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [draft, setDraft] = useState("");
-  const [pauseEndsAt, setPauseEndsAt] = useState<number | null>(null);
   const [writePrivatelyPlaceholder, setWritePrivatelyPlaceholder] = useState(false);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -159,9 +158,25 @@ export function SageClient({
     }
   }
 
-  function startPause30() {
-    const end = Date.now() + 30 * 60 * 1000;
-    setPauseEndsAt(end);
+  async function handleDocumentInteraction() {
+    const d = new Date();
+    const subject = d.toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    });
+
+    if (sessionId) {
+      void fetch(`/api/sage/sessions/${sessionId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ documented: true }),
+      }).catch(() => {});
+    }
+
+    router.push(
+      `/messages?new=1&subject=${encodeURIComponent(subject)}`
+    );
   }
 
   const lastMessage = messages.length > 0 ? messages[messages.length - 1] : null;
@@ -170,19 +185,6 @@ export function SageClient({
     messages.length > 0 &&
     lastMessage?.role === "sage" &&
     !writePrivatelyPlaceholder;
-
-  const pauseRemaining =
-    pauseEndsAt != null && pauseEndsAt > Date.now()
-      ? Math.max(0, Math.ceil((pauseEndsAt - Date.now()) / 1000))
-      : null;
-
-  useEffect(() => {
-    if (pauseEndsAt == null) return;
-    const id = setInterval(() => {
-      if (Date.now() >= pauseEndsAt) setPauseEndsAt(null);
-    }, 1000);
-    return () => clearInterval(id);
-  }, [pauseEndsAt]);
 
   return (
     <div className="rounded-2xl border border-border bg-background-secondary/40 p-3 md:p-4 flex flex-col gap-3 w-full h-full min-h-[60vh]">
@@ -222,66 +224,35 @@ export function SageClient({
                 })}
                 {showActionButtons && (
                   <div className="flex flex-wrap gap-2 pt-2">
-                    {pauseRemaining != null ? (
-                      <div className="inline-flex items-center gap-2 rounded-full border border-[#7C8B6E] bg-[#F2F5EF] px-3 py-2 text-[12px] text-[#5B7A52]">
-                        <Clock className="h-3.5 w-3.5" />
-                        <span>
-                          Pause:{" "}
-                          {Math.floor(pauseRemaining / 60)}:
-                          {String(pauseRemaining % 60).padStart(2, "0")}
-                        </span>
-                      </div>
-                    ) : (
-                      <>
-                        {onOpenDraftAssistant && (
-                          <button
-                            type="button"
-                            className={SAGE_ACTION_PILL}
-                            onClick={onOpenDraftAssistant}
-                          >
-                            <MessageSquare className="h-3 w-3" />
-                            Draft a message to co-parent
-                          </button>
-                        )}
-                        <button
-                          type="button"
-                          className={SAGE_ACTION_PILL}
-                          onClick={startPause30}
-                        >
-                          <Clock className="h-3 w-3" />
-                          Take a 30-minute pause
-                        </button>
-                        <button
-                          type="button"
-                          className={SAGE_ACTION_PILL}
-                          onClick={() => {
-                            setWritePrivatelyPlaceholder(true);
-                            textareaRef.current?.focus();
-                          }}
-                        >
-                          <PenLine className="h-3 w-3" />
-                          Write privately
-                        </button>
-                        <button
-                          type="button"
-                          className={SAGE_ACTION_PILL}
-                          onClick={() => {
-                            const d = new Date();
-                            const subject = d.toLocaleDateString("en-US", {
-                              month: "short",
-                              day: "numeric",
-                              year: "numeric",
-                            });
-                            router.push(
-                              `/messages?new=1&subject=${encodeURIComponent(subject)}`
-                            );
-                          }}
-                        >
-                          <FileText className="h-3 w-3" />
-                          Document this interaction
-                        </button>
-                      </>
+                    {onOpenDraftAssistant && (
+                      <button
+                        type="button"
+                        className={SAGE_ACTION_PILL}
+                        onClick={onOpenDraftAssistant}
+                      >
+                        <MessageSquare className="h-3 w-3" />
+                        Draft a message to co-parent
+                      </button>
                     )}
+                    <button
+                      type="button"
+                      className={SAGE_ACTION_PILL}
+                      onClick={() => {
+                        setWritePrivatelyPlaceholder(true);
+                        textareaRef.current?.focus();
+                      }}
+                    >
+                      <PenLine className="h-3 w-3" />
+                      Write privately
+                    </button>
+                    <button
+                      type="button"
+                      className={SAGE_ACTION_PILL}
+                      onClick={() => void handleDocumentInteraction()}
+                    >
+                      <FileText className="h-3 w-3" />
+                      Document this interaction
+                    </button>
                   </div>
                 )}
               </>

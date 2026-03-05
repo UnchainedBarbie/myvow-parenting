@@ -7,7 +7,6 @@ import { cn } from "@/lib/utils";
 import { showErrorToast, showSuccessToast } from "@/components/ui/toaster";
 import { Info, Lock, Pencil, Pin, Trash2 } from "lucide-react";
 import { VowAnalytics, type VowAnalyticsStats } from "@/components/vows/VowAnalytics";
-import { SageReflection } from "@/components/vows/SageReflection";
 
 export type Vow = {
   id: string;
@@ -396,7 +395,7 @@ export function MyVowClient({ initialVows }: Props) {
                             <div className="flex items-start justify-between gap-2">
                               <div className="min-w-0">
                                 <p className="text-[10px] text-[#8A8A8A] mb-1">
-                                  Active • {dateLabel}
+                                  {dateLabel}
                                 </p>
                                 <p className="text-sm text-foreground whitespace-pre-wrap leading-snug">
                                   {v.content}
@@ -408,11 +407,7 @@ export function MyVowClient({ initialVows }: Props) {
                                 </span>
                               )}
                             </div>
-                            <div className="mt-2 flex items-center gap-1.5">
-                              <span className="text-[10px] text-foreground-secondary">
-                                Status: Active
-                              </span>
-                            </div>
+                            <div className="mt-2 flex items-center gap-1.5" />
                           </div>
                           <div className="ml-1 flex items-center gap-2">
                             <button
@@ -459,13 +454,13 @@ export function MyVowClient({ initialVows }: Props) {
             </div>
           </div>
 
-          {/* RIGHT COLUMN — Pinned vows + Your vows list */}
+          {/* RIGHT COLUMN — Anchors, suggestions, communication */}
           <div className="rounded-2xl border border-[#E8E4DC]/60 bg-white/80 p-3 md:p-4 space-y-3">
-            {/* Pinned anchors */}
+            {/* My Anchors */}
             <section className="space-y-2.5">
               <div>
                 <h2 className="font-heading text-sm font-semibold text-[#3D3D3D]">
-                  Pinned anchors
+                  My Anchors
                 </h2>
                 <p className="text-[11px] text-foreground-secondary mt-0.5">
                   Pin up to 3 vows Sage can reference during coaching.
@@ -494,9 +489,6 @@ export function MyVowClient({ initialVows }: Props) {
                 </div>
               ) : (
                 <>
-                  <p className="text-[11px] font-medium text-[#6A7A6E] px-0.5">
-                    {pinnedVows.length === 1 ? "Pinned anchor" : "Pinned anchors"}
-                  </p>
                   {pinnedVows.map((vow, index) => (
                     <div
                       key={vow.id}
@@ -568,19 +560,6 @@ export function MyVowClient({ initialVows }: Props) {
                 </>
               )}
             </section>
-
-            {/* Analytics & reflection */}
-            <VowAnalytics
-              stats={stats}
-              loading={statsLoading}
-              onViewDetails={
-                stats && (stats.top_vow_text || stats.top_trigger_tag)
-                  ? () => detailsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })
-                  : undefined
-              }
-            />
-            <SageReflection stats={stats} pinned={pinnedVows} />
-
             {/* Suggested Vows */}
             <section className="pt-1 space-y-2.5">
               <div>
@@ -647,6 +626,16 @@ export function MyVowClient({ initialVows }: Props) {
                 </div>
               )}
             </section>
+            {/* Your Communication (analytics) */}
+            <VowAnalytics
+              stats={stats}
+              loading={statsLoading}
+              onViewDetails={
+                stats && (stats.top_vow_text || stats.top_trigger_tag)
+                  ? () => detailsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })
+                  : undefined
+              }
+            />
           </div>
         </div>
       </div>

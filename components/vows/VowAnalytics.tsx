@@ -24,9 +24,6 @@ export function VowAnalytics({ stats, loading, onViewDetails }: VowAnalyticsProp
         <h2 className="font-heading text-sm font-semibold text-[#3D3D3D]">
           Your Communication
         </h2>
-        <p className="text-[11px] text-foreground-secondary mt-0.5">
-          Last 30 days. Private to you.
-        </p>
       </div>
       <div className="flex flex-wrap items-stretch gap-3">
         <StatCard

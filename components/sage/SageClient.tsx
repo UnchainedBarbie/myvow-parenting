@@ -158,27 +158,6 @@ export function SageClient({
     }
   }
 
-  async function handleDocumentInteraction() {
-    const d = new Date();
-    const subject = d.toLocaleDateString("en-US", {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    });
-
-    if (sessionId) {
-      void fetch(`/api/sage/sessions/${sessionId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ documented: true }),
-      }).catch(() => {});
-    }
-
-    router.push(
-      `/messages?new=1&subject=${encodeURIComponent(subject)}`
-    );
-  }
-
   const lastMessage = messages.length > 0 ? messages[messages.length - 1] : null;
   const showActionButtons =
     !loading &&
@@ -222,39 +201,6 @@ export function SageClient({
                     </div>
                   );
                 })}
-                {showActionButtons && (
-                  <div className="flex flex-wrap gap-2 pt-2">
-                    {onOpenDraftAssistant && (
-                      <button
-                        type="button"
-                        className={SAGE_ACTION_PILL}
-                        onClick={onOpenDraftAssistant}
-                      >
-                        <MessageSquare className="h-3 w-3" />
-                        Draft a message to co-parent
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      className={SAGE_ACTION_PILL}
-                      onClick={() => {
-                        setWritePrivatelyPlaceholder(true);
-                        textareaRef.current?.focus();
-                      }}
-                    >
-                      <PenLine className="h-3 w-3" />
-                      Write privately
-                    </button>
-                    <button
-                      type="button"
-                      className={SAGE_ACTION_PILL}
-                      onClick={() => void handleDocumentInteraction()}
-                    >
-                      <FileText className="h-3 w-3" />
-                      Document this interaction
-                    </button>
-                  </div>
-                )}
               </>
             )}
             <div ref={bottomRef} />

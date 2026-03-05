@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, Send, PenLine, Trash2, Flag, Archive, Search, FileText } from "lucide-react";
+import { Plus, Send, PenLine, Trash2, Flag, Archive, Search, FileText, MoreVertical } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
@@ -59,6 +59,33 @@ export function SageSplitView() {
   const [listFilter, setListFilter] = useState<ListFilter>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+  const renameInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (!menuOpenId) return;
+    function handleClickOutside(e: MouseEvent) {
+      const target = e.target as HTMLElement | null;
+      if (
+        !target?.closest("[data-sage-session-menu]") &&
+        !target?.closest("[data-sage-session-menu-button]")
+      ) {
+        setMenuOpenId(null);
+        setDeleteConfirmId(null);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [menuOpenId]);
+
+  useEffect(() => {
+    if (renamingId && renameInputRef.current) {
+      renameInputRef.current.focus();
+      renameInputRef.current.select();
+    }
+  }, [renamingId]);
 
   const loadSessions = useCallback(async () => {
     setLoadingSessions(true);
@@ -140,20 +167,26 @@ export function SageSplitView() {
     }
   }
 
-  async function handleArchive(sessionId: string) {
+  async function handleArchive(sessionId: string, archived: boolean) {
     try {
       const res = await fetch(`/api/sage/sessions/${sessionId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ archived: true }),
+        body: JSON.stringify({ archived }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        showErrorToast((data as { message?: string }).message ?? "Could not archive session.");
+        showErrorToast((data as { message?: string }).message ?? "Could not update session.");
         return;
       }
-      setSessions((prev) => prev.filter((s) => s.id !== sessionId));
-      if (selectedId === sessionId) setSelectedId(null);
+      setSessions((prev) =>
+        prev
+          .map((s) =>
+            s.id === sessionId ? { ...s, archived } : s
+          )
+          .filter((s) => !s.archived || listFilter === "archived")
+      );
+      if (selectedId === sessionId && archived) setSelectedId(null);
     } catch {
       showErrorToast("Something went wrong.");
     }
@@ -172,6 +205,37 @@ export function SageSplitView() {
       setSessions((prev) => prev.filter((s) => s.id !== sessionId));
       if (selectedId === sessionId) setSelectedId(null);
       setDeleteConfirmId(null);
+      setMenuOpenId(null);
+    } catch {
+      showErrorToast("Something went wrong.");
+    }
+  }
+
+  async function handleRename(sessionId: string, currentTitle: string | null) {
+    const next = renameValue.trim();
+    if (!next) {
+      setRenamingId(null);
+      setRenameValue("");
+      return;
+    }
+    try {
+      const res = await fetch(`/api/sage/sessions/${sessionId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: next }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showErrorToast((data as { message?: string }).message ?? "Could not rename session.");
+        setRenameValue(currentTitle ?? "");
+        return;
+      }
+      setSessions((prev) =>
+        prev.map((s) => (s.id === sessionId ? { ...s, title: next } : s))
+      );
+      setRenamingId(null);
+      setRenameValue("");
+      setMenuOpenId(null);
     } catch {
       showErrorToast("Something went wrong.");
     }
@@ -282,22 +346,21 @@ export function SageSplitView() {
           </div>
 
           {/* Filters */}
-          <div className="flex items-center gap-1.5 px-3 py-2 border-b border-[#E8E4DC]">
-            {(["all", "flagged", "documented", "archived"] as const).map((f) => (
-              <button
-                key={f}
-                type="button"
-                onClick={() => setListFilter(f)}
-                className={cn(
-                  "rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors capitalize",
-                  listFilter === f
-                    ? "bg-[#5B7A52] text-white border border-[#5B7A52]"
-                    : "border border-[#E8E4DC] bg-[#F2F5EF] text-[#6B6B6B] hover:bg-[#E8EDE3] hover:border-[#7C8B6E]"
-                )}
-              >
-                {f}
-              </button>
-            ))}
+          <div className="flex items-center gap-2 px-3 py-2 border-b border-[#E8E4DC]">
+            <select
+              value={listFilter}
+              onChange={(e) => setListFilter(e.target.value as ListFilter)}
+              className={cn(
+                "h-8 w-[120px] shrink-0 rounded-full border px-2 py-1 text-[11px] text-[#3D3D3D] bg-[#FDFBF7] border-[#E8E4DC] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E]",
+                listFilter !== "all" && "bg-[#F2F5EF] border-[#7C8B6E]"
+              )}
+              aria-label="Filter sessions"
+            >
+              <option value="all">All sessions</option>
+              <option value="flagged">Flagged</option>
+              <option value="documented">Documented</option>
+              <option value="archived">Archived</option>
+            </select>
           </div>
 
           <ScrollArea className="flex-1">
@@ -334,101 +397,170 @@ export function SageSplitView() {
                       onClick={() => setSelectedId(s.id)}
                       className="w-full rounded-lg px-2.5 py-2 text-left"
                     >
-                      <p className="text-xs font-medium text-[#3D3D3D] truncate flex items-center gap-1.5">
-                        {s.flagged && (
-                          <span className="shrink-0 text-[#5B7A52]" title="Flagged">
-                            <Flag className="h-3 w-3 fill-current" />
-                          </span>
-                        )}
-                        {s.documented && (
-                          <span className="shrink-0 text-[#5B7A52]" title="Documented interaction">
-                            <FileText className="h-3 w-3" />
-                          </span>
-                        )}
-                        <span className="min-w-0 truncate">{truncateTitle(s.title)}</span>
-                      </p>
-                      <div className="mt-1 flex items-center gap-2">
-                        <span className="text-[10px] text-[#8A8A8A]">
-                          {formatSessionDate(s.updated_at)}
-                        </span>
-                        {s.category ? (
-                          <span className="inline-flex items-center rounded-full bg-[#E8E4DC] px-1.5 py-0.5 text-[9px] text-[#6B6B6B]">
-                            {s.category}
-                          </span>
-                        ) : null}
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="text-xs font-medium text-[#3D3D3D] truncate flex items-center gap-1.5">
+                            {s.flagged && (
+                              <span className="shrink-0 text-[#5B7A52]" title="Flagged">
+                                <Flag className="h-3 w-3 fill-current" />
+                              </span>
+                            )}
+                            {s.documented && (
+                              <span className="shrink-0 text-[#5B7A52]" title="Documented interaction">
+                                <FileText className="h-3 w-3" />
+                              </span>
+                            )}
+                            {renamingId === s.id ? (
+                              <input
+                                ref={renameInputRef}
+                                value={renameValue}
+                                onChange={(e) => setRenameValue(e.target.value)}
+                                onClick={(e) => e.stopPropagation()}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") {
+                                    e.preventDefault();
+                                    void handleRename(s.id, s.title);
+                                  } else if (e.key === "Escape") {
+                                    e.preventDefault();
+                                    setRenamingId(null);
+                                    setRenameValue("");
+                                  }
+                                }}
+                                onBlur={() => {
+                                  setRenamingId(null);
+                                  setRenameValue("");
+                                }}
+                                className="w-full rounded border border-[#E8E4DC] bg-[#FDFBF7] px-2 py-1 text-[11px] text-[#3D3D3D] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E]"
+                              />
+                            ) : (
+                              <span className="min-w-0 truncate">
+                                {truncateTitle(s.title)}
+                              </span>
+                            )}
+                          </p>
+                          <div className="mt-1 flex items-center gap-2">
+                            <span className="text-[10px] text-[#8A8A8A]">
+                              {formatSessionDate(s.updated_at)}
+                            </span>
+                            {s.category ? (
+                              <span className="inline-flex items-center rounded-full bg-[#E8E4DC] px-1.5 py-0.5 text-[9px] text-[#6B6B6B]">
+                                {s.category}
+                              </span>
+                            ) : null}
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          data-sage-session-menu-button
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setMenuOpenId(menuOpenId === s.id ? null : s.id);
+                            setDeleteConfirmId(null);
+                          }}
+                          className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded hover:bg-[#E8E4DC] text-[#B0A899] hover:text-[#6A7A6E]"
+                          aria-label="Session options"
+                          aria-expanded={menuOpenId === s.id}
+                        >
+                          <MoreVertical className="h-4 w-4" />
+                        </button>
                       </div>
                     </button>
-                    {/* Row actions on hover */}
-                    <div className="absolute right-1.5 top-1/2 -translate-y-1/2 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleFlag(s.id, !!s.flagged);
-                        }}
-                        className={cn(
-                          "rounded p-1 transition-colors",
-                          s.flagged
-                            ? "text-[#5B7A52] bg-[#F2F5EF] hover:bg-[#E8EDE3]"
-                            : "text-[#8A8A8A] hover:bg-[#F2F5EF] hover:text-[#5B7A52]"
-                        )}
-                        title={s.flagged ? "Unflag" : "Flag"}
-                        aria-label={s.flagged ? "Unflag session" : "Flag session"}
+                    {menuOpenId === s.id && (
+                      <div
+                        data-sage-session-menu
+                        className="absolute right-0 top-9 z-20 min-w-[180px] rounded-lg border border-[#E8E4DC] bg-white py-1 shadow-lg"
                       >
-                        <Flag className={cn("h-3 w-3", s.flagged && "fill-current")} />
-                      </button>
-                      {listFilter !== "archived" && (
                         <button
                           type="button"
+                          className="flex w-full items-center gap-2 px-3 py-2 text-[13px] text-[#3D3D3D] hover:bg-[#F2F5EF] text-left"
                           onClick={(e) => {
+                            e.preventDefault();
                             e.stopPropagation();
-                            handleArchive(s.id);
+                            setRenamingId(s.id);
+                            setRenameValue(s.title ?? "");
                           }}
-                          className="rounded p-1 text-[#8A8A8A] hover:bg-[#F2F5EF] hover:text-[#5B7A52] transition-colors"
-                          title="Archive"
-                          aria-label="Archive session"
                         >
-                          <Archive className="h-3 w-3" />
+                          Rename
                         </button>
-                      )}
-                      {deleteConfirmId === s.id ? (
-                        <span className="flex items-center gap-0.5 text-[10px] text-[#6B6B6B]">
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleDelete(s.id);
-                            }}
-                            className="rounded px-1 py-0.5 font-medium text-[#A85C5C] hover:bg-[#FDF2F2]"
-                          >
-                            Confirm
-                          </button>
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setDeleteConfirmId(null);
-                            }}
-                            className="rounded px-1 py-0.5 font-medium text-[#6B6B6B] hover:bg-[#F2F5EF]"
-                          >
-                            Cancel
-                          </button>
-                        </span>
-                      ) : (
                         <button
                           type="button"
+                          className="flex w-full items-center gap-2 px-3 py-2 text-[13px] text-[#3D3D3D] hover:bg-[#F2F5EF] text-left"
                           onClick={(e) => {
+                            e.preventDefault();
                             e.stopPropagation();
-                            setDeleteConfirmId(s.id);
+                            void handleFlag(s.id, !!s.flagged);
+                            setMenuOpenId(null);
                           }}
-                          className="rounded p-1 text-[#8A8A8A] hover:bg-[#FDF2F2] hover:text-[#A85C5C] transition-colors"
-                          title="Delete"
-                          aria-label="Delete session"
                         >
-                          <Trash2 className="h-3 w-3" />
+                          <Flag className="h-3.5 w-3.5" />{" "}
+                          {s.flagged ? "Unflag session" : "Flag session"}
                         </button>
-                      )}
-                    </div>
+                        <button
+                          type="button"
+                          className="flex w-full items-center gap-2 px-3 py-2 text-[13px] text-[#3D3D3D] hover:bg-[#F2F5EF] text-left"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            void handleArchive(s.id, !s.archived);
+                            setMenuOpenId(null);
+                          }}
+                        >
+                          {s.archived ? (
+                            <>
+                              <Archive className="h-3.5 w-3.5" /> Unarchive session
+                            </>
+                          ) : (
+                            <>
+                              <Archive className="h-3.5 w-3.5" /> Archive session
+                            </>
+                          )}
+                        </button>
+                        <div className="border-t border-[#F2F5EF] mt-1 pt-1">
+                          {deleteConfirmId === s.id ? (
+                            <div className="px-3 py-2 text-[12px] text-[#6B6B6B] space-y-1">
+                              <p>Delete this session?</p>
+                              <div className="flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  className="rounded px-2 py-1 text-[12px] font-medium text-[#A85C5C] hover:bg-[#FDF2F2]"
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    void handleDelete(s.id);
+                                  }}
+                                >
+                                  Yes
+                                </button>
+                                <button
+                                  type="button"
+                                  className="rounded px-2 py-1 text-[12px] font-medium text-[#6B6B6B] hover:bg-[#F2F5EF]"
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    setDeleteConfirmId(null);
+                                  }}
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              className="flex w-full items-center gap-2 px-3 py-2 text-[13px] text-[#C3442D] hover:bg-[#FDF2F0] text-left"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                setDeleteConfirmId(s.id);
+                              }}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" /> Delete session
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ))
               )}

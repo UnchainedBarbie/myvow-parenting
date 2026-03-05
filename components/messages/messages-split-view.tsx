@@ -33,21 +33,19 @@ import { AlertCircle } from "lucide-react";
 type ChildSummary = { id: string; first_name: string };
 
 const CONVERSATION_TOPICS = [
-  { value: "medical", label: "Medical" },
-  { value: "school", label: "School" },
-  { value: "schedule", label: "Schedule" },
-  { value: "expense", label: "Expenses" },
-  { value: "general", label: "General" },
-  { value: "emergency", label: "Emergency" },
+  { value: "Medical", label: "Medical" },
+  { value: "School", label: "School" },
+  { value: "Schedule", label: "Schedule" },
+  { value: "Expenses", label: "Expenses" },
+  { value: "General", label: "General" },
+  { value: "Emergency", label: "Emergency" },
 ] as const;
 
 function getTopicLabel(topic: string | undefined | null): string {
   if (!topic) return "General";
-  const t = topic.toLowerCase();
-  const found = CONVERSATION_TOPICS.find((x) => x.value === t);
+  const found = CONVERSATION_TOPICS.find((x) => x.value === topic);
   if (found) return found.label;
-  if (t === "expense" || t === "expenses") return "Expenses";
-  return topic.charAt(0).toUpperCase() + topic.slice(1);
+  return topic.charAt(0).toUpperCase() + topic.slice(1).toLowerCase();
 }
 
 type ConversationSummary = {
@@ -104,7 +102,7 @@ export function MessagesSplitView({
   const [newChildId, setNewChildId] = useState<string | "general">("general");
   const [newIsEmergency, setNewIsEmergency] = useState(false);
   const [newSubject, setNewSubject] = useState("");
-  const [newTopic, setNewTopic] = useState<string>("");
+  const [newTopic, setNewTopic] = useState<string>("General");
   const [creating, setCreating] = useState(false);
   const [composeText, setComposeText] = useState("");
   const [sending, setSending] = useState(false);
@@ -269,8 +267,12 @@ export function MessagesSplitView({
     const subject = searchParams.get("subject");
     const body = searchParams.get("body");
     if (!openNew && !topic && !subject && !body) return;
-    if (topic) setNewTopic(topic);
-    else if (openNew || subject || body) setNewTopic("general");
+    if (topic) {
+      const match = CONVERSATION_TOPICS.find(
+        (t) => t.value.toLowerCase() === topic.toLowerCase()
+      );
+      setNewTopic(match ? match.value : "General");
+    } else if (openNew || subject || body) setNewTopic("General");
     if (subject) setNewSubject(decodeURIComponent(subject));
     if (body) setNewInitialMessage(decodeURIComponent(body));
     setNewModalOpen(true);
@@ -471,11 +473,7 @@ export function MessagesSplitView({
       });
     }
     if (filterTopic !== "all") {
-      list = list.filter((c) => {
-        const t = (c.category ?? "general").toLowerCase();
-        const norm = t === "expenses" ? "expense" : t;
-        return norm === filterTopic;
-      });
+      list = list.filter((c) => (c.category ?? "General") === filterTopic);
     }
     if (filterChild !== "all") {
       list = list.filter((c) => c.child_id === filterChild);
@@ -510,9 +508,8 @@ export function MessagesSplitView({
     if (!newSubject.trim() || !newTopic) return;
     setCreating(true);
     try {
-      // When "This is an emergency communication" is checked, set topic/category to 'emergency'
-      // so the conversation row is stored as emergency and list styling shows it (API does not store is_emergency on conversations table).
-      const topicValue = newIsEmergency ? "emergency" : newTopic;
+      // When "This is an emergency communication" is checked, set topic/category to 'Emergency' (title case per DB constraint).
+      const topicValue = newIsEmergency ? "Emergency" : newTopic;
       const body = {
         subject: newSubject.trim(),
         child_id: newChildId === "general" ? null : newChildId,
@@ -536,7 +533,7 @@ export function MessagesSplitView({
       const initialMessage = newInitialMessage;
       setNewSubject("");
       setNewChildId("general");
-      setNewTopic("");
+      setNewTopic("General");
       setNewIsEmergency(false);
       setNewModalOpen(false);
       setNewInitialMessage(null);
@@ -844,8 +841,7 @@ export function MessagesSplitView({
                     });
                 const isDeletable = (c.message_count ?? 0) === 0;
                 const isEmergencyConversation =
-                  c.has_emergency === true ||
-                  (c.category?.toLowerCase() === "emergency");
+                  c.has_emergency === true || c.category === "Emergency";
                 return (
                   <div
                     key={c.id}
@@ -1097,15 +1093,6 @@ export function MessagesSplitView({
                   </p>
                 </div>
               </div>
-              {(userSettings?.cool_off_enabled ?? true) && !coolOffActive && (
-                <button
-                  type="button"
-                  onClick={() => setShowCoolOffModal(true)}
-                  className="shrink-0 rounded-full border border-[#E8E4DC] bg-[#FDFBF7] px-2.5 py-1 text-[11px] text-[#5B7A52] hover:bg-[#F2F5EF]"
-                >
-                  Take a cool-off break
-                </button>
-              )}
             </div>
             {coolOffActive && (
               <div className="border-b border-[#E8E4DC] bg-[#F2F5EF] px-4 py-2 text-[11px] text-[#3D3D3D]">
@@ -1339,11 +1326,11 @@ export function MessagesSplitView({
                         const dismissed = dismissedSuggestions[m.id] || {};
                         const childId = activeConversation.child_id;
                         const expenseCategoryParam =
-                          activeConversation.category === "medical"
+                          activeConversation.category === "Medical"
                             ? "medical"
-                            : activeConversation.category === "school"
+                            : activeConversation.category === "School"
                               ? "school"
-                              : activeConversation.category === "expense" || activeConversation.category === "expenses"
+                              : activeConversation.category === "Expenses"
                                 ? "other"
                                 : undefined;
 
@@ -1695,32 +1682,43 @@ export function MessagesSplitView({
                     className="min-h-[52px] flex-1 resize-none rounded-[10px] border border-[#E8E4DC] bg-[#F9F6F0] text-sm text-[#3D3D3D] placeholder:text-[#B0A899] focus-visible:ring-[#7C8B6E]"
                     disabled={sending}
                   />
-                  <button
-                    type="button"
-                    onClick={() => void handleSend()}
-                    disabled={sending || !composeText.trim() || blockSend}
-                    className={cn(
-                      "mb-0.5 flex h-[42px] w-[42px] items-center justify-center rounded-full text-white shadow-sm transition-colors",
-                      composeText.trim()
-                        ? "bg-[#5B7A52] hover:bg-[#476242]"
-                        : "bg-[#E0E4DC] cursor-not-allowed"
-                    )}
-                    aria-label="Send message"
-                  >
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      viewBox="0 0 24 24"
-                      className="h-4 w-4"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.8"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
+                  <div className="flex flex-col items-end gap-1">
+                    <button
+                      type="button"
+                      onClick={() => void handleSend()}
+                      disabled={sending || !composeText.trim() || blockSend}
+                      className={cn(
+                        "flex h-[42px] w-[42px] items-center justify-center rounded-full text-white shadow-sm transition-colors",
+                        composeText.trim()
+                          ? "bg-[#5B7A52] hover:bg-[#476242]"
+                          : "bg-[#E0E4DC] cursor-not-allowed"
+                      )}
+                      aria-label="Send message"
                     >
-                      <path d="M22 2L11 13" />
-                      <path d="M22 2L15 22L11 13L2 9L22 2Z" />
-                    </svg>
-                  </button>
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        viewBox="0 0 24 24"
+                        className="h-4 w-4"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.8"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <path d="M22 2L11 13" />
+                        <path d="M22 2L15 22L11 13L2 9L22 2Z" />
+                      </svg>
+                    </button>
+                    {(userSettings?.cool_off_enabled ?? true) && !coolOffActive && (
+                      <button
+                        type="button"
+                        onClick={() => setShowCoolOffModal(true)}
+                        className="rounded-full border border-[#E8E4DC] bg-[#FDFBF7] px-2.5 py-1 text-[11px] text-[#5B7A52] hover:bg-[#F2F5EF]"
+                      >
+                        Take a cool-off break
+                      </button>
+                    )}
+                  </div>
                 </div>
                 {composeError && (
                   <p className="text-[11px] text-[#C7524A]">{composeError}</p>
@@ -1733,25 +1731,25 @@ export function MessagesSplitView({
                   <div className="flex flex-wrap items-center gap-2 text-[11px]">
                     <span className="text-[#8A8A8A]">Attach:</span>
                     {(() => {
-                      const cat = activeConversation.category ?? "general";
+                      const cat = activeConversation.category ?? "General";
                       const childId = activeConversation.child_id;
                       const showCalendar =
-                        cat === "schedule" || cat === "school" || cat === "general";
+                        cat === "Schedule" || cat === "School" || cat === "General";
                       const showExpense =
-                        cat === "medical" || cat === "expense" || cat === "expenses" || cat === "general";
+                        cat === "Medical" || cat === "Expenses" || cat === "General";
                       const showDocument =
-                        cat === "medical" ||
-                        cat === "expense" ||
-                        cat === "school" ||
-                        cat === "general";
-                      const showCourt = cat === "general";
+                        cat === "Medical" ||
+                        cat === "Expenses" ||
+                        cat === "School" ||
+                        cat === "General";
+                      const showCourt = cat === "General";
 
                       const expenseCategoryParam =
-                        cat === "medical"
+                        cat === "Medical"
                           ? "medical"
-                          : cat === "school"
+                          : cat === "School"
                             ? "school"
-                            : cat === "expense"
+                            : cat === "Expenses"
                               ? "other"
                               : undefined;
 

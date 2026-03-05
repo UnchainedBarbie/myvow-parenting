@@ -1,6 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
 
+const ALLOWED_TOPICS = new Set([
+  "Medical",
+  "School",
+  "Schedule",
+  "Expenses",
+  "General",
+  "Emergency",
+]);
+
 type ConversationRow = {
   id: string;
   case_id: string;
@@ -184,18 +193,11 @@ export async function GET() {
         ? (last.ai_rewritten_content ?? last.original_content ?? "")
         : "";
 
-      // User-selected topic at conversation level (fallback to general)
-      const rawCategory = (c.category ?? "").toLowerCase().trim();
-      const allowed = new Set([
-        "medical",
-        "schedule",
-        "school",
-        "expense",
-        "therapy",
-        "behavior",
-        "general",
-      ]);
-      const category: string = allowed.has(rawCategory) ? rawCategory : "general";
+      // Topic/category from DB (conversations_topic_check allows title case only)
+      const rawTopicTag = (c.topic ?? c.category ?? "General").trim();
+      const category: string = ALLOWED_TOPICS.has(rawTopicTag)
+        ? rawTopicTag
+        : "General";
 
       // Derive tone (calm / elevated) from AI classification / intensity
       let tone: "calm" | "elevated" = "calm";
@@ -225,7 +227,7 @@ export async function GET() {
       const normalizedStatus =
         rawStatus === "archived" || rawStatus === "resolved" ? "archived" : "open";
       const status: "open" | "archived" = normalizedStatus === "archived" ? "archived" : "open";
-      const topicTag = (c.topic as string | null) ?? category ?? "general";
+      const topicTag = category;
 
       return {
         id: c.id,
@@ -319,19 +321,14 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const rawTopic = (topic ?? category ?? "").toLowerCase().trim();
-    const allowedTopics = new Set([
-      "medical",
-      "school",
-      "schedule",
-      "expense",
-      "general",
-      "emergency",
-    ]);
-    const topicValue = rawTopic === "expenses" ? "expense" : rawTopic;
-    if (!allowedTopics.has(topicValue)) {
+    const topicValue = (topic ?? category ?? "").trim();
+    if (!topicValue || !ALLOWED_TOPICS.has(topicValue)) {
       return NextResponse.json(
-        { error: "Topic is required (Medical, School, Schedule, Expenses, General, Emergency)" },
+        {
+          error:
+            "Topic is required and must be one of: " +
+            [...ALLOWED_TOPICS].join(", "),
+        },
         { status: 400 }
       );
     }

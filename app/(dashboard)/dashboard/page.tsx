@@ -15,21 +15,6 @@ type TodayEvent = {
   child_name: string | null;
 };
 
-type WeekDaySummary = {
-  date: Date;
-  events: TodayEvent[];
-};
-
-type ChildSummary = {
-  id: string;
-  first_name: string;
-  date_of_birth: string | null;
-  ageLabel: string;
-  nextEvent: TodayEvent | null;
-  profile_image?: string | null;
-  lastUpdateLabel?: string | null;
-};
-
 function formatDateLabel(date: Date, timezone: string) {
   return date.toLocaleDateString("en-US", {
     weekday: "long",
@@ -187,33 +172,6 @@ export default async function DashboardPage() {
     999
   ).toISOString();
 
-  const weekDays: Date[] = [];
-  for (let i = 0; i < 7; i++) {
-    const d = new Date(now);
-    d.setDate(now.getDate() + i);
-    weekDays.push(d);
-  }
-  const weekStart = new Date(
-    now.getFullYear(),
-    now.getMonth(),
-    now.getDate(),
-    0,
-    0,
-    0,
-    0
-  ).toISOString();
-  const weekEndDate = new Date(now);
-  weekEndDate.setDate(now.getDate() + 6);
-  const weekEnd = new Date(
-    weekEndDate.getFullYear(),
-    weekEndDate.getMonth(),
-    weekEndDate.getDate(),
-    23,
-    59,
-    59,
-    999
-  ).toISOString();
-
   // Today events
   const { data: todayEventsRaw } = await admin
     .from("calendar_events")
@@ -247,26 +205,7 @@ export default async function DashboardPage() {
     .limit(1)
     .maybeSingle();
 
-  // This week events
-  const { data: weekEventsRaw } = await admin
-    .from("calendar_events")
-    .select("id, title, child_id, start_time, all_day, deleted_at")
-    .eq("case_id", caseId)
-    .gte("start_time", weekStart)
-    .lte("start_time", weekEnd)
-    .is("deleted_at", null)
-    .order("start_time", { ascending: true });
-
-  const eventsAll = [...(todayEventsRaw ?? []), ...(weekEventsRaw ?? [])];
-  const eventChildIds = [
-    ...new Set(
-      eventsAll
-        .map((e) => e.child_id as string | null)
-        .filter((id): id is string => !!id)
-    ),
-  ];
-
-  // Children for kids summary and event labels
+  // Children for event labels
   const { data: childrenRaw } = await admin
     .from("children")
     .select("id, first_name, date_of_birth, deleted_at, profile_image")
@@ -309,40 +248,6 @@ export default async function DashboardPage() {
           : null,
       }
     : null;
-
-  const weekEvents: TodayEvent[] = (weekEventsRaw ?? []).map((e) => ({
-    id: e.id as string,
-    title: e.title as string,
-    start_time: e.start_time as string,
-    all_day: (e.all_day as boolean) ?? false,
-    child_name: e.child_id ? childMap[e.child_id as string]?.first_name ?? null : null,
-  }));
-
-  const weekByDay: WeekDaySummary[] = weekDays.map((day) => {
-    const dayStart = new Date(
-      day.getFullYear(),
-      day.getMonth(),
-      day.getDate(),
-      0,
-      0,
-      0,
-      0
-    );
-    const dayEnd = new Date(
-      day.getFullYear(),
-      day.getMonth(),
-      day.getDate(),
-      23,
-      59,
-      59,
-      999
-    );
-    const eventsForDay = weekEvents.filter((e) => {
-      const d = new Date(e.start_time);
-      return d >= dayStart && d <= dayEnd;
-    });
-    return { date: day, events: eventsForDay };
-  });
 
   // Review uploads: pending email-to-MyVow items
   const { data: uploadsRaw } = await admin
@@ -496,139 +401,8 @@ export default async function DashboardPage() {
           awaitingResponseCount > 1 ? "s" : ""
         } may need a response`;
 
-  // Recent child-related updates from conversations and calendar
-  const { data: convRaw } = await admin
-    .from("conversations")
-    .select("id, child_id, subject, updated_at")
-    .eq("case_id", caseId)
-    .not("child_id", "is", null)
-    .order("updated_at", { ascending: false })
-    .limit(100);
-  const convLatestByChild: Record<
-    string,
-    { subject: string; updated_at: string }
-  > = {};
-  for (const row of convRaw ?? []) {
-    const childId = (row.child_id as string) ?? null;
-    if (!childId) continue;
-    if (!convLatestByChild[childId]) {
-      convLatestByChild[childId] = {
-        subject: (row.subject as string) ?? "",
-        updated_at: (row.updated_at as string) ?? "",
-      };
-    }
-  }
-
-  const { data: allChildEventsRaw } = await admin
-    .from("calendar_events")
-    .select("id, title, child_id, start_time, deleted_at")
-    .eq("case_id", caseId)
-    .is("deleted_at", null)
-    .order("start_time", { ascending: false })
-    .limit(100);
-  const eventLatestByChild: Record<
-    string,
-    { title: string; start_time: string }
-  > = {};
-  for (const row of allChildEventsRaw ?? []) {
-    const childId = (row.child_id as string) ?? null;
-    if (!childId) continue;
-    if (!eventLatestByChild[childId]) {
-      eventLatestByChild[childId] = {
-        title: (row.title as string) ?? "",
-        start_time: (row.start_time as string) ?? "",
-      };
-    }
-  }
-
-  // Kids snapshot
-  const childrenSummaries: ChildSummary[] = (childrenRaw ?? []).map((c) => {
-    const id = c.id as string;
-    const upcomingForChild = weekEvents
-      .filter((e) => {
-        const childName =
-          e.child_name ?? (childMap[id]?.first_name ?? null);
-        return (
-          (e.child_name && childName === childMap[id]?.first_name) ||
-          (!e.child_name && false)
-        );
-      })
-      .sort(
-        (a, b) =>
-          new Date(a.start_time).getTime() - new Date(b.start_time).getTime()
-      )[0] ?? null;
-    const latestConv = convLatestByChild[id] ?? null;
-    const latestEvent = eventLatestByChild[id] ?? null;
-    let lastUpdateLabel: string | null = null;
-    if (latestConv || latestEvent) {
-      const convDate = latestConv ? new Date(latestConv.updated_at) : null;
-      const eventDate = latestEvent ? new Date(latestEvent.start_time) : null;
-      if (eventDate && (!convDate || eventDate >= convDate)) {
-        lastUpdateLabel = `${latestEvent?.title ?? "Event"} ${eventDate.toLocaleDateString(
-          "en-US",
-          { month: "short", day: "numeric" }
-        )}`;
-      } else if (convDate) {
-        lastUpdateLabel = `${latestConv?.subject ?? "Conversation"} ${convDate.toLocaleDateString(
-          "en-US",
-          { month: "short", day: "numeric" }
-        )}`;
-      }
-    }
-    return {
-      id,
-      first_name: c.first_name as string,
-      date_of_birth: (c.date_of_birth as string | null) ?? null,
-      ageLabel: formatAge((c.date_of_birth as string | null) ?? null),
-      nextEvent: upcomingForChild,
-      profile_image: (c.profile_image as string | null) ?? null,
-      lastUpdateLabel,
-    };
-  });
-
   const todayLabel = formatDateLabel(now, timezone);
   const greeting = getGreetingLabel(profile?.full_name ?? null, timezone);
-
-  // Build per-child week view data for KidsThisWeekCard
-  const kidsThisWeekChildren: KidsThisWeekChild[] = childrenSummaries.map((child) => {
-    const weekByDayForChild = weekDays.map((day) => {
-      const dayStart = new Date(
-        day.getFullYear(),
-        day.getMonth(),
-        day.getDate(),
-        0,
-        0,
-        0,
-        0
-      );
-      const dayEnd = new Date(
-        day.getFullYear(),
-        day.getMonth(),
-        day.getDate(),
-        23,
-        59,
-        59,
-        999
-      );
-      const eventsForDay = weekEvents.filter((e) => {
-        const d = new Date(e.start_time);
-        const isSameChild =
-          e.child_name === child.first_name ||
-          (!e.child_name && false);
-        return isSameChild && d >= dayStart && d <= dayEnd;
-      });
-      return { date: day, events: eventsForDay };
-    });
-
-    return {
-      id: child.id,
-      first_name: child.first_name,
-      ageLabel: child.ageLabel,
-      profile_image: child.profile_image ?? null,
-      weekByDay: weekByDayForChild,
-      nextEvent: child.nextEvent,
-    };
-  });
 
   return (
     <div className="px-3 pt-3 pb-1 md:px-4 md:pt-4 md:pb-2">

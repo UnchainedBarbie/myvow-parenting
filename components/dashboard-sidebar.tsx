@@ -15,6 +15,7 @@ import {
   HelpCircle,
   User,
   Settings,
+  Feather,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
@@ -29,6 +30,7 @@ import {
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/my-vow", label: "My Vow", icon: Feather },
   { href: "/messages", label: "Messages", icon: MessageSquare },
   { href: "/expenses", label: "Expenses", icon: Receipt },
   { href: "/documents", label: "Documents", icon: FileText },

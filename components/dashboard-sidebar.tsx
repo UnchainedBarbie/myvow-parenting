@@ -14,6 +14,8 @@ import {
   Users,
   Feather,
   Leaf,
+  Settings,
+  HelpCircle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -86,6 +88,30 @@ export function DashboardSidebar() {
         >
           <Leaf className="h-5 w-5 shrink-0" />
           Sage
+        </Link>
+        <Link
+          href="/settings"
+          className={cn(
+            "flex items-center gap-3 rounded-card px-3 py-2 text-sm font-medium transition-colors",
+            pathname.startsWith("/settings")
+              ? "bg-primary-light text-primary-dark"
+              : "text-foreground-secondary hover:bg-muted hover:text-foreground"
+          )}
+        >
+          <Settings className="h-5 w-5 shrink-0" />
+          Settings
+        </Link>
+        <Link
+          href="/support"
+          className={cn(
+            "flex items-center gap-3 rounded-card px-3 py-2 text-sm font-medium transition-colors",
+            pathname.startsWith("/support")
+              ? "bg-primary-light text-primary-dark"
+              : "text-foreground-secondary hover:bg-muted hover:text-foreground"
+          )}
+        >
+          <HelpCircle className="h-5 w-5 shrink-0" />
+          Get support
         </Link>
         <Button
           variant="ghost"

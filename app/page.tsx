@@ -26,6 +26,12 @@ export default function LandingPage() {
               Pricing
             </Link>
             <Link
+              href="/contact"
+              className="text-sm text-foreground-secondary hover:text-foreground"
+            >
+              Contact
+            </Link>
+            <Link
               href="/login"
               className="text-sm text-foreground-secondary hover:text-foreground"
             >

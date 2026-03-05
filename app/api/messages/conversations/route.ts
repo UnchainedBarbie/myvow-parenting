@@ -324,11 +324,11 @@ export async function POST(request: NextRequest) {
       "medical",
       "school",
       "schedule",
-      "expenses",
+      "expense",
       "general",
       "emergency",
     ]);
-    const topicValue = rawTopic === "expense" ? "expenses" : rawTopic;
+    const topicValue = rawTopic === "expenses" ? "expense" : rawTopic;
     if (!allowedTopics.has(topicValue)) {
       return NextResponse.json(
         { error: "Topic is required (Medical, School, Schedule, Expenses, General, Emergency)" },

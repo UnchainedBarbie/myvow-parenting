@@ -35,6 +35,7 @@ export type MessageRecord = {
   ai_rewritten_content: string | null;
   ai_classification: string | null;
   category: string | null;
+  conversation_topic?: string | null;
   flags?: { flag_type: string; description: string | null }[];
 };
 
@@ -68,6 +69,10 @@ export async function buildMessageTranscriptPdf(
     y += LINE_HEIGHT;
     doc.text(`Direction: ${m.direction}`, MARGIN, y);
     y += LINE_HEIGHT;
+    if (m.conversation_topic) {
+      doc.text(`Conversation topic: ${m.conversation_topic}`, MARGIN, y);
+      y += LINE_HEIGHT;
+    }
     const content = (m.ai_rewritten_content ?? m.original_content).slice(0, 200) +
       ((m.ai_rewritten_content ?? m.original_content).length > 200 ? "…" : "");
     const contentLines = doc.splitTextToSize(`Content (mediated): ${content}`, CONTENT_WIDTH);

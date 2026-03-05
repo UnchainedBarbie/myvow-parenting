@@ -122,13 +122,22 @@ export async function POST(request: NextRequest) {
     if (report_type === "communication_report") {
       let query = admin
         .from("messages")
-        .select("id, created_at, direction, original_content, ai_rewritten_content, ai_classification, category")
+        .select("id, conversation_id, created_at, direction, original_content, ai_rewritten_content, ai_classification, category")
         .eq("case_id", case_id)
         .order("created_at", { ascending: true });
       if (start) query = query.gte("created_at", start);
       if (end) query = query.lte("created_at", end);
       const { data: messages } = await query;
       const ids = (messages ?? []).map((m) => m.id);
+      const convIds = [...new Set((messages ?? []).map((m) => (m as { conversation_id?: string | null }).conversation_id).filter(Boolean) as string[])];
+      const topicByConv: Record<string, string> = {};
+      if (convIds.length > 0) {
+        const { data: convs } = await admin.from("conversations").select("id, topic, category").in("id", convIds);
+        for (const c of convs ?? []) {
+          const tag = (c as { topic?: string | null; category?: string | null }).topic ?? (c as { category?: string | null }).category;
+          if (tag) topicByConv[c.id as string] = tag;
+        }
+      }
       const { data: flags } =
         ids.length > 0
           ? await admin.from("message_flags").select("message_id, flag_type, description").in("message_id", ids)
@@ -138,16 +147,23 @@ export async function POST(request: NextRequest) {
         if (!flagsByMsg[f.message_id]) flagsByMsg[f.message_id] = [];
         flagsByMsg[f.message_id].push({ flag_type: f.flag_type, description: f.description });
       }
-      const rows: MessageRecord[] = (messages ?? []).map((m) => ({
-        id: m.id,
-        created_at: m.created_at,
-        direction: m.direction,
-        original_content: m.original_content,
-        ai_rewritten_content: m.ai_rewritten_content,
-        ai_classification: m.ai_classification,
-        category: m.category,
-        flags: flagsByMsg[m.id] ?? [],
-      }));
+      const topicLabels: Record<string, string> = { medical: "Medical", school: "School", schedule: "Schedule", expenses: "Expenses", general: "General", emergency: "Emergency", expense: "Expenses" };
+      const rows: MessageRecord[] = (messages ?? []).map((m) => {
+        const convId = (m as { conversation_id?: string | null }).conversation_id;
+        const rawTopic = convId ? topicByConv[convId] : null;
+        const conversation_topic = rawTopic ? (topicLabels[rawTopic] ?? rawTopic) : null;
+        return {
+          id: m.id,
+          created_at: m.created_at,
+          direction: m.direction,
+          original_content: m.original_content,
+          ai_rewritten_content: m.ai_rewritten_content,
+          ai_classification: m.ai_classification,
+          category: m.category,
+          conversation_topic,
+          flags: flagsByMsg[m.id] ?? [],
+        };
+      });
       recordCount = rows.length;
       const result = await buildMessageTranscriptPdf(rows, start, end);
       buffer = result.buffer;
@@ -204,7 +220,7 @@ export async function POST(request: NextRequest) {
       // full_case_report
       let msgQuery = admin
         .from("messages")
-        .select("id, created_at, direction, original_content, ai_rewritten_content, ai_classification, category")
+        .select("id, conversation_id, created_at, direction, original_content, ai_rewritten_content, ai_classification, category")
         .eq("case_id", case_id)
         .order("created_at", { ascending: true });
       let expQuery = admin

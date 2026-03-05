@@ -39,25 +39,19 @@ export async function GET(request: NextRequest) {
       .eq("user_id", user.id);
 
     // Filters:
-    // - Treat NULL booleans as false (use archived IS NOT TRUE semantics instead of archived = false).
+    // - Use archived != true so NULLs are included.
     // - Do NOT exclude rows based on session_type when filter === "all".
     if (filter === "archived") {
       q = q.eq("archived", true);
     } else if (filter === "incident") {
-      q = q
-        .eq("session_type", "incident")
-        .or("archived.is.null,archived.eq.false");
+      q = q.eq("session_type", "incident").neq("archived", true);
     } else if (filter === "flagged") {
-      q = q
-        .eq("flagged", true)
-        .or("archived.is.null,archived.eq.false");
+      q = q.eq("flagged", true).neq("archived", true);
     } else if (filter === "documented") {
-      q = q
-        .eq("documented", true)
-        .or("archived.is.null,archived.eq.false");
+      q = q.eq("documented", true).neq("archived", true);
     } else {
-      // "All" – archived IS NOT TRUE (includes NULL and false).
-      q = q.or("archived.is.null,archived.eq.false");
+      // "All" – archived IS NOT TRUE (includes NULL and false in PostgREST semantics).
+      q = q.neq("archived", true);
     }
 
     const { data, error } = await q.order("updated_at", { ascending: false });
@@ -91,6 +85,8 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({ sessions });
   } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error("[sage/sessions] error:", e);
     return NextResponse.json(
       { message: e instanceof Error ? e.message : "Failed to load sessions" },
       { status: 500 }

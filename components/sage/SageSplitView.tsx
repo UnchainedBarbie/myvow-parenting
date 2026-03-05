@@ -336,7 +336,10 @@ export function SageSplitView() {
   return (
     <div className="flex h-[calc(100vh-4.5rem)] bg-[#FDFBF7]">
       {/* LEFT PANEL — ~320px */}
-      <div className="flex h-full w-[320px] min-w-[320px] shrink-0 flex-col border-r border-[#E8E4DC] bg-white">
+      <div
+        style={{ width: "320px", minWidth: "320px", flexShrink: 0 }}
+        className="flex h-full flex-col border-r border-[#E8E4DC] bg-white"
+      >
         <div className="border-b border-[#E8E4DC] px-3 py-3">
           <h2 className="font-heading text-sm font-semibold text-[#3D3D3D]">
             Sage

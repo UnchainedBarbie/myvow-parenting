@@ -5,14 +5,13 @@ import { Button } from "@/components/ui/button";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { DashboardStatusCards } from "@/components/dashboard/dashboard-status-cards";
-import type { ChildrenTodayCustodyItem, NextExchange } from "@/components/dashboard/children-today-card";
-
 type TodayEvent = {
   id: string;
   title: string;
   start_time: string;
   all_day: boolean;
   child_name: string | null;
+  event_type: string | null;
 };
 
 function formatDateLabel(date: Date, timezone: string) {
@@ -22,29 +21,6 @@ function formatDateLabel(date: Date, timezone: string) {
     day: "numeric",
     timeZone: timezone,
   });
-}
-
-function formatCustodyTime(iso: string, timezone: string) {
-  const d = new Date(iso);
-  const hasTime = !(d.getHours() === 0 && d.getMinutes() === 0);
-  if (!hasTime) return null;
-  return d.toLocaleTimeString("en-US", {
-    hour: "numeric",
-    minute: "2-digit",
-    timeZone: timezone,
-  });
-}
-
-function formatExchangeDateTime(iso: string, timezone: string) {
-  const d = new Date(iso);
-  const dateStr = d.toLocaleDateString("en-US", {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-    timeZone: timezone,
-  });
-  const timeStr = formatCustodyTime(iso, timezone);
-  return timeStr ? `${dateStr} at ${timeStr}` : dateStr;
 }
 
 function formatTimeLabel(iso: string, timezone: string) {
@@ -175,30 +151,18 @@ export default async function DashboardPage() {
   // Today events
   const { data: todayEventsRaw } = await admin
     .from("calendar_events")
-    .select("id, title, child_id, start_time, all_day, deleted_at")
+    .select("id, title, child_id, start_time, all_day, event_type, deleted_at")
     .eq("case_id", caseId)
     .gte("start_time", todayStart)
     .lte("start_time", todayEnd)
     .is("deleted_at", null)
     .order("start_time", { ascending: true });
 
-  // Today's custody events for Children Today card
-  const { data: todayCustodyRaw } = await admin
+  // Next upcoming calendar event after today (any type)
+  const { data: nextEventRaw } = await admin
     .from("calendar_events")
-    .select("id, title, child_id, start_time, all_day, deleted_at")
+    .select("id, title, child_id, start_time, all_day, event_type, deleted_at")
     .eq("case_id", caseId)
-    .in("event_type", ["custody", "custody_exchange"])
-    .gte("start_time", todayStart)
-    .lte("start_time", todayEnd)
-    .is("deleted_at", null)
-    .order("start_time", { ascending: true });
-
-  // Next custody exchange (first after today)
-  const { data: nextCustodyRaw } = await admin
-    .from("calendar_events")
-    .select("id, title, child_id, start_time, deleted_at")
-    .eq("case_id", caseId)
-    .in("event_type", ["custody", "custody_exchange"])
     .gt("start_time", todayEnd)
     .is("deleted_at", null)
     .order("start_time", { ascending: true })
@@ -229,7 +193,21 @@ export default async function DashboardPage() {
     start_time: e.start_time as string,
     all_day: (e.all_day as boolean) ?? false,
     child_name: e.child_id ? childMap[e.child_id as string]?.first_name ?? null : null,
+    event_type: (e.event_type as string | null) ?? null,
   }));
+
+  const nextEvent: TodayEvent | null = nextEventRaw
+    ? {
+        id: nextEventRaw.id as string,
+        title: nextEventRaw.title as string,
+        start_time: nextEventRaw.start_time as string,
+        all_day: (nextEventRaw.all_day as boolean) ?? false,
+        child_name: nextEventRaw.child_id
+          ? childMap[nextEventRaw.child_id as string]?.first_name ?? null
+          : null,
+        event_type: (nextEventRaw.event_type as string | null) ?? null,
+      }
+    : null;
 
   const childrenTodayItems: ChildrenTodayCustodyItem[] = (todayCustodyRaw ?? []).map((e) => ({
     child_id: (e.child_id as string) ?? "",
@@ -264,6 +242,84 @@ export default async function DashboardPage() {
     created_at: string;
   }[];
   const uploadsCount = pendingUploads.length;
+
+  // Recent activity: last 5 actions across the app
+  const [
+    { data: recentExpensesRaw },
+    { data: recentDocumentsRaw },
+    { data: recentEventsRaw },
+    { data: recentMessagesRaw },
+  ] = await Promise.all([
+    admin
+      .from("expenses")
+      .select("id, description, created_at")
+      .eq("case_id", caseId)
+      .order("created_at", { ascending: false })
+      .limit(5),
+    admin
+      .from("documents")
+      .select("id, title, created_at")
+      .eq("case_id", caseId)
+      .order("created_at", { ascending: false })
+      .limit(5),
+    admin
+      .from("calendar_events")
+      .select("id, title, created_at")
+      .eq("case_id", caseId)
+      .is("deleted_at", null)
+      .order("created_at", { ascending: false })
+      .limit(5),
+    admin
+      .from("messages")
+      .select("id, created_at")
+      .eq("case_id", caseId)
+      .order("created_at", { ascending: false })
+      .limit(5),
+  ]);
+
+  type RecentActivityItem = {
+    id: string;
+    type: "expense" | "document" | "event" | "message";
+    label: string;
+    description: string;
+    created_at: string;
+  };
+
+  const recentActivity: RecentActivityItem[] = [
+    ...(recentExpensesRaw ?? []).map((e) => ({
+      id: e.id as string,
+      type: "expense" as const,
+      label: "Expense added",
+      description: (e.description as string) ?? "Expense",
+      created_at: e.created_at as string,
+    })),
+    ...(recentDocumentsRaw ?? []).map((d) => ({
+      id: d.id as string,
+      type: "document" as const,
+      label: "Document uploaded",
+      description: (d.title as string) ?? "Document",
+      created_at: d.created_at as string,
+    })),
+    ...(recentEventsRaw ?? []).map((ev) => ({
+      id: ev.id as string,
+      type: "event" as const,
+      label: "Calendar event created",
+      description: (ev.title as string) ?? "Calendar event",
+      created_at: ev.created_at as string,
+    })),
+    ...(recentMessagesRaw ?? []).map((m) => ({
+      id: m.id as string,
+      type: "message" as const,
+      label: "Message sent",
+      description: "Message sent",
+      created_at: m.created_at as string,
+    })),
+  ]
+    .sort(
+      (a, b) =>
+        new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    )
+    .slice(0, 5);
   const uploadsRecent = pendingUploads.slice(0, 3);
 
   // Expenses: net balance + open items
@@ -432,7 +488,7 @@ export default async function DashboardPage() {
           netLabel={netLabel}
         />
 
-        {/* Today: events + custody */}
+        {/* Today: events */}
         <Card className="rounded-card border border-[#E8E4DC] bg-[#FDFBF7]">
           <CardHeader className="pb-2 px-4 pt-4">
             <CardTitle className="font-heading text-lg text-foreground">
@@ -440,126 +496,155 @@ export default async function DashboardPage() {
             </CardTitle>
           </CardHeader>
           <CardContent className="px-4 pb-4">
-            <div className="grid gap-6 md:grid-cols-2">
-              <div className="space-y-3">
-                <p className="text-sm font-medium text-foreground">Today&apos;s events</p>
-                {todayEvents.length === 0 ? (
+            <div className="space-y-3">
+              {todayEvents.length === 0 ? (
+                <>
                   <p className="text-sm text-foreground-secondary">
                     Nothing scheduled today.
-                  </p>
-                ) : (
-                  <ul className="space-y-2">
-                    {todayEvents.map((e) => (
-                      <li key={e.id} className="flex items-start justify-between gap-2">
-                        <div>
-                          <p className="text-xs text-foreground-secondary">
-                            {(() => {
-                              const d = new Date(e.start_time);
-                              const hasSpecificTime =
-                                !(d.getHours() === 0 && d.getMinutes() === 0);
-                              return hasSpecificTime
-                                ? formatTimeLabel(e.start_time, timezone)
-                                : "All day";
-                            })()}
-                          </p>
-                          <p className="text-sm font-medium text-foreground">
-                            {e.title}
-                          </p>
-                          {e.child_name && (
-                            <p className="text-xs text-foreground-secondary">
-                              {e.child_name}
-                            </p>
-                          )}
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-                <Button
-                  asChild
-                  size="sm"
-                  variant="outline"
-                  className="rounded-full h-8 text-xs"
-                >
-                  <Link href="/calendar">Open calendar</Link>
-                </Button>
-              </div>
-              <div className="space-y-3">
-                <div className="flex items-center justify-between gap-2">
-                  <p className="text-sm font-medium text-foreground">Children&apos;s custody</p>
-                  <Button asChild size="sm" variant="outline" className="rounded-full h-8 text-xs">
-                    <Link href="/calendar">Calendar</Link>
-                  </Button>
-                </div>
-                {childrenTodayItems.length === 0 && nextExchange == null ? (
-                  <p className="text-sm text-foreground-secondary">
-                    Add custody events to your calendar to see this.
-                  </p>
-                ) : (
-                  <>
-                    {childrenTodayItems.length > 0 && (
-                      <ul className="space-y-2">
-                        {childrenTodayItems.map((item) => {
-                          const timeStr = formatCustodyTime(item.start_time, timezone);
-                          return (
-                            <li key={`${item.child_id}-${item.start_time}`} className="flex flex-col gap-0.5">
-                              <p className="text-sm font-medium text-foreground">
-                                {item.child_name}
-                              </p>
-                              <p className="text-xs text-foreground-secondary">
-                                {item.event_title}
-                                {timeStr ? ` · ${timeStr}` : ""}
-                              </p>
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    )}
-                    {nextExchange && (
-                      <p className="text-xs text-foreground-secondary border-t border-[#E8E4DC] pt-2 mt-1">
-                        <span className="font-medium text-foreground">Next custody exchange:</span>{" "}
-                        {formatExchangeDateTime(nextExchange.start_time, timezone)}
-                        {nextExchange.child_name ? ` (${nextExchange.child_name})` : ""}
-                        {nextExchange.title ? ` — ${nextExchange.title}` : ""}
-                      </p>
-                    )}
-                  </>
-                )}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Row 2: Review */}
-        <div className="grid gap-4 lg:grid-cols-2 items-start">
-          <Card className="shadow-card border-border rounded-card">
-            <CardHeader className="pb-2 px-4 pt-4 flex items-center justify-between gap-2">
-              <CardTitle className="font-heading text-lg text-foreground">
-                Review
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="px-4 pb-4 space-y-3">
-              {uploadsCount === 0 ? (
-                <p className="text-sm text-foreground-secondary">All caught up.</p>
-              ) : (
-                <div className="flex items-center justify-between gap-3">
-                  <p className="text-sm text-foreground-secondary">
-                    {uploadsCount} item{uploadsCount > 1 ? "s" : ""} to review
                   </p>
                   <Button
                     asChild
                     size="sm"
-                    className="rounded-full h-8 text-xs bg-[#7B9E87] hover:bg-[#6A8A78] text-white"
+                    variant="outline"
+                    className="rounded-full h-8 text-xs"
                   >
-                    <Link href="/uploads/review">Review now</Link>
+                    <Link href="/calendar">Open calendar</Link>
                   </Button>
-                </div>
+                  {nextEvent && (
+                    <p className="text-xs text-foreground-secondary mt-2">
+                      <span className="font-medium text-foreground">Next event:</span>{" "}
+                      {formatShortDay(new Date(nextEvent.start_time), timezone)} ·{" "}
+                      {formatTimeLabel(nextEvent.start_time, timezone)} — {nextEvent.title}
+                      {nextEvent.child_name ? ` (${nextEvent.child_name})` : ""}
+                    </p>
+                  )}
+                </>
+              ) : (
+                <ul className="space-y-2">
+                  {todayEvents
+                    .slice()
+                    .sort((a, b) => a.start_time.localeCompare(b.start_time))
+                    .map((e) => (
+                      <li key={e.id} className="flex items-start justify-between gap-2">
+                        <div className="flex items-start gap-2">
+                          <span
+                            className={cn(
+                              "mt-1 h-2 w-2 rounded-full",
+                              e.event_type === "custody"
+                                ? "bg-[#7C8B6E]"
+                                : e.event_type === "medical"
+                                  ? "bg-[#C97B7B]"
+                                  : e.event_type === "school"
+                                    ? "bg-[#D4A843]"
+                                    : "bg-[#B0A899]"
+                            )}
+                          />
+                          <div>
+                            <p className="text-xs text-foreground-secondary">
+                              {(() => {
+                                const d = new Date(e.start_time);
+                                const hasSpecificTime =
+                                  !(d.getHours() === 0 && d.getMinutes() === 0);
+                                return hasSpecificTime
+                                  ? formatTimeLabel(e.start_time, timezone)
+                                  : "All day";
+                              })()}
+                            </p>
+                            <p className="text-sm font-medium text-foreground">
+                              {e.title}
+                            </p>
+                            {e.child_name && (
+                              <p className="text-xs text-foreground-secondary">
+                                {e.child_name}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      </li>
+                    ))}
+                </ul>
               )}
-            </CardContent>
-          </Card>
+            </div>
+          </CardContent>
+        </Card>
 
-          <div className="hidden lg:block" />
-        </div>
+        {/* Recent activity */}
+        <Card className="shadow-card border-border rounded-card">
+          <CardHeader className="pb-2 px-4 pt-4">
+            <CardTitle className="font-heading text-lg text-foreground">
+              Recent activity
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="px-4 pb-4">
+            {recentActivity.length === 0 ? (
+              <p className="text-sm text-foreground-secondary">Nothing yet.</p>
+            ) : (
+              <ul className="space-y-2">
+                {recentActivity.map((item) => (
+                  <li
+                    key={`${item.type}-${item.id}`}
+                    className="flex items-center justify-between gap-2 text-sm"
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-[#F2F5EF] text-[#5B7A52]">
+                        {item.type === "expense" ? (
+                          <span className="text-[11px]">$</span>
+                        ) : item.type === "document" ? (
+                          <span className="text-[11px]">D</span>
+                        ) : item.type === "event" ? (
+                          <span className="text-[11px]">C</span>
+                        ) : (
+                          <span className="text-[11px]">M</span>
+                        )}
+                      </span>
+                      <div className="min-w-0">
+                        <p className="text-[11px] text-foreground-secondary">
+                          {item.label}
+                        </p>
+                        <p className="truncate text-sm text-foreground">
+                          {item.description}
+                        </p>
+                      </div>
+                    </div>
+                    <span className="shrink-0 text-[11px] text-foreground-secondary">
+                      {new Date(item.created_at).toLocaleDateString("en-US", {
+                        month: "short",
+                        day: "numeric",
+                      })}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Review */}
+        <Card className="shadow-card border-border rounded-card">
+          <CardHeader className="pb-2 px-4 pt-4 flex items-center justify-between gap-2">
+            <CardTitle className="font-heading text-lg text-foreground">
+              Review
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="px-4 pb-4 space-y-3">
+            {uploadsCount === 0 ? (
+              <p className="text-sm text-foreground-secondary">All caught up.</p>
+            ) : (
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-sm text-foreground-secondary">
+                  {uploadsCount} item{uploadsCount > 1 ? "s" : ""} to review
+                </p>
+                <Button
+                  asChild
+                  size="sm"
+                  className="rounded-full h-8 text-xs bg-[#7B9E87] hover:bg-[#6A8A78] text-white"
+                >
+                  <Link href="/uploads/review">Review now</Link>
+                </Button>
+              </div>
+            )}
+          </CardContent>
+        </Card>
 
         {/* Row 3: Quick actions */}
         <div className="grid gap-4 lg:grid-cols-2 items-start">

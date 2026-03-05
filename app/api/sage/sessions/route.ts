@@ -56,17 +56,19 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json().catch(() => ({}));
     const { category } = body as { category?: string };
-    const now = new Date().toISOString();
+    const now = new Date();
+    const nowIso = now.toISOString();
+    const defaultTitle = `Sage Session — ${now.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
 
     const admin = getServiceRoleClient();
     const { data: row, error } = await admin
       .from("sage_sessions")
       .insert({
         user_id: user.id,
-        title: null,
+        title: defaultTitle,
         category: (category ?? null) as string | null,
-        created_at: now,
-        updated_at: now,
+        created_at: nowIso,
+        updated_at: nowIso,
       })
       .select("id, user_id, title, category, created_at, updated_at")
       .single();

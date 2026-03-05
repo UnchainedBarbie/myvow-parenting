@@ -180,6 +180,12 @@ export function MessagesSplitView({
   const [attachDocumentsSearch, setAttachDocumentsSearch] = useState("");
   const [attachSelectedDocumentId, setAttachSelectedDocumentId] = useState<string | null>(null);
 
+  const [attachCourtOrders, setAttachCourtOrders] = useState<
+    { id: string; title: string; custody_type: string | null; effective_date: string | null; created_at: string }[]
+  >([]);
+  const [attachCourtOrdersLoading, setAttachCourtOrdersLoading] = useState(false);
+  const [attachSelectedCourtOrderId, setAttachSelectedCourtOrderId] = useState<string | null>(null);
+
   const childMap = useMemo(
     () =>
       children.reduce(
@@ -432,6 +438,22 @@ export function MessagesSplitView({
       })
       .finally(() => setAttachDocumentsLoading(false));
   }, [showDocumentModal]);
+
+  useEffect(() => {
+    if (!showCourtOrderModal) {
+      setAttachSelectedCourtOrderId(null);
+      return;
+    }
+    setAttachCourtOrdersLoading(true);
+    fetch("/api/messages/attachments/court-orders")
+      .then((r) => r.json())
+      .then((d) => {
+        const list = (d.court_orders ?? []) as { id: string; title: string; custody_type: string | null; effective_date: string | null; created_at: string }[];
+        setAttachCourtOrders(list);
+      })
+      .catch(() => setAttachCourtOrders([]))
+      .finally(() => setAttachCourtOrdersLoading(false));
+  }, [showCourtOrderModal]);
 
   useEffect(() => {
     if (!selectedId) {

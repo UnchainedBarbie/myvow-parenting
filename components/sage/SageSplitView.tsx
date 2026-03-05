@@ -93,12 +93,18 @@ export function SageSplitView() {
   }, [renamingId]);
 
   const loadSessions = useCallback(async () => {
+    // TEMP debug
+    // eslint-disable-next-line no-console
+    console.log("[Sage] loadSessions called with filter:", listFilter);
     setLoadingSessions(true);
     try {
       const res = await fetch(
         `/api/sage/sessions?filter=${encodeURIComponent(listFilter)}`
       );
       const data = await res.json().catch(() => ({}));
+      // TEMP debug
+      // eslint-disable-next-line no-console
+      console.log("[Sage] sessions API response:", res.status, data);
       if (res.ok) {
         const list = (data as { sessions?: SessionRow[] }).sessions ?? [];
         setSessions(list);
@@ -113,6 +119,12 @@ export function SageSplitView() {
   useEffect(() => {
     void loadSessions();
   }, [loadSessions]);
+
+  // TEMP debug: log whenever sessions state changes
+  useEffect(() => {
+    // eslint-disable-next-line no-console
+    console.log("[Sage] sessions loaded:", sessions.length, sessions);
+  }, [sessions]);
 
   // Load incident patterns when there are at least two incident sessions.
   useEffect(() => {

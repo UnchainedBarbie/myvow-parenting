@@ -10,9 +10,12 @@ type SessionRow = {
   updated_at: string;
   flagged: boolean;
   archived: boolean;
+  documented: boolean;
+  documented_at: string | null;
+  session_type: "private" | "incident";
 };
 
-type Filter = "all" | "flagged" | "documented" | "archived";
+type Filter = "all" | "incident" | "flagged" | "documented" | "archived";
 
 export async function GET(request: NextRequest) {
   try {
@@ -31,18 +34,30 @@ export async function GET(request: NextRequest) {
     let q = admin
       .from("sage_sessions")
       .select(
-        "id, user_id, title, category, created_at, updated_at, flagged, archived, documented, documented_at"
+        "id, user_id, title, category, created_at, updated_at, flagged, archived, documented, documented_at, session_type"
       )
       .eq("user_id", user.id);
 
+    // Filters:
+    // - Treat NULL booleans as false (use archived IS NOT TRUE semantics instead of archived = false).
+    // - Do NOT exclude rows based on session_type when filter === "all".
     if (filter === "archived") {
       q = q.eq("archived", true);
+    } else if (filter === "incident") {
+      q = q
+        .eq("session_type", "incident")
+        .or("archived.is.null,archived.eq.false");
     } else if (filter === "flagged") {
-      q = q.eq("flagged", true).eq("archived", false);
+      q = q
+        .eq("flagged", true)
+        .or("archived.is.null,archived.eq.false");
     } else if (filter === "documented") {
-      q = q.eq("documented", true).eq("archived", false);
+      q = q
+        .eq("documented", true)
+        .or("archived.is.null,archived.eq.false");
     } else {
-      q = q.eq("archived", false);
+      // "All" – archived IS NOT TRUE (includes NULL and false).
+      q = q.or("archived.is.null,archived.eq.false");
     }
 
     const { data, error } = await q.order("updated_at", { ascending: false });
@@ -54,7 +69,26 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const sessions = (data ?? []) as SessionRow[];
+    const rows = (data ?? []) as (SessionRow & {
+      flagged?: boolean | null;
+      archived?: boolean | null;
+      documented?: boolean | null;
+      session_type?: string | null;
+    })[];
+
+    // Coerce NULL booleans and missing session_type so legacy rows behave correctly.
+    const sessions: SessionRow[] = rows.map((row) => ({
+      ...row,
+      flagged: !!row.flagged,
+      archived: !!row.archived,
+      documented: !!row.documented,
+      documented_at: (row as any).documented_at ?? null,
+      session_type:
+        (row.session_type === "incident" ? "incident" : "private") as
+          | "private"
+          | "incident",
+    }));
+
     return NextResponse.json({ sessions });
   } catch (e) {
     return NextResponse.json(
@@ -75,7 +109,10 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json().catch(() => ({}));
-    const { category } = body as { category?: string };
+    const { category, session_type } = body as {
+      category?: string;
+      session_type?: "private" | "incident";
+    };
     const now = new Date();
     const nowIso = now.toISOString();
     const defaultTitle = `Sage Session — ${now.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
@@ -87,11 +124,12 @@ export async function POST(request: NextRequest) {
         user_id: user.id,
         title: defaultTitle,
         category: (category ?? null) as string | null,
+        session_type: session_type ?? "private",
         created_at: nowIso,
         updated_at: nowIso,
       })
       .select(
-        "id, user_id, title, category, created_at, updated_at, flagged, archived, documented, documented_at"
+        "id, user_id, title, category, created_at, updated_at, flagged, archived, documented, documented_at, session_type"
       )
       .single();
 

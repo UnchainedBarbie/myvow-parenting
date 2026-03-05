@@ -8,6 +8,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { SageClient } from "./SageClient";
+import { IncidentSessionView } from "./IncidentSessionView";
 import { showErrorToast } from "@/components/ui/toaster";
 
 type SessionRow = {
@@ -21,16 +22,17 @@ type SessionRow = {
   archived?: boolean;
   documented?: boolean;
   documented_at?: string | null;
+  session_type?: "private" | "incident";
 };
 
-type ListFilter = "all" | "flagged" | "documented" | "archived";
+type ListFilter = "all" | "incident" | "flagged" | "archived";
 
-const CATEGORY_SHORTCUTS = [
-  { emoji: "🌬️", label: "I need to vent", category: "venting" },
-  { emoji: "✍️", label: "Help me draft a message", category: "drafting" },
-  { emoji: "📋", label: "Document an interaction", category: "documenting" },
-  { emoji: "💬", label: "Just talk it through", category: "general" },
-] as const;
+type IncidentPattern = {
+  id: string;
+  label: string;
+  summary: string;
+  session_ids: string[];
+};
 
 function formatSessionDate(iso: string): string {
   const d = new Date(iso);
@@ -63,6 +65,9 @@ export function SageSplitView() {
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const renameInputRef = useRef<HTMLInputElement | null>(null);
+  const [patterns, setPatterns] = useState<IncidentPattern[]>([]);
+  const [activePatternSessionIds, setActivePatternSessionIds] = useState<string[] | null>(null);
+  const [loadingPatterns, setLoadingPatterns] = useState(false);
 
   useEffect(() => {
     if (!menuOpenId) return;
@@ -109,14 +114,51 @@ export function SageSplitView() {
     void loadSessions();
   }, [loadSessions]);
 
-  async function handleNewSession(category?: string) {
+  // Load incident patterns when there are at least two incident sessions.
+  useEffect(() => {
+    const incidentCount = sessions.filter(
+      (s) => s.session_type === "incident"
+    ).length;
+    if (incidentCount < 2) {
+      setPatterns([]);
+      setActivePatternSessionIds(null);
+      return;
+    }
+    let cancelled = false;
+    async function loadPatterns() {
+      setLoadingPatterns(true);
+      try {
+        const res = await fetch("/api/sage/incidents/patterns");
+        const data = await res.json().catch(() => ({}));
+        if (!cancelled && res.ok) {
+          setPatterns(
+            ((data as { patterns?: IncidentPattern[] }).patterns ?? []) as IncidentPattern[]
+          );
+        }
+      } catch {
+        if (!cancelled) {
+          setPatterns([]);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingPatterns(false);
+        }
+      }
+    }
+    void loadPatterns();
+    return () => {
+      cancelled = true;
+    };
+  }, [sessions]);
+
+  async function handleNewSession(sessionType: "private" | "incident") {
     if (creatingSession) return;
     setCreatingSession(true);
     try {
       const res = await fetch("/api/sage/sessions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(category ? { category } : {}),
+        body: JSON.stringify({ session_type: sessionType }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -142,6 +184,11 @@ export function SageSplitView() {
           .includes(searchQuery.trim().toLowerCase())
       )
     : sessions;
+
+  const visibleSessions =
+    activePatternSessionIds && listFilter === "incident"
+      ? filteredSessions.filter((s) => activePatternSessionIds.includes(s.id))
+      : filteredSessions;
 
   const selectedSession = sessions.find((s) => s.id === selectedId) ?? null;
 
@@ -276,8 +323,8 @@ export function SageSplitView() {
 
   return (
     <div className="flex h-[calc(100vh-4.5rem)] bg-[#FDFBF7]">
-      {/* LEFT PANEL — 280–300px */}
-      <div className="flex h-full w-[300px] shrink-0 flex-col border-r border-[#E8E4DC] bg-white">
+      {/* LEFT PANEL — ~320px */}
+      <div className="flex h-full w-[320px] min-w-[320px] shrink-0 flex-col border-r border-[#E8E4DC] bg-white">
         <div className="border-b border-[#E8E4DC] px-3 py-3">
           <h2 className="font-heading text-sm font-semibold text-[#3D3D3D]">
             Sage
@@ -287,44 +334,46 @@ export function SageSplitView() {
           </p>
         </div>
 
-        {/* Category shortcuts */}
+        {/* Mode shortcuts */}
         <div className="border-b border-[#E8E4DC] px-3 py-3 space-y-2">
-          {CATEGORY_SHORTCUTS.map(({ emoji, label, category }) => (
-            <button
-              key={category}
-              type="button"
-              onClick={() => void handleNewSession(category)}
-              disabled={creatingSession}
-              className={cn(
-                "w-full rounded-full border px-3 py-2 text-left text-xs transition-colors",
-                "border-[#E8E4DC] bg-[#F2F5EF] text-[#3D3D3D]",
-                "hover:bg-[#E8EDE3] hover:border-[#7C8B6E]",
-                "disabled:opacity-60"
-              )}
-            >
-              <span className="mr-2">{emoji}</span>
-              {label}
-            </button>
-          ))}
+          <button
+            type="button"
+            onClick={() => void handleNewSession("private")}
+            disabled={creatingSession}
+            className={cn(
+              "w-full rounded-2xl border px-3 py-2.5 text-left transition-colors",
+              "border-[#E8E4DC] bg-[#F2F5EF] hover:bg-[#E8EDE3] hover:border-[#7C8B6E]",
+              "disabled:opacity-60"
+            )}
+          >
+            <p className="text-xs font-semibold text-[#3D3D3D]">Private Session</p>
+            <p className="mt-0.5 text-[11px] text-[#6B6B6B]">
+              Process emotions, think through situations, draft messages.
+            </p>
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleNewSession("incident")}
+            disabled={creatingSession}
+            className={cn(
+              "w-full rounded-2xl border px-3 py-2.5 text-left transition-colors",
+              "border-[#D4A843] bg-[#FFF9EC] hover:bg-[#FDF3D8] hover:border-[#B89435]",
+              "disabled:opacity-60"
+            )}
+          >
+            <p className="text-xs font-semibold text-[#3D3D3D]">Report Incident</p>
+            <p className="mt-0.5 text-[11px] text-[#6B6B6B]">
+              Create a timestamped, court-grade record of an incident.
+            </p>
+          </button>
         </div>
 
         {/* Recent sessions */}
         <div className="flex flex-1 flex-col min-h-0">
-          <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-[#E8E4DC]">
+          <div className="flex items-center px-3 py-2 border-b border-[#E8E4DC]">
             <span className="text-[11px] font-medium text-[#8A8A8A]">
               Recent sessions
             </span>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-7 w-7 p-0 rounded-full text-[#5B7A52] hover:bg-[#F2F5EF]"
-              onClick={() => void handleNewSession()}
-              disabled={creatingSession}
-              aria-label="New session"
-            >
-              <Plus className="h-3.5 w-3.5" />
-            </Button>
           </div>
 
           {/* Search */}
@@ -351,14 +400,14 @@ export function SageSplitView() {
               value={listFilter}
               onChange={(e) => setListFilter(e.target.value as ListFilter)}
               className={cn(
-                "h-8 w-[120px] shrink-0 rounded-full border px-2 py-1 text-[11px] text-[#3D3D3D] bg-[#FDFBF7] border-[#E8E4DC] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E]",
+                "h-8 w-[140px] shrink-0 rounded-full border px-2 py-1 text-[11px] text-[#3D3D3D] bg-[#FDFBF7] border-[#E8E4DC] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E]",
                 listFilter !== "all" && "bg-[#F2F5EF] border-[#7C8B6E]"
               )}
               aria-label="Filter sessions"
             >
-              <option value="all">All sessions</option>
+              <option value="all">All Sessions</option>
+              <option value="incident">Incident Reports</option>
               <option value="flagged">Flagged</option>
-              <option value="documented">Documented</option>
               <option value="archived">Archived</option>
             </select>
           </div>
@@ -369,20 +418,18 @@ export function SageSplitView() {
                 <p className="px-2 py-2 text-[11px] text-[#8A8A8A]">
                   Loading…
                 </p>
-              ) : filteredSessions.length === 0 ? (
+              ) : visibleSessions.length === 0 ? (
                 <p className="px-2 py-2 text-[11px] text-[#8A8A8A]">
                   {sessions.length === 0
                     ? listFilter === "archived"
                       ? "No archived sessions."
                       : listFilter === "flagged"
                         ? "No flagged sessions."
-                        : listFilter === "documented"
-                          ? "No documented interactions yet."
-                          : "No sessions yet. Start with a shortcut above or New session."
+                        : "No sessions yet. Start with a shortcut above or New session."
                     : "No sessions match your search."}
                 </p>
               ) : (
-                filteredSessions.map((s) => (
+                visibleSessions.map((s) => (
                   <div
                     key={s.id}
                     className={cn(
@@ -438,9 +485,12 @@ export function SageSplitView() {
                               </span>
                             )}
                           </p>
-                          <div className="mt-1 flex items-center gap-2">
+                          <div className="mt-1 flex flex-wrap items-center gap-1.5">
                             <span className="text-[10px] text-[#8A8A8A]">
                               {formatSessionDate(s.updated_at)}
+                            </span>
+                            <span className="inline-flex items-center rounded-full bg-[#F2F5EF] px-1.5 py-0.5 text-[9px] text-[#5B7A52]">
+                              {s.session_type === "incident" ? "Incident" : "Private"}
                             </span>
                             {s.category ? (
                               <span className="inline-flex items-center rounded-full bg-[#E8E4DC] px-1.5 py-0.5 text-[9px] text-[#6B6B6B]">
@@ -566,27 +616,80 @@ export function SageSplitView() {
               )}
             </div>
           </ScrollArea>
+          {/* Patterns section */}
+          {sessions.filter((s) => s.session_type === "incident").length >= 2 && (
+            <div className="border-t border-[#E8E4DC] px-3 py-2">
+              <div className="flex items-center justify-between gap-2 mb-1">
+                <span className="text-[11px] font-medium text-[#8A8A8A]">
+                  Patterns
+                </span>
+                {activePatternSessionIds && (
+                  <button
+                    type="button"
+                    className="text-[10px] text-[#5B7A52] hover:underline"
+                    onClick={() => setActivePatternSessionIds(null)}
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+              {loadingPatterns ? (
+                <p className="text-[11px] text-[#8A8A8A]">Looking for patterns…</p>
+              ) : patterns.length === 0 ? (
+                <p className="text-[11px] text-[#8A8A8A]">
+                  Patterns will appear after you record a few incidents.
+                </p>
+              ) : (
+                <div className="space-y-1">
+                  {patterns.map((p) => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      className={cn(
+                        "w-full rounded-lg px-2 py-1.5 text-left text-[11px] transition-colors",
+                        activePatternSessionIds &&
+                          activePatternSessionIds.length > 0 &&
+                          activePatternSessionIds.every((id) =>
+                            p.session_ids.includes(id)
+                          )
+                          ? "bg-[#F2F5EF] border border-[#E8E4DC]"
+                          : "border border-transparent hover:bg-[#F9FAF8]"
+                      )}
+                      onClick={() => setActivePatternSessionIds(p.session_ids)}
+                    >
+                      <p className="font-medium text-[#3D3D3D] truncate">
+                        {p.label}
+                      </p>
+                      <p className="text-[10px] text-[#6B6B6B] truncate">
+                        {p.summary}
+                      </p>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
       {/* RIGHT PANEL — chat */}
       <div className="flex flex-1 flex-col min-w-0 bg-[#FDFBF7]">
-        <div className="border-b border-[#E8E4DC] bg-white px-4 py-3">
-          <h1 className="font-heading text-xl font-semibold text-foreground">
-            Sage
-          </h1>
-          {selectedSession ? (
-            <p className="mt-0.5 text-xs text-[#8A8A8A]">
-              {truncateTitle(selectedSession.title)}
-            </p>
-          ) : (
-            <p className="mt-0.5 text-xs text-foreground-secondary">
-              Your private space to think before you act.
-            </p>
-          )}
-        </div>
+        {selectedSession && (
+          <div className="border-b border-[#E8E4DC] bg-white px-4 py-3">
+            <div className="flex items-center gap-2">
+              <h2 className="font-heading text-sm md:text-base font-semibold text-foreground truncate">
+                {truncateTitle(selectedSession.title)}
+              </h2>
+              <span className="inline-flex items-center rounded-full bg-[#F2F5EF] px-2 py-0.5 text-[10px] font-medium text-[#5B7A52]">
+                {selectedSession.session_type === "incident" ? "Incident" : "Private"}
+              </span>
+            </div>
+          </div>
+        )}
         <div className="flex-1 min-h-0 p-3 md:p-4 flex flex-col">
-          {showDraftAssistant ? (
+          {selectedSession?.session_type === "incident" && selectedId ? (
+            <IncidentSessionView sessionId={selectedId} />
+          ) : showDraftAssistant ? (
             <div className="rounded-2xl border border-border bg-background-secondary/40 p-4 flex flex-col gap-4 h-full">
               <p className="text-sm text-foreground-secondary">
                 Paste or type the message you want to send. Sage will suggest a calmer, child-focused version.
@@ -676,7 +779,7 @@ export function SageSplitView() {
           ) : (
             <div className="flex flex-1 items-center justify-center rounded-2xl border border-border bg-background-secondary/40 p-6">
               <p className="text-sm text-foreground-secondary text-center max-w-xs">
-                Select a session from the list or use a shortcut above to start a new one.
+                Your private space to think before you act.
               </p>
             </div>
           )}

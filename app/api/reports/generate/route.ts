@@ -8,6 +8,7 @@ import {
   sha256String,
   type MessageRecord,
   type ExpenseRecord,
+  type InteractionRecord,
 } from "@/lib/reports/build-pdf";
 import { jsPDF } from "jspdf";
 import { randomUUID } from "crypto";
@@ -17,6 +18,7 @@ const REPORT_TYPES = [
   "expense_report",
   "calendar_report",
   "document_index",
+  "interaction_log",
   "full_case_report",
 ] as const;
 
@@ -216,6 +218,14 @@ export async function POST(request: NextRequest) {
       buffer = pdf;
       verificationPayload = "document_index_placeholder";
       recordCount = 0;
+    } else if (report_type === "interaction_log") {
+      const pdf = buildPlaceholderPdf(
+        "Interaction Log",
+        "This report type is in development. Documented interactions from Sage, timestamps and session notes, and any linked messages will be included in a future update."
+      );
+      buffer = pdf;
+      verificationPayload = "interaction_log_placeholder";
+      recordCount = 0;
     } else {
       // full_case_report
       let msgQuery = admin
@@ -237,7 +247,17 @@ export async function POST(request: NextRequest) {
         msgQuery = msgQuery.lte("created_at", end);
         expQuery = expQuery.lte("created_at", end);
       }
-      const [{ data: messages }, { data: expenses }] = await Promise.all([msgQuery, expQuery]);
+      const [{ data: messages }, { data: expenses }, { data: sessions }] = await Promise.all([
+        msgQuery,
+        expQuery,
+        admin
+          .from("sage_sessions")
+          .select("id, title, category, documented, documented_at, user_id")
+          .eq("user_id", user.id)
+          .eq("documented", true)
+          .not("documented_at", "is", null)
+          .order("documented_at", { ascending: true }),
+      ]);
       const msgIds = (messages ?? []).map((m) => m.id);
       const { data: flags } =
         msgIds.length > 0
@@ -267,8 +287,14 @@ export async function POST(request: NextRequest) {
         status: e.status,
         amount_owed: e.amount_owed != null ? String(e.amount_owed) : null,
       }));
-      recordCount = msgRows.length + expRows.length;
-      const result = await buildFullReportPdf(msgRows, expRows, [], start, end);
+      const interactionRows: InteractionRecord[] = (sessions ?? []).map((s) => ({
+        id: s.id,
+        documented_at: s.documented_at as string,
+        title: s.title ?? null,
+        category: s.category ?? null,
+      }));
+      recordCount = msgRows.length + expRows.length + interactionRows.length;
+      const result = await buildFullReportPdf(msgRows, expRows, [], interactionRows, start, end);
       buffer = result.buffer;
       verificationPayload = result.verificationPayload;
     }

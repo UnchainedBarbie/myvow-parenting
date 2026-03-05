@@ -108,6 +108,13 @@ export type ExpenseRecord = {
   amount_owed: string | null;
 };
 
+export type InteractionRecord = {
+  id: string;
+  documented_at: string;
+  title: string | null;
+  category: string | null;
+};
+
 export async function buildExpenseLedgerPdf(
   expenses: ExpenseRecord[],
   dateRangeStart: string | null,
@@ -206,6 +213,7 @@ export async function buildFullReportPdf(
   messages: MessageRecord[],
   expenses: ExpenseRecord[],
   patterns: PatternRecord[],
+  interactions: InteractionRecord[],
   dateRangeStart: string | null,
   dateRangeEnd: string | null
 ): Promise<{ buffer: Buffer; verificationPayload: string }> {
@@ -265,6 +273,28 @@ export async function buildFullReportPdf(
     payloadParts.push("p", p.id, p.flag_type);
     doc.text(`${p.flag_type}: ${p.occurrence_count} (${p.trend ?? "—"})`, MARGIN, y);
     y += LINE_HEIGHT;
+  }
+
+  if (interactions.length > 0) {
+    y += LINE_HEIGHT;
+    doc.setFontSize(12);
+    doc.text("4. Documented Interactions from Sage", MARGIN, y);
+    y += LINE_HEIGHT + 2;
+    doc.setFontSize(10);
+    for (const i of interactions) {
+      if (y > Y_MAX) {
+        doc.addPage();
+        y = MARGIN;
+      }
+      payloadParts.push("i", i.id, i.documented_at);
+      const date = new Date(i.documented_at).toLocaleString();
+      const title = i.title || "Untitled session";
+      const cat = i.category ? ` [${i.category}]` : "";
+      const line = `${date}${cat} — ${title}`;
+      const lines = doc.splitTextToSize(line, CONTENT_WIDTH);
+      doc.text(lines, MARGIN, y);
+      y += LINE_HEIGHT * lines.length;
+    }
   }
 
   const verificationPayload = payloadParts.join("|");

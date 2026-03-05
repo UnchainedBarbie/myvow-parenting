@@ -8,17 +8,18 @@
  import { ConfirmModal } from "@/components/ui/confirm-modal";
  import { showErrorToast, showSuccessToast } from "@/components/ui/toaster";
 
- const TYPE_LABELS: Record<string, string> = {
-   messages: "Message transcript",
-   expenses: "Expense ledger",
-   patterns: "Pattern summary",
-   full_report: "Full case report",
-   communication_report: "Communication Report",
-   expense_report: "Expense Report",
-   calendar_report: "Calendar & Custody Report",
-   document_index: "Document Index",
-   full_case_report: "Full Case Report",
- };
+const TYPE_LABELS: Record<string, string> = {
+  messages: "Message transcript",
+  expenses: "Expense ledger",
+  patterns: "Pattern summary",
+  full_report: "Full case report",
+  communication_report: "Communication Report",
+  expense_report: "Expense Report",
+  calendar_report: "Calendar & Custody Report",
+  document_index: "Document Index",
+  interaction_log: "Interaction Log",
+  full_case_report: "Full Case Report",
+};
 
  export type ExportRow = {
    id: string;

@@ -88,7 +88,7 @@ export default async function DashboardPage() {
     .single();
 
   const timezone =
-    (profile?.timezone as string | null) && typeof profile.timezone === "string"
+    profile && typeof profile.timezone === "string"
       ? profile.timezone
       : "America/Denver";
 

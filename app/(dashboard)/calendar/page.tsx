@@ -119,11 +119,11 @@ export default async function CalendarPage({
     {} as Record<string, { first_name: string; profile_image: string | null }>
   );
 
-  const creatorIds = [
-    ...new Set(
+  const creatorIds = Array.from(
+    new Set(
       (eventsRaw ?? []).map((e) => e.created_by).filter(Boolean)
-    ),
-  ] as string[];
+    )
+  ) as string[];
   const { data: creatorRows } =
     creatorIds.length > 0
       ? await admin.from("users").select("id, full_name").in("id", creatorIds)

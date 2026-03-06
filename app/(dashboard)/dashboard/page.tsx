@@ -209,24 +209,6 @@ export default async function DashboardPage() {
       }
     : null;
 
-  const childrenTodayItems: ChildrenTodayCustodyItem[] = (todayCustodyRaw ?? []).map((e) => ({
-    child_id: (e.child_id as string) ?? "",
-    child_name: e.child_id ? childMap[e.child_id as string]?.first_name ?? "Child" : "—",
-    event_title: (e.title as string) ?? "",
-    start_time: (e.start_time as string) ?? "",
-    all_day: (e.all_day as boolean) ?? false,
-  }));
-
-  const nextExchange: NextExchange = nextCustodyRaw
-    ? {
-        start_time: (nextCustodyRaw.start_time as string) ?? "",
-        title: (nextCustodyRaw.title as string) ?? "",
-        child_name: nextCustodyRaw.child_id
-          ? childMap[nextCustodyRaw.child_id as string]?.first_name ?? null
-          : null,
-      }
-    : null;
-
   // Review uploads: pending email-to-MyVow items
   const { data: uploadsRaw } = await admin
     .from("inbound_uploads")
@@ -461,21 +443,23 @@ export default async function DashboardPage() {
   const greeting = getGreetingLabel(profile?.full_name ?? null, timezone);
 
   return (
-    <div className="px-3 pt-3 pb-1 md:px-4 md:pt-4 md:pb-2">
-      {/* Greeting header */}
-      <div className="mb-4">
-        <h1 className="font-heading text-xl md:text-2xl font-semibold text-foreground mb-1">
-          {greeting}
-        </h1>
-        <p className="text-xs md:text-sm text-foreground-secondary">{todayLabel}</p>
-        <p className="mt-1 text-xs md:text-sm text-foreground-secondary">
-          Here&apos;s where things stand.
-        </p>
-      </div>
+    <div className="px-3 pt-3 pb-1 md:px-4 md:pt-4 md:pb-2 flex flex-col lg:flex-row lg:items-stretch gap-6 lg:gap-8 max-w-[1600px]">
+      {/* Left: main content ~65% */}
+      <div className="min-w-0 flex-1 lg:max-w-[65%]">
+        {/* Greeting header */}
+        <div className="mb-4">
+          <h1 className="font-heading text-xl md:text-2xl font-semibold text-foreground mb-1">
+            {greeting}
+          </h1>
+          <p className="text-xs md:text-sm text-foreground-secondary">{todayLabel}</p>
+          <p className="mt-1 text-xs md:text-sm text-foreground-secondary">
+            Here&apos;s where things stand.
+          </p>
+        </div>
 
-      <div className="space-y-4">
-        {/* Top row: status cards */}
-        <DashboardStatusCards
+        <div className="space-y-4">
+          {/* Top row: status cards */}
+          <DashboardStatusCards
           caseId={caseId}
           householdElevated={householdElevated}
           householdClimateLabel={householdClimateLabel}
@@ -487,6 +471,49 @@ export default async function DashboardPage() {
           firstUnreadConversationId={firstUnreadConversationId}
           netLabel={netLabel}
         />
+
+        {/* Quick actions */}
+        <div className="grid gap-4 lg:grid-cols-2 items-start">
+          <Card className="shadow-card border-border rounded-card">
+            <CardHeader className="pb-2 px-4 pt-4">
+              <CardTitle className="font-heading text-lg text-foreground">
+                Quick actions
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="px-4 pb-4">
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  asChild
+                  size="sm"
+                  className="rounded-full h-8 text-xs bg-[#7B9E87] hover:bg-[#6A8A78] text-white"
+                >
+                  <Link href="/messages">Send message</Link>
+                </Button>
+                <Button
+                  asChild
+                  size="sm"
+                  className="rounded-full h-8 text-xs bg-[#7B9E87] hover:bg-[#6A8A78] text-white"
+                >
+                  <Link href="/expenses">Add expense</Link>
+                </Button>
+                <Button
+                  asChild
+                  size="sm"
+                  className="rounded-full h-8 text-xs bg-[#7B9E87] hover:bg-[#6A8A78] text-white"
+                >
+                  <Link href="/documents">Upload document</Link>
+                </Button>
+                <Button
+                  asChild
+                  size="sm"
+                  className="rounded-full h-8 text-xs bg-[#7B9E87] hover:bg-[#6A8A78] text-white"
+                >
+                  <Link href="/calendar">Add calendar event</Link>
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
 
         {/* Today: events */}
         <Card className="rounded-card border border-[#E8E4DC] bg-[#FDFBF7]">
@@ -645,49 +672,23 @@ export default async function DashboardPage() {
             )}
           </CardContent>
         </Card>
-
-        {/* Row 3: Quick actions */}
-        <div className="grid gap-4 lg:grid-cols-2 items-start">
-          <Card className="shadow-card border-border rounded-card">
-            <CardHeader className="pb-2 px-4 pt-4">
-              <CardTitle className="font-heading text-lg text-foreground">
-                Quick actions
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="px-4 pb-4">
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  asChild
-                  size="sm"
-                  className="rounded-full h-8 text-xs bg-[#7B9E87] hover:bg-[#6A8A78] text-white"
-                >
-                  <Link href="/messages">Send message</Link>
-                </Button>
-                <Button
-                  asChild
-                  size="sm"
-                  className="rounded-full h-8 text-xs bg-[#7B9E87] hover:bg-[#6A8A78] text-white"
-                >
-                  <Link href="/expenses">Add expense</Link>
-                </Button>
-                <Button
-                  asChild
-                  size="sm"
-                  className="rounded-full h-8 text-xs bg-[#7B9E87] hover:bg-[#6A8A78] text-white"
-                >
-                  <Link href="/documents">Upload document</Link>
-                </Button>
-                <Button
-                  asChild
-                  size="sm"
-                  className="rounded-full h-8 text-xs bg-[#7B9E87] hover:bg-[#6A8A78] text-white"
-                >
-                  <Link href="/calendar">Add calendar event</Link>
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
         </div>
+      </div>
+
+      {/* Right: dove watermark ~35%, vertically centered */}
+      <div className="hidden lg:flex lg:w-[35%] lg:max-w-[35%] lg:min-w-0 items-center justify-center shrink-0 py-8">
+        <Link
+          href="/dashboard/sage"
+          className="flex items-center justify-center transition-[opacity,transform] duration-200 opacity-[0.18] hover:opacity-30 hover:scale-105 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#7B9E87] focus-visible:ring-offset-2 rounded-full"
+          aria-label="Open Sage"
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/dove-translucent.png"
+            alt=""
+            className="w-full max-w-[240px] h-auto object-contain pointer-events-none select-none"
+          />
+        </Link>
       </div>
     </div>
   );

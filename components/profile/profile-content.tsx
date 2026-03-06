@@ -105,6 +105,8 @@ export type ChildRow = {
   invited_email?: string | null;
   invited_phone?: string | null;
   profile_image?: string | null;
+  pin_set_at?: string | null;
+  kid_sage_tone?: string | null;
 };
 
 export type ProfileContentProps = {
@@ -253,6 +255,17 @@ export function ProfileContent({
   const [childInvitePhone, setChildInvitePhone] = useState("");
   const [childInviteSaving, setChildInviteSaving] = useState(false);
   const [childInviteError, setChildInviteError] = useState<string | null>(null);
+  // Family Access Code
+  const [familyCode, setFamilyCode] = useState<string | null>(null);
+  const [familyCodeLoading, setFamilyCodeLoading] = useState(true);
+  const [familyCodeRotating, setFamilyCodeRotating] = useState(false);
+  // Kids Access modal (Set up access: PIN or Email invite)
+  const [kidsAccessModalChild, setKidsAccessModalChild] = useState<ChildRow | null>(null);
+  const [kidsAccessPin, setKidsAccessPin] = useState("");
+  const [kidsAccessPinSaving, setKidsAccessPinSaving] = useState(false);
+  const [kidsAccessPinError, setKidsAccessPinError] = useState<string | null>(null);
+  const [kidsAccessPinSuccess, setKidsAccessPinSuccess] = useState(false);
+  const [sageToneSavingId, setSageToneSavingId] = useState<string | null>(null);
 
   type AppMode = "solo" | "partner" | "coparenting" | "solo_coparenting";
   const [appMode, setAppMode] = useState<AppMode>("partner");
@@ -274,6 +287,19 @@ export function ProfileContent({
       .finally(() => { if (!cancelled) setModeLoading(false); });
     return () => { cancelled = true; };
   }, [accountNumber]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setFamilyCodeLoading(true);
+    fetch("/api/family/code")
+      .then((res) => res.json().catch(() => ({})))
+      .then((data: { family_code?: string | null }) => {
+        if (cancelled) return;
+        setFamilyCode(data.family_code ?? null);
+      })
+      .finally(() => { if (!cancelled) setFamilyCodeLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
 
   async function saveAppMode(newMode: AppMode) {
     if (!accountNumber) return;
@@ -602,6 +628,62 @@ export function ProfileContent({
       router.refresh();
     } finally {
       setChildInviteSaving(false);
+    }
+  }
+
+  function openKidsAccessModal(c: ChildRow) {
+    setKidsAccessModalChild(c);
+    setKidsAccessPin("");
+    setKidsAccessPinError(null);
+    setKidsAccessPinSuccess(false);
+  }
+
+  async function handleKidsAccessPinSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!kidsAccessModalChild) return;
+    const pin = kidsAccessPin.replace(/\D/g, "");
+    if (pin.length < 4 || pin.length > 6) {
+      setKidsAccessPinError("Enter a 4–6 digit PIN");
+      return;
+    }
+    setKidsAccessPinError(null);
+    setKidsAccessPinSaving(true);
+    try {
+      const res = await fetch("/api/kids/pin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ child_id: kidsAccessModalChild.id, pin }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setKidsAccessPinError((data as { message?: string }).message ?? "Failed to set PIN");
+        return;
+      }
+      router.refresh();
+      setKidsAccessModalChild(null);
+      setKidsAccessPin("");
+    } finally {
+      setKidsAccessPinSaving(false);
+    }
+  }
+
+  async function handleSageToneChange(childId: string, value: string) {
+    const tone = value === "younger" || value === "default" || value === "older" ? value : "default";
+    setSageToneSavingId(childId);
+    try {
+      const res = await fetch(`/api/children/${childId}/update`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kid_sage_tone: tone }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        showErrorToast((data as { error?: string }).error ?? "Failed to save Sage tone");
+        return;
+      }
+      router.refresh();
+    } finally {
+      setSageToneSavingId(null);
     }
   }
 
@@ -942,6 +1024,62 @@ export function ProfileContent({
         title="Family"
       >
         <div className="flex flex-col gap-3">
+          {/* Family Access Code subsection — above children list */}
+          <div className="rounded-card border border-border bg-muted/20 p-3 space-y-2">
+            <p className="text-xs font-medium text-foreground-secondary">Family Access Code</p>
+            {familyCodeLoading ? (
+              <p className="text-sm text-foreground-secondary">Loading…</p>
+            ) : familyCode ? (
+              <>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-2xl font-semibold tracking-wide text-foreground font-mono">{familyCode}</span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 w-7 p-0 text-foreground-secondary hover:text-foreground"
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(familyCode);
+                      } catch {
+                        // ignore
+                      }
+                    }}
+                    aria-label="Copy family code"
+                  >
+                    <Copy className="h-4 w-4" />
+                  </Button>
+                </div>
+                <div className="flex flex-col gap-0.5">
+                  <button
+                    type="button"
+                    className="text-xs text-primary hover:underline w-fit"
+                    disabled={familyCodeRotating}
+                    onClick={async () => {
+                      setFamilyCodeRotating(true);
+                      try {
+                        const res = await fetch("/api/family/code", { method: "PATCH" });
+                        const data = await res.json().catch(() => ({}));
+                        if (res.ok && typeof (data as { family_code?: string }).family_code === "string") {
+                          setFamilyCode((data as { family_code: string }).family_code);
+                        } else {
+                          showErrorToast((data as { message?: string }).message ?? "Failed to rotate code");
+                        }
+                      } finally {
+                        setFamilyCodeRotating(false);
+                      }
+                    }}
+                  >
+                    {familyCodeRotating ? "Rotating…" : "Rotate code"}
+                  </button>
+                  <p className="text-xs text-foreground-secondary">Share this code with your children to give them access.</p>
+                </div>
+              </>
+            ) : (
+              <p className="text-sm text-foreground-secondary">No family code available. Add a court order or case to get one.</p>
+            )}
+          </div>
+
           <div className="flex flex-wrap items-center gap-2">
             {!showAddCoparentForm && !showAddChildForm && (
               <>
@@ -1117,6 +1255,67 @@ export function ProfileContent({
             </div>
           )}
 
+          {kidsAccessModalChild && (
+            <div
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="kids-access-title"
+              onClick={(e) => { if (e.target === e.currentTarget) { setKidsAccessModalChild(null); setKidsAccessPinError(null); } }}
+            >
+              <div
+                className="bg-background border border-border rounded-card shadow-card max-w-sm w-full p-4 space-y-4"
+                onClick={(e) => e.stopPropagation()}
+                onMouseDown={(e) => e.stopPropagation()}
+              >
+                <div className="flex items-center justify-between">
+                  <h3 id="kids-access-title" className="font-heading text-lg font-semibold text-foreground">
+                    Kids Access — {kidsAccessModalChild.first_name}
+                  </h3>
+                  <button
+                    type="button"
+                    className="p-1.5 rounded-full text-foreground-secondary hover:bg-muted hover:text-foreground"
+                    aria-label="Close"
+                    onClick={() => { setKidsAccessModalChild(null); setKidsAccessPinError(null); }}
+                  >
+                    <X className="h-5 w-5" />
+                  </button>
+                </div>
+                <div className="space-y-4">
+                  <div>
+                    <p className="text-xs font-medium text-foreground-secondary mb-1.5">PIN access</p>
+                    <form onSubmit={handleKidsAccessPinSubmit} className="flex flex-col gap-2">
+                      <Input
+                        type="password"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
+                        maxLength={6}
+                        className="h-9 font-mono"
+                        placeholder="4–6 digit PIN"
+                        value={kidsAccessPin}
+                        onChange={(e) => setKidsAccessPin(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                        disabled={kidsAccessPinSaving}
+                      />
+                      {kidsAccessPinError && <p className="text-xs text-destructive">{kidsAccessPinError}</p>}
+                      <Button
+                        type="submit"
+                        size="sm"
+                        className="rounded-full h-8 text-xs bg-[#7B9E87] hover:bg-[#6A8A78] text-white w-fit"
+                        disabled={kidsAccessPinSaving}
+                      >
+                        {kidsAccessPinSaving ? "Setting…" : "Set PIN"}
+                      </Button>
+                    </form>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium text-foreground-secondary mb-1.5">Email invite</p>
+                    <p className="text-xs text-foreground-secondary">Coming soon</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {(coparent != null || children.length > 0) ? (
             <div className="max-w-2xl rounded-card border border-border bg-background overflow-hidden">
               <div className="flex items-center py-2 px-2 border-b border-border text-xs font-medium text-foreground-secondary bg-muted/40 gap-2">
@@ -1125,6 +1324,8 @@ export function ProfileContent({
                 <span className="w-16 shrink-0">Age</span>
                 <span className="w-32 shrink-0">Date of birth</span>
                 <span className="w-20 shrink-0">Status</span>
+                <span className="w-28 shrink-0">Kids Access</span>
+                <span className="w-24 shrink-0">Sage tone</span>
                 <span className="flex-1 text-right">Actions</span>
               </div>
               <ul>
@@ -1154,6 +1355,8 @@ export function ProfileContent({
                           <span className="text-xs rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200 px-2 py-0.5 font-medium">Active</span>
                         )}
                       </span>
+                      <span className="w-28 shrink-0" />
+                      <span className="w-24 shrink-0" />
                       <div className="flex-1 min-w-0" />
                     </div>
                   </li>
@@ -1208,6 +1411,42 @@ export function ProfileContent({
                         <span className="w-16 shrink-0 text-xs text-foreground-secondary">{formatAge(c.date_of_birth)}</span>
                         <span className="w-32 shrink-0 text-xs text-foreground-secondary">{formatDate(c.date_of_birth)}</span>
                         <span className="w-20 shrink-0 text-xs text-foreground-secondary">—</span>
+                        <div className="w-28 shrink-0">
+                          {c.pin_set_at ? (
+                            <div className="flex flex-col gap-0.5">
+                              <span className="text-xs text-foreground-secondary">PIN set ✓</span>
+                              <button
+                                type="button"
+                                className="text-xs text-primary hover:underline w-fit"
+                                onClick={() => openKidsAccessModal(c)}
+                              >
+                                Reset PIN
+                              </button>
+                            </div>
+                          ) : (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              className="rounded-full h-7 text-xs"
+                              onClick={() => openKidsAccessModal(c)}
+                            >
+                              Set up access
+                            </Button>
+                          )}
+                        </div>
+                        <div className="w-24 shrink-0">
+                          <select
+                            value={c.kid_sage_tone ?? "default"}
+                            onChange={(e) => handleSageToneChange(c.id, e.target.value)}
+                            disabled={sageToneSavingId === c.id}
+                            className="flex h-7 w-full max-w-full rounded-md border border-input bg-background px-1.5 py-0.5 text-xs text-foreground"
+                          >
+                            <option value="younger">Younger</option>
+                            <option value="default">Default</option>
+                            <option value="older">Older</option>
+                          </select>
+                        </div>
                         <div className="flex-1 min-w-0" />
                         <div className="flex items-center gap-1.5 shrink-0">
                           <button

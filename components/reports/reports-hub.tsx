@@ -194,7 +194,8 @@ export function ReportsHub({ caseId, children }: ReportsHubProps) {
             key={report.id}
             className={cn(
               "border border-[#E8E4DC] bg-[#FDFBF7] shadow-sm",
-              "rounded-xl overflow-hidden"
+              "rounded-xl overflow-hidden",
+              "flex flex-col h-full"
             )}
           >
             <CardHeader className="pb-2">
@@ -212,79 +213,83 @@ export function ReportsHub({ caseId, children }: ReportsHubProps) {
                 </div>
               </div>
             </CardHeader>
-            <CardContent className="space-y-4 pt-0">
-              {report.hasDateRange && (
-                <div className="grid grid-cols-2 gap-2">
-                  <div className="space-y-1">
-                    <Label className="text-[11px] text-foreground-secondary">From</Label>
-                    <input
-                      type="date"
-                      value={dateStart}
-                      onChange={(e) => setDateStart(e.target.value)}
-                      className="h-8 w-full rounded-md border border-[#E8E4DC] bg-white px-2 text-xs text-[#3D3D3D]"
-                    />
+            <CardContent className="pt-0 flex flex-col h-full">
+              <div className="flex-1 space-y-4">
+                {report.hasDateRange && (
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="space-y-1">
+                      <Label className="text-[11px] text-foreground-secondary">From</Label>
+                      <input
+                        type="date"
+                        value={dateStart}
+                        onChange={(e) => setDateStart(e.target.value)}
+                        className="h-8 w-full rounded-md border border-[#E8E4DC] bg-white px-2 text-xs text-[#3D3D3D]"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[11px] text-foreground-secondary">To</Label>
+                      <input
+                        type="date"
+                        value={dateEnd}
+                        onChange={(e) => setDateEnd(e.target.value)}
+                        className="h-8 w-full rounded-md border border-[#E8E4DC] bg-white px-2 text-xs text-[#3D3D3D]"
+                      />
+                    </div>
                   </div>
-                  <div className="space-y-1">
-                    <Label className="text-[11px] text-foreground-secondary">To</Label>
-                    <input
-                      type="date"
-                      value={dateEnd}
-                      onChange={(e) => setDateEnd(e.target.value)}
-                      className="h-8 w-full rounded-md border border-[#E8E4DC] bg-white px-2 text-xs text-[#3D3D3D]"
-                    />
-                  </div>
-                </div>
-              )}
+                )}
 
-              {report.options.length > 0 && (
-                <div className="space-y-2">
-                  <Label className="text-[11px] text-foreground-secondary">Include</Label>
-                  <ul className="space-y-1.5">
-                    {report.options.map((opt) => (
-                      <li key={opt.id} className="flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          id={`${report.id}-${opt.id}`}
-                          checked={isOptionChecked(report.id, opt.id, opt.default)}
-                          onChange={(e) => setOption(report.id, opt.id, e.target.checked)}
-                          className="h-3.5 w-3.5 rounded border-[#E8E4DC] text-[#5B7A52] focus:ring-[#5B7A52]"
-                        />
-                        <label
-                          htmlFor={`${report.id}-${opt.id}`}
-                          className="text-xs text-foreground cursor-pointer"
-                        >
-                          {opt.label}
-                        </label>
-                      </li>
+                {report.options.length > 0 && (
+                  <div className="space-y-2">
+                    <Label className="text-[11px] text-foreground-secondary">Include</Label>
+                    <ul className="space-y-1.5">
+                      {report.options.map((opt) => (
+                        <li key={opt.id} className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            id={`${report.id}-${opt.id}`}
+                            checked={isOptionChecked(report.id, opt.id, opt.default)}
+                            onChange={(e) => setOption(report.id, opt.id, e.target.checked)}
+                            className="h-3.5 w-3.5 rounded border-[#E8E4DC] text-[#5B7A52] focus:ring-[#5B7A52]"
+                          />
+                          <label
+                            htmlFor={`${report.id}-${opt.id}`}
+                            className="text-xs text-foreground cursor-pointer"
+                          >
+                            {opt.label}
+                          </label>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <Label className="text-[11px] text-foreground-secondary shrink-0">Export as</Label>
+                  <select
+                    value={getFormat(report.id, report.formats)}
+                    onChange={(e) => setFormat((prev) => ({ ...prev, [report.id]: e.target.value }))}
+                    className="h-8 rounded-md border border-[#E8E4DC] bg-white px-2 text-xs text-[#3D3D3D]"
+                  >
+                    {report.formats.map((f) => (
+                      <option key={f} value={f}>
+                        {f.toUpperCase()}
+                      </option>
                     ))}
-                  </ul>
+                  </select>
                 </div>
-              )}
-
-              <div className="flex flex-wrap items-center gap-2">
-                <Label className="text-[11px] text-foreground-secondary shrink-0">Export as</Label>
-                <select
-                  value={getFormat(report.id, report.formats)}
-                  onChange={(e) => setFormat((prev) => ({ ...prev, [report.id]: e.target.value }))}
-                  className="h-8 rounded-md border border-[#E8E4DC] bg-white px-2 text-xs text-[#3D3D3D]"
-                >
-                  {report.formats.map((f) => (
-                    <option key={f} value={f}>
-                      {f.toUpperCase()}
-                    </option>
-                  ))}
-                </select>
               </div>
 
-              <Button
-                type="button"
-                size="sm"
-                className="w-full rounded-full bg-[#5B7A52] text-white hover:bg-[#476242] text-xs"
-                disabled={generating !== null}
-                onClick={() => void handleGenerate(report)}
-              >
-                {generating === report.id ? "Generating report…" : "Generate Report"}
-              </Button>
+              <div className="w-full">
+                <Button
+                  type="button"
+                  size="sm"
+                  className="w-full rounded-full bg-[#5B7A52] text-white hover:bg-[#476242] text-xs"
+                  disabled={generating !== null}
+                  onClick={() => void handleGenerate(report)}
+                >
+                  {generating === report.id ? "Generating report…" : "Generate Report"}
+                </Button>
+              </div>
             </CardContent>
           </Card>
         );

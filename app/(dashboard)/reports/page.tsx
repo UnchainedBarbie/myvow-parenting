@@ -2,6 +2,7 @@ import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import { ReportsHub } from "@/components/reports/reports-hub";
 import { ExportList, type ExportRow } from "@/components/reports/export-list";
+import { CoParentBehaviorAnalysis } from "@/components/reports/coparent-behavior-analysis";
 
 export default async function ReportsPage() {
   const supabase = await createClient();
@@ -66,6 +67,7 @@ export default async function ReportsPage() {
         Generate court-ready documentation from your case data.
       </p>
       <div className="space-y-8">
+        <CoParentBehaviorAnalysis />
         <ReportsHub caseId={caseId} children={[]} />
         <ExportList exports={exports} />
       </div>

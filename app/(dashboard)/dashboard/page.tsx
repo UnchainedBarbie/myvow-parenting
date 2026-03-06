@@ -5,6 +5,8 @@ import { Button } from "@/components/ui/button";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { DashboardStatusCards } from "@/components/dashboard/dashboard-status-cards";
+import { ReviewCard } from "@/components/dashboard/review-card";
+import { DashboardOnboardingGate } from "@/components/dashboard/dashboard-onboarding-gate";
 type TodayEvent = {
   id: string;
   title: string;
@@ -100,12 +102,35 @@ export default async function DashboardPage() {
 
   const caseId = membership?.case_id ?? null;
 
+  const { data: safetyNotifications } = await admin
+    .from("parent_notifications")
+    .select("id, type, title, message, priority, read, created_at")
+    .eq("user_id", user.id)
+    .eq("type", "child_safety")
+    .eq("read", false)
+    .order("created_at", { ascending: false });
+
   if (!caseId) {
     const today = new Date();
     const todayLabel = formatDateLabel(today, timezone);
     const greeting = getGreetingLabel(profile?.full_name ?? null, timezone);
     return (
       <div className="px-3 pt-3 pb-1 md:px-4 md:pt-4 md:pb-2">
+        {safetyNotifications && safetyNotifications.length > 0 && (
+          <div className="mb-4 space-y-2">
+            {safetyNotifications.map((n) => (
+              <div
+                key={n.id}
+                className="rounded-card border border-[#C97B7B] bg-[#FDF2F2] px-4 py-3 text-sm text-[#7A3434]"
+              >
+                <p className="font-semibold mb-1">⚠️ {n.title}</p>
+                <p className="text-xs text-[#7A3434] whitespace-pre-line">
+                  {n.message}
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
         <div className="mb-4">
           <h1 className="font-heading text-xl md:text-2xl font-semibold text-foreground mb-1">
             {greeting}
@@ -209,22 +234,6 @@ export default async function DashboardPage() {
       }
     : null;
 
-  // Review uploads: pending email-to-MyVow items
-  const { data: uploadsRaw } = await admin
-    .from("inbound_uploads")
-    .select("id, subject, created_at")
-    .eq("user_id", user.id)
-    .eq("status", "pending_review")
-    .order("created_at", { ascending: false })
-    .limit(5);
-
-  const pendingUploads = (uploadsRaw ?? []) as {
-    id: string;
-    subject: string | null;
-    created_at: string;
-  }[];
-  const uploadsCount = pendingUploads.length;
-
   // Recent activity: last 5 actions across the app
   const [
     { data: recentExpensesRaw },
@@ -302,7 +311,6 @@ export default async function DashboardPage() {
         new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
     )
     .slice(0, 5);
-  const uploadsRecent = pendingUploads.slice(0, 3);
 
   // Expenses: net balance + open items
   const { data: expensesRaw } = await admin
@@ -443,253 +451,279 @@ export default async function DashboardPage() {
   const greeting = getGreetingLabel(profile?.full_name ?? null, timezone);
 
   return (
-    <div className="px-3 pt-3 pb-1 md:px-4 md:pt-4 md:pb-2 flex flex-col lg:flex-row lg:items-stretch gap-6 lg:gap-8 max-w-[1600px]">
-      {/* Left: main content ~65% */}
-      <div className="min-w-0 flex-1 lg:max-w-[65%]">
-        {/* Greeting header */}
-        <div className="mb-4">
-          <h1 className="font-heading text-xl md:text-2xl font-semibold text-foreground mb-1">
-            {greeting}
-          </h1>
-          <p className="text-xs md:text-sm text-foreground-secondary">{todayLabel}</p>
-          <p className="mt-1 text-xs md:text-sm text-foreground-secondary">
-            Here&apos;s where things stand.
-          </p>
+    <div className="px-3 pt-3 pb-1 md:px-4 md:pt-4 md:pb-2">
+      {safetyNotifications && safetyNotifications.length > 0 && (
+        <div className="mb-4 space-y-2">
+          {safetyNotifications.map((n) => (
+            <div
+              key={n.id}
+              className="rounded-card border border-[#C97B7B] bg-[#FDF2F2] px-4 py-3 text-sm text-[#7A3434]"
+            >
+              <p className="font-semibold mb-1">⚠️ {n.title}</p>
+              <p className="text-xs text-[#7A3434] whitespace-pre-line">
+                {n.message}
+              </p>
+            </div>
+          ))}
         </div>
+      )}
 
-        <div className="space-y-4">
-          {/* Top row: status cards */}
-          <DashboardStatusCards
-          caseId={caseId}
-          householdElevated={householdElevated}
-          householdClimateLabel={householdClimateLabel}
-          disputesLabel={disputesLabel}
-          openExpenseItems={openExpenseItems}
-          awaitingResponseCount={awaitingResponseCount}
-          communicationMainLabel={communicationMainLabel}
-          communicationToneLabel={communicationToneLabel}
-          firstUnreadConversationId={firstUnreadConversationId}
-          netLabel={netLabel}
-        />
+      <div className="flex flex-col lg:flex-row lg:items-stretch gap-6 lg:gap-8 max-w-[1600px]">
+        {/* Left: main content ~65% */}
+        <div className="min-w-0 flex-1 lg:max-w-[65%]">
+          {/* Greeting header */}
+          <div className="mb-4">
+            <h1 className="font-heading text-xl md:text-2xl font-semibold text-foreground mb-1">
+              {greeting}
+            </h1>
+            <p className="text-xs md:text-sm text-foreground-secondary">
+              {todayLabel}
+            </p>
+            <p className="mt-1 text-xs md:text-sm text-foreground-secondary">
+              Here&apos;s where things stand.
+            </p>
+          </div>
 
-        {/* Quick actions */}
-        <Card className="shadow-card border-border rounded-card">
-          <CardHeader className="pb-2 px-4 pt-4">
-            <CardTitle className="font-heading text-lg text-foreground">
-              Quick actions
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="px-4 pb-4">
-            <div className="flex flex-row flex-wrap gap-2">
-                <Button
-                  asChild
-                  size="sm"
-                  className="rounded-full h-8 text-xs bg-[#7B9E87] hover:bg-[#6A8A78] text-white"
-                >
-                  <Link href="/messages">Send message</Link>
-                </Button>
-                <Button
-                  asChild
-                  size="sm"
-                  className="rounded-full h-8 text-xs bg-[#7B9E87] hover:bg-[#6A8A78] text-white"
-                >
-                  <Link href="/expenses">Add expense</Link>
-                </Button>
-                <Button
-                  asChild
-                  size="sm"
-                  className="rounded-full h-8 text-xs bg-[#7B9E87] hover:bg-[#6A8A78] text-white"
-                >
-                  <Link href="/documents">Upload document</Link>
-                </Button>
-                <Button
-                  asChild
-                  size="sm"
-                  className="rounded-full h-8 text-xs bg-[#7B9E87] hover:bg-[#6A8A78] text-white"
-                >
-                  <Link href="/calendar">Add calendar event</Link>
-                </Button>
-              </div>
-            </CardContent>
-        </Card>
-
-        {/* Today: events */}
-        <Card className="rounded-card border border-[#E8E4DC] bg-[#FDFBF7]">
-          <CardHeader className="pb-2 px-4 pt-4">
-            <CardTitle className="font-heading text-lg text-foreground">
-              Today
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="px-4 pb-4">
-            <div className="space-y-3">
-              {todayEvents.length === 0 ? (
-                <>
-                  <p className="text-sm text-foreground-secondary">
-                    Nothing scheduled today.
-                  </p>
+          <DashboardOnboardingGate
+            contentAboveChecklist={
+              <DashboardStatusCards
+                caseId={caseId}
+                householdElevated={householdElevated}
+                householdClimateLabel={householdClimateLabel}
+                disputesLabel={disputesLabel}
+                openExpenseItems={openExpenseItems}
+                awaitingResponseCount={awaitingResponseCount}
+                communicationMainLabel={communicationMainLabel}
+                communicationToneLabel={communicationToneLabel}
+                firstUnreadConversationId={firstUnreadConversationId}
+                netLabel={netLabel}
+              />
+            }
+            contentBelowChecklist={
+              <>
+                {/* Quick actions */}
+                <Card className="shadow-card border-border rounded-card">
+              <CardHeader className="pb-2 px-4 pt-4">
+                <CardTitle className="font-heading text-lg text-foreground">
+                  Quick actions
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="px-4 pb-4">
+                <div className="flex flex-row flex-wrap gap-2">
                   <Button
                     asChild
                     size="sm"
-                    variant="outline"
-                    className="rounded-full h-8 text-xs"
+                    className="rounded-full h-8 text-xs bg-[#7B9E87] hover:bg-[#6A8A78] text-white"
                   >
-                    <Link href="/calendar">Open calendar</Link>
+                    <Link href="/messages">Send message</Link>
                   </Button>
-                  {nextEvent && (
-                    <p className="text-xs text-foreground-secondary mt-2">
-                      <span className="font-medium text-foreground">Next event:</span>{" "}
-                      {formatShortDay(new Date(nextEvent.start_time), timezone)} ·{" "}
-                      {formatTimeLabel(nextEvent.start_time, timezone)} — {nextEvent.title}
-                      {nextEvent.child_name ? ` (${nextEvent.child_name})` : ""}
-                    </p>
+                  <Button
+                    asChild
+                    size="sm"
+                    className="rounded-full h-8 text-xs bg-[#7B9E87] hover:bg-[#6A8A78] text-white"
+                  >
+                    <Link href="/expenses">Add expense</Link>
+                  </Button>
+                  <Button
+                    asChild
+                    size="sm"
+                    className="rounded-full h-8 text-xs bg-[#7B9E87] hover:bg-[#6A8A78] text-white"
+                  >
+                    <Link href="/documents">Upload document</Link>
+                  </Button>
+                  <Button
+                    asChild
+                    size="sm"
+                    className="rounded-full h-8 text-xs bg-[#7B9E87] hover:bg-[#6A8A78] text-white"
+                  >
+                    <Link href="/calendar">Add calendar event</Link>
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Today: events */}
+            <Card className="rounded-card border border-[#E8E4DC] bg-[#FDFBF7]">
+              <CardHeader className="pb-2 px-4 pt-4">
+                <CardTitle className="font-heading text-lg text-foreground">
+                  Today
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="px-4 pb-4">
+                <div className="space-y-3">
+                  {todayEvents.length === 0 ? (
+                    <>
+                      <p className="text-sm text-foreground-secondary">
+                        Nothing scheduled today.
+                      </p>
+                      <Button
+                        asChild
+                        size="sm"
+                        variant="outline"
+                        className="rounded-full h-8 text-xs"
+                      >
+                        <Link href="/calendar">Open calendar</Link>
+                      </Button>
+                      {nextEvent && (
+                        <p className="text-xs text-foreground-secondary mt-2">
+                          <span className="font-medium text-foreground">
+                            Next event:
+                          </span>{" "}
+                          {formatShortDay(
+                            new Date(nextEvent.start_time),
+                            timezone
+                          )}{" "}
+                          · {formatTimeLabel(nextEvent.start_time, timezone)} —{" "}
+                          {nextEvent.title}
+                          {nextEvent.child_name
+                            ? ` (${nextEvent.child_name})`
+                            : ""}
+                        </p>
+                      )}
+                    </>
+                  ) : (
+                    <ul className="space-y-2">
+                      {todayEvents
+                        .slice()
+                        .sort((a, b) =>
+                          a.start_time.localeCompare(b.start_time)
+                        )
+                        .map((e) => (
+                          <li
+                            key={e.id}
+                            className="flex items-start justify-between gap-2"
+                          >
+                            <div className="flex items-start gap-2">
+                              <span
+                                className={cn(
+                                  "mt-1 h-2 w-2 rounded-full",
+                                  e.event_type === "custody"
+                                    ? "bg-[#7C8B6E]"
+                                    : e.event_type === "medical"
+                                      ? "bg-[#C97B7B]"
+                                      : e.event_type === "school"
+                                        ? "bg-[#D4A843]"
+                                        : "bg-[#B0A899]"
+                                )}
+                              />
+                              <div>
+                                <p className="text-xs text-foreground-secondary">
+                                  {(() => {
+                                    const d = new Date(e.start_time);
+                                    const hasSpecificTime =
+                                      !(
+                                        d.getHours() === 0 &&
+                                        d.getMinutes() === 0
+                                      );
+                                    return hasSpecificTime
+                                      ? formatTimeLabel(
+                                          e.start_time,
+                                          timezone
+                                        )
+                                      : "All day";
+                                  })()}
+                                </p>
+                                <p className="text-sm font-medium text-foreground">
+                                  {e.title}
+                                </p>
+                                {e.child_name && (
+                                  <p className="text-xs text-foreground-secondary">
+                                    {e.child_name}
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+                          </li>
+                        ))}
+                    </ul>
                   )}
-                </>
-              ) : (
-                <ul className="space-y-2">
-                  {todayEvents
-                    .slice()
-                    .sort((a, b) => a.start_time.localeCompare(b.start_time))
-                    .map((e) => (
-                      <li key={e.id} className="flex items-start justify-between gap-2">
-                        <div className="flex items-start gap-2">
-                          <span
-                            className={cn(
-                              "mt-1 h-2 w-2 rounded-full",
-                              e.event_type === "custody"
-                                ? "bg-[#7C8B6E]"
-                                : e.event_type === "medical"
-                                  ? "bg-[#C97B7B]"
-                                  : e.event_type === "school"
-                                    ? "bg-[#D4A843]"
-                                    : "bg-[#B0A899]"
+                </div>
+              </CardContent>
+            </Card>
+
+            <ReviewCard />
+
+            {/* Recent activity */}
+            <Card className="shadow-card border-border rounded-card">
+              <CardHeader className="pb-2 px-4 pt-4">
+                <CardTitle className="font-heading text-lg text-foreground">
+                  Recent activity
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="px-4 pb-4">
+                {recentActivity.length === 0 ? (
+                  <p className="text-sm text-foreground-secondary">
+                    Nothing yet.
+                  </p>
+                ) : (
+                  <ul className="space-y-2">
+                    {recentActivity.map((item) => (
+                      <li
+                        key={`${item.type}-${item.id}`}
+                        className="flex items-center justify-between gap-2 text-sm"
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-[#F2F5EF] text-[#5B7A52]">
+                            {item.type === "expense" ? (
+                              <span className="text-[11px]">$</span>
+                            ) : item.type === "document" ? (
+                              <span className="text-[11px]">D</span>
+                            ) : item.type === "event" ? (
+                              <span className="text-[11px]">C</span>
+                            ) : (
+                              <span className="text-[11px]">M</span>
                             )}
-                          />
-                          <div>
-                            <p className="text-xs text-foreground-secondary">
-                              {(() => {
-                                const d = new Date(e.start_time);
-                                const hasSpecificTime =
-                                  !(d.getHours() === 0 && d.getMinutes() === 0);
-                                return hasSpecificTime
-                                  ? formatTimeLabel(e.start_time, timezone)
-                                  : "All day";
-                              })()}
+                          </span>
+                          <div className="min-w-0">
+                            <p className="text-[11px] text-foreground-secondary">
+                              {item.label}
                             </p>
-                            <p className="text-sm font-medium text-foreground">
-                              {e.title}
+                            <p className="truncate text-sm text-foreground">
+                              {item.description}
                             </p>
-                            {e.child_name && (
-                              <p className="text-xs text-foreground-secondary">
-                                {e.child_name}
-                              </p>
-                            )}
                           </div>
                         </div>
+                        <span className="shrink-0 text-[11px] text-foreground-secondary">
+                          {new Date(item.created_at).toLocaleDateString(
+                            "en-US",
+                            {
+                              month: "short",
+                              day: "numeric",
+                            }
+                          )}
+                        </span>
                       </li>
                     ))}
-                </ul>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Review */}
-        <Card className="shadow-card border-border rounded-card">
-          <CardHeader className="pb-2 px-4 pt-4 flex items-center justify-between gap-2">
-            <CardTitle className="font-heading text-lg text-foreground">
-              Review
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="px-4 pb-4 space-y-3">
-            {uploadsCount === 0 ? (
-              <p className="text-sm text-foreground-secondary">All caught up.</p>
-            ) : (
-              <div className="flex items-center justify-between gap-3">
-                <p className="text-sm text-foreground-secondary">
-                  {uploadsCount} item{uploadsCount > 1 ? "s" : ""} to review
-                </p>
-                <Button
-                  asChild
-                  size="sm"
-                  className="rounded-full h-8 text-xs bg-[#7B9E87] hover:bg-[#6A8A78] text-white"
-                >
-                  <Link href="/uploads/review">Review now</Link>
-                </Button>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Recent activity */}
-        <Card className="shadow-card border-border rounded-card">
-          <CardHeader className="pb-2 px-4 pt-4">
-            <CardTitle className="font-heading text-lg text-foreground">
-              Recent activity
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="px-4 pb-4">
-            {recentActivity.length === 0 ? (
-              <p className="text-sm text-foreground-secondary">Nothing yet.</p>
-            ) : (
-              <ul className="space-y-2">
-                {recentActivity.map((item) => (
-                  <li
-                    key={`${item.type}-${item.id}`}
-                    className="flex items-center justify-between gap-2 text-sm"
-                  >
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-[#F2F5EF] text-[#5B7A52]">
-                        {item.type === "expense" ? (
-                          <span className="text-[11px]">$</span>
-                        ) : item.type === "document" ? (
-                          <span className="text-[11px]">D</span>
-                        ) : item.type === "event" ? (
-                          <span className="text-[11px]">C</span>
-                        ) : (
-                          <span className="text-[11px]">M</span>
-                        )}
-                      </span>
-                      <div className="min-w-0">
-                        <p className="text-[11px] text-foreground-secondary">
-                          {item.label}
-                        </p>
-                        <p className="truncate text-sm text-foreground">
-                          {item.description}
-                        </p>
-                      </div>
-                    </div>
-                    <span className="shrink-0 text-[11px] text-foreground-secondary">
-                      {new Date(item.created_at).toLocaleDateString("en-US", {
-                        month: "short",
-                        day: "numeric",
-                      })}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </CardContent>
-        </Card>
+                  </ul>
+                )}
+              </CardContent>
+            </Card>
+              </>
+            }
+          />
         </div>
-      </div>
 
-      {/* Right: dove watermark ~35%, vertically centered */}
-      <div className="hidden lg:flex lg:w-[35%] lg:max-w-[35%] lg:min-w-0 items-center justify-center shrink-0 py-8" style={{ backgroundColor: "#FDFBF7" }}>
-        <Link
-          href="/sage"
-          className="flex items-center justify-center transition-[opacity,transform] duration-200 opacity-40 hover:opacity-50 hover:scale-105 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#7B9E87] focus-visible:ring-offset-2 rounded-full"
-          aria-label="Open Sage"
+        {/* Right: dove watermark ~35%, vertically centered */}
+        <div
+          className="hidden lg:flex lg:w-[35%] lg:max-w-[35%] lg:min-w-0 items-center justify-center shrink-0 py-8"
+          style={{ backgroundColor: "#FDFBF7" }}
         >
-          <div style={{ isolation: "isolate" }}>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src="/dove-translucent.png"
-              alt=""
-              className="w-[300px] min-w-[300px] max-w-full h-auto object-contain pointer-events-none select-none"
-              style={{ mixBlendMode: "multiply" }}
-            />
-          </div>
-        </Link>
+          <Link
+            href="/sage"
+            className="flex items-center justify-center transition-[opacity,transform] duration-200 opacity-40 hover:opacity-50 hover:scale-105 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#7B9E87] focus-visible:ring-offset-2 rounded-full"
+            aria-label="Open Sage"
+          >
+            <div style={{ isolation: "isolate" }}>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src="/dove-translucent.png"
+                alt=""
+                className="w-[300px] min-w-[300px] max-w-full h-auto object-contain pointer-events-none select-none"
+                style={{ mixBlendMode: "multiply" }}
+              />
+            </div>
+          </Link>
+        </div>
       </div>
     </div>
   );

@@ -519,13 +519,18 @@ export function SettingsContent({ profile }: SettingsContentProps) {
           subtitle="Preferences for co-parent messaging"
         >
           <div className="space-y-4">
+            {/* Per-user communication preferences */}
             <div className="space-y-2">
-              <Label className="text-xs font-medium text-foreground-secondary">Default pause duration</Label>
+              <Label className="text-xs font-medium text-foreground-secondary">
+                Default pause duration
+              </Label>
               <select
                 value={userSettings?.default_pause_duration ?? "2hours"}
                 onChange={(e) => {
                   const v = e.target.value as "30min" | "2hours" | "until_tomorrow";
-                  setUserSettings((prev) => (prev ? { ...prev, default_pause_duration: v } : null));
+                  setUserSettings((prev) =>
+                    prev ? { ...prev, default_pause_duration: v } : null
+                  );
                   saveUserSetting("default_pause_duration", v);
                 }}
                 className="flex h-9 rounded-md border border-input bg-background px-2 py-1 text-sm w-full max-w-xs"
@@ -542,85 +547,150 @@ export function SettingsContent({ profile }: SettingsContentProps) {
                 checked={userSettings?.send_read_receipts ?? false}
                 onChange={(e) => {
                   const v = e.target.checked;
-                  setUserSettings((prev) => (prev ? { ...prev, send_read_receipts: v } : null));
+                  setUserSettings((prev) =>
+                    prev ? { ...prev, send_read_receipts: v } : null
+                  );
                   saveUserSetting("send_read_receipts", v);
                 }}
                 className="rounded border-input"
               />
-              <Label htmlFor="send_read_receipts" className="text-sm font-normal cursor-pointer">
+              <Label
+                htmlFor="send_read_receipts"
+                className="text-sm font-normal cursor-pointer"
+              >
                 Send read receipts
               </Label>
             </div>
-            <p className="text-xs text-foreground-secondary">Read receipts are visible to your co-parent.</p>
+            <p className="text-xs text-foreground-secondary">
+              Read receipts are visible to your co-parent.
+            </p>
+
+            {/* Case-level communication settings */}
             <div className="border-t border-border pt-4 space-y-4">
-            <div className="space-y-2">
-              <Label className="text-xs font-medium text-foreground-secondary">AI moderation level</Label>
-              <select
-                value={aiLevel === "high" ? "full" : aiLevel === "standard" ? "gentle" : "off"}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  setAiLevel(v === "full" ? "high" : v === "gentle" ? "standard" : "off");
-                }}
-                className="flex h-9 rounded-md border border-input bg-background px-2 py-1 text-sm w-full max-w-xs"
-              >
-                <option value="full">Full</option>
-                <option value="gentle">Gentle</option>
-                <option value="off">Off</option>
-              </select>
-              <p className="text-xs text-foreground-secondary">Applies when App Mode is Coparenting or Solo Coparenting.</p>
-            </div>
-            <div className="space-y-2">
-              <Label className="text-xs font-medium text-foreground-secondary">Message delay (minutes)</Label>
-              <input
-                type="number"
-                min={0}
-                value={messageDelay}
-                onChange={(e) => setMessageDelay(Math.max(0, parseInt(e.target.value, 10) || 0))}
-                className="flex h-9 w-24 rounded-md border border-input bg-background px-2 py-1 text-sm"
-              />
-              <p className="text-xs text-foreground-secondary">Optional delay before messages are delivered.</p>
-            </div>
-            <div className="space-y-2">
-              <Label className="text-xs font-medium text-foreground-secondary">Messaging window</Label>
-              <div className="flex items-center gap-2 flex-wrap">
-                <input
-                  type="time"
-                  value={messagingWindowStart}
-                  onChange={(e) => setMessagingWindowStart(e.target.value)}
-                  className="flex h-9 rounded-md border border-input bg-background px-2 py-1 text-sm"
-                />
-                <span className="text-xs text-foreground-secondary">to</span>
-                <input
-                  type="time"
-                  value={messagingWindowEnd}
-                  onChange={(e) => setMessagingWindowEnd(e.target.value)}
-                  className="flex h-9 rounded-md border border-input bg-background px-2 py-1 text-sm"
-                />
+              {/* 1. AI Moderation */}
+              <div className="space-y-2">
+                <Label className="text-xs font-medium text-foreground-secondary">
+                  Message moderation
+                </Label>
+                <select
+                  value={
+                    aiLevel === "high"
+                      ? "full"
+                      : aiLevel === "standard"
+                        ? "gentle"
+                        : "off"
+                  }
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setAiLevel(
+                      v === "full"
+                        ? "high"
+                        : v === "gentle"
+                          ? "standard"
+                          : "off"
+                    );
+                  }}
+                  className="flex h-9 rounded-md border border-input bg-background px-2 py-1 text-sm w-full max-w-xs"
+                >
+                  <option value="off">Off</option>
+                  <option value="gentle">Gentle</option>
+                  <option value="full">Full</option>
+                </select>
+                <p className="text-xs text-foreground-secondary">
+                  Sage reviews messages before they send. Off: no AI review.
+                  Gentle: Sage suggests rewrites but you can override. Full:
+                  blocks messages that fail tone check.
+                </p>
               </div>
-              <p className="text-xs text-foreground-secondary">Allowed time range for sending messages.</p>
-            </div>
-            <div className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                id="quiet_hours"
-                checked={quietHoursEnabled}
-                onChange={(e) => setQuietHoursEnabled(e.target.checked)}
-                className="rounded border-input"
-              />
-              <Label htmlFor="quiet_hours" className="text-sm font-normal cursor-pointer">
-                Quiet hours (respect messaging window for delivery)
-              </Label>
-            </div>
-            {caseDirty && (
-              <Button
-                size="sm"
-                className="rounded-full h-8 text-xs bg-[#7B9E87] hover:bg-[#6A8A78] text-white"
-                onClick={saveCaseSettings}
-                disabled={settingsSaving}
-              >
-                {settingsSaving ? "Saving…" : "Save"}
-              </Button>
-            )}
+
+              {/* 2. Cool-off delay */}
+              <div className="space-y-2">
+                <Label className="text-xs font-medium text-foreground-secondary">
+                  Cool-off delay
+                </Label>
+                <select
+                  value={
+                    messageDelay === 0
+                      ? "0"
+                      : messageDelay === 5
+                        ? "5"
+                        : messageDelay === 15
+                          ? "15"
+                          : messageDelay === 30
+                            ? "30"
+                            : messageDelay === 60
+                              ? "60"
+                              : "0"
+                  }
+                  onChange={(e) => {
+                    const v = Number(e.target.value);
+                    setMessageDelay(v);
+                  }}
+                  className="flex h-9 rounded-md border border-input bg-background px-2 py-1 text-sm w-full max-w-xs"
+                >
+                  <option value="0">None</option>
+                  <option value="5">5 minutes</option>
+                  <option value="15">15 minutes</option>
+                  <option value="30">30 minutes</option>
+                  <option value="60">1 hour</option>
+                </select>
+                <p className="text-xs text-foreground-secondary">
+                  Add a pause before messages are sent.
+                </p>
+              </div>
+
+              {/* 3. Messaging window */}
+              <div className="space-y-2">
+                <Label className="text-xs font-medium text-foreground-secondary">
+                  Messaging hours
+                </Label>
+                <p className="text-xs text-foreground-secondary">
+                  Only receive co-parent messages during these hours.
+                </p>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id="messaging_hours_enabled"
+                    checked={quietHoursEnabled}
+                    onChange={(e) => setQuietHoursEnabled(e.target.checked)}
+                    className="rounded border-input"
+                  />
+                  <Label
+                    htmlFor="messaging_hours_enabled"
+                    className="text-sm font-normal cursor-pointer"
+                  >
+                    Enable messaging hours
+                  </Label>
+                </div>
+                {quietHoursEnabled && (
+                  <div className="mt-2 flex items-center gap-2 flex-wrap">
+                    <input
+                      type="time"
+                      value={messagingWindowStart}
+                      onChange={(e) => setMessagingWindowStart(e.target.value)}
+                      className="flex h-9 rounded-md border border-input bg-background px-2 py-1 text-sm"
+                    />
+                    <span className="text-xs text-foreground-secondary">to</span>
+                    <input
+                      type="time"
+                      value={messagingWindowEnd}
+                      onChange={(e) => setMessagingWindowEnd(e.target.value)}
+                      className="flex h-9 rounded-md border border-input bg-background px-2 py-1 text-sm"
+                    />
+                  </div>
+                )}
+              </div>
+
+              {caseDirty && (
+                <Button
+                  size="sm"
+                  className="rounded-full h-8 text-xs bg-[#7B9E87] hover:bg-[#6A8A78] text-white"
+                  onClick={saveCaseSettings}
+                  disabled={settingsSaving}
+                >
+                  {settingsSaving ? "Saving…" : "Save"}
+                </Button>
+              )}
             </div>
           </div>
         </CollapsibleCard>

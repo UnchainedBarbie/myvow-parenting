@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { extractPdfText } from "@/lib/pdf-extract";
 
 export const CLASSIFY_PROMPT = `You are an AI assistant for a co-parenting application called MyVow Parenting. Analyze the uploaded file and classify it as one of: document, expense, or event.
 
@@ -301,28 +302,40 @@ export async function runClassify(
       });
       text = response.content[0].type === "text" ? response.content[0].text : "";
     } else if (contentType === PDF_TYPE) {
-      const base64FileData = buf.toString("base64");
-      const response = await anthropic.messages.create({
-        model: "claude-sonnet-4-20250514",
-        max_tokens: 4096,
-        messages: [
-          {
-            role: "user",
-            content: [
-              {
-                type: "document",
-                source: {
-                  type: "base64",
-                  media_type: "application/pdf",
-                  data: base64FileData,
+      const extracted = await extractPdfText(buf);
+      if (extracted && extracted.length > 100) {
+        const truncated = extracted.slice(0, 8000);
+        const textPrompt = `PDF Content:\n${truncated}\n\n${CLASSIFY_PROMPT}`;
+        const response = await anthropic.messages.create({
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 4096,
+          messages: [{ role: "user", content: textPrompt }],
+        });
+        text = response.content[0].type === "text" ? response.content[0].text : "";
+      } else {
+        const base64FileData = buf.toString("base64");
+        const response = await anthropic.messages.create({
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 4096,
+          messages: [
+            {
+              role: "user",
+              content: [
+                {
+                  type: "document",
+                  source: {
+                    type: "base64",
+                    media_type: "application/pdf",
+                    data: base64FileData,
+                  },
                 },
-              },
-              { type: "text", text: CLASSIFY_PROMPT },
-            ],
-          },
-        ],
-      });
-      text = response.content[0].type === "text" ? response.content[0].text : "";
+                { type: "text", text: CLASSIFY_PROMPT },
+              ],
+            },
+          ],
+        });
+        text = response.content[0].type === "text" ? response.content[0].text : "";
+      }
     } else {
       const textPrompt = `Filename: ${fileName}. File type: ${contentType}. Infer classification and suggested fields from the filename. ${CLASSIFY_PROMPT}`;
       const response = await anthropic.messages.create({

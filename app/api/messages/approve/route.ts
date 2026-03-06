@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
 import { estimateIntensity, type IntensityResult } from "@/lib/sage/intensity";
+import { ServerClient, Message, Header } from "postmark";
 
 /**
  * Approve draft and send: insert message (outgoing). Checks cool-off and structured pause.
@@ -146,6 +147,69 @@ export async function POST(request: NextRequest) {
     }
 
     if (conversation_id) {
+      const { data: conv } = await admin
+        .from("conversations")
+        .select("subject, coparent_email, email_thread_id")
+        .eq("id", conversation_id)
+        .single();
+      const { data: caseRow } = await admin
+        .from("cases")
+        .select("ingest_email")
+        .eq("id", case_id)
+        .single();
+      const ingestEmail = (caseRow as { ingest_email?: string | null } | null)?.ingest_email ?? null;
+      const coparentEmail = (conv as { coparent_email?: string | null; subject?: string; email_thread_id?: string | null } | null)?.coparent_email ?? null;
+      const convSubject = (conv as { subject?: string } | null)?.subject ?? "";
+      const emailThreadId = (conv as { email_thread_id?: string | null } | null)?.email_thread_id ?? null;
+
+      if (coparentEmail && ingestEmail) {
+        const token = process.env.POSTMARK_SERVER_TOKEN;
+        if (token) {
+          const messageId = `<msg-${(message as { id: string }).id}@myvow.in>`;
+          const textBody = (ai_rewritten_content ?? original_content ?? "").trim();
+          const subject = emailThreadId ? `Re: ${convSubject}` : convSubject;
+          const headers: { Name: string; Value: string }[] = [
+            { Name: "Message-ID", Value: messageId },
+          ];
+          if (emailThreadId) {
+            headers.push({ Name: "In-Reply-To", Value: emailThreadId });
+            headers.push({ Name: "References", Value: emailThreadId });
+          }
+          try {
+            const client = new ServerClient(token);
+            const emailMessage = new Message(
+              ingestEmail,
+              subject,
+              undefined,
+              textBody,
+              coparentEmail,
+              undefined,
+              undefined,
+              ingestEmail,
+              undefined,
+              undefined,
+              undefined,
+              headers.map((h) => new Header(h.Name, h.Value)),
+              undefined,
+              undefined
+            );
+            await client.sendEmail(emailMessage);
+            await admin
+              .from("messages")
+              .update({ email_message_id: messageId })
+              .eq("id", (message as { id: string }).id);
+            if (!emailThreadId) {
+              await admin
+                .from("conversations")
+                .update({ email_thread_id: messageId })
+                .eq("id", conversation_id);
+            }
+          } catch (err) {
+            console.error("[messages/approve] Postmark send failed:", err);
+          }
+        }
+      }
+
       const now = new Date();
       const tenMinAgo = new Date(now.getTime() - 10 * 60 * 1000).toISOString();
       const sixtyMinAgo = new Date(now.getTime() - 60 * 60 * 1000).toISOString();

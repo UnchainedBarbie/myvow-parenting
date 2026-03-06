@@ -25,7 +25,7 @@ export default async function ProfilePage() {
     .eq("id", user.id)
     .single();
 
-  let children: { id: string; first_name: string; date_of_birth: string | null; member_status: "not_invited" | "invited" | "active"; invited_email: string | null; invited_phone: string | null; case_id?: string | null; profile_image?: string | null }[] = [];
+  let children: { id: string; first_name: string; date_of_birth: string | null; member_status: "not_invited" | "invited" | "active"; invited_email: string | null; invited_phone: string | null; case_id?: string | null; profile_image?: string | null; pin_set_at?: string | null; kid_sage_tone?: string | null }[] = [];
   let courtOrders: CourtOrderRow[] = [];
   let coparent: { id: string | null; name: string; email: string | null; status: "not_invited" | "invited" | "connected" } | null = null;
 
@@ -53,7 +53,7 @@ export default async function ProfilePage() {
     const childrenResult = await admin
       .from("children")
       .select(
-        "id, first_name, date_of_birth, member_status, invited_email, invited_phone, case_id, profile_image"
+        "id, first_name, date_of_birth, member_status, invited_email, invited_phone, case_id, profile_image, pin_set_at, kid_sage_tone"
       )
       .eq("case_id", caseId)
       .is("deleted_at", null)
@@ -66,7 +66,7 @@ export default async function ProfilePage() {
       error: childrenResult.error ?? null,
     });
 
-    const rawChildren = (childrenResult.data ?? []) as { id: string; first_name: string; date_of_birth: string | null; member_status?: string | null; invited_email?: string | null; invited_phone?: string | null; case_id?: string | null; profile_image?: string | null }[];
+    const rawChildren = (childrenResult.data ?? []) as { id: string; first_name: string; date_of_birth: string | null; member_status?: string | null; invited_email?: string | null; invited_phone?: string | null; case_id?: string | null; profile_image?: string | null; pin_set_at?: string | null; kid_sage_tone?: string | null }[];
     children = rawChildren.map((c) => ({
       id: c.id,
       first_name: c.first_name,
@@ -76,6 +76,8 @@ export default async function ProfilePage() {
       invited_phone: c.invited_phone ?? null,
       case_id: c.case_id ?? null,
       profile_image: c.profile_image ?? null,
+      pin_set_at: c.pin_set_at ?? null,
+      kid_sage_tone: c.kid_sage_tone ?? null,
     }));
 
     try {

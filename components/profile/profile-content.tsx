@@ -259,6 +259,9 @@ export function ProfileContent({
   const [familyCode, setFamilyCode] = useState<string | null>(null);
   const [familyCodeLoading, setFamilyCodeLoading] = useState(true);
   const [familyCodeRotating, setFamilyCodeRotating] = useState(false);
+  // My Ingest Email
+  const [ingestEmail, setIngestEmail] = useState<string | null>(null);
+  const [ingestEmailLoading, setIngestEmailLoading] = useState(true);
   // Kids Access modal (Set up access: PIN or Email invite)
   const [kidsAccessModalChild, setKidsAccessModalChild] = useState<ChildRow | null>(null);
   const [kidsAccessPin, setKidsAccessPin] = useState("");
@@ -298,6 +301,19 @@ export function ProfileContent({
         setFamilyCode(data.family_code ?? null);
       })
       .finally(() => { if (!cancelled) setFamilyCodeLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    setIngestEmailLoading(true);
+    fetch("/api/ingest/address")
+      .then((res) => res.json().catch(() => ({})))
+      .then((data: { ingest_email?: string | null }) => {
+        if (cancelled) return;
+        setIngestEmail(data.ingest_email ?? null);
+      })
+      .finally(() => { if (!cancelled) setIngestEmailLoading(false); });
     return () => { cancelled = true; };
   }, []);
 
@@ -1077,6 +1093,41 @@ export function ProfileContent({
               </>
             ) : (
               <p className="text-sm text-foreground-secondary">No family code available. Add a court order or case to get one.</p>
+            )}
+          </div>
+
+          {/* My Ingest Email subsection */}
+          <div className="rounded-card border border-border bg-muted/20 p-3 space-y-2">
+            <p className="text-xs font-medium text-foreground-secondary">My Ingest Email</p>
+            {ingestEmailLoading ? (
+              <p className="text-sm text-foreground-secondary">Loading…</p>
+            ) : ingestEmail ? (
+              <>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-sm font-mono text-foreground break-all">{ingestEmail}</span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 w-7 p-0 text-foreground-secondary hover:text-foreground"
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(ingestEmail);
+                      } catch {
+                        // ignore
+                      }
+                    }}
+                    aria-label="Copy ingest email"
+                  >
+                    <Copy className="h-4 w-4" />
+                  </Button>
+                </div>
+                <p className="text-xs text-foreground-secondary">
+                  Forward emails, receipts, and documents to this address and they&apos;ll appear in your dashboard for review. Share it with your co-parent so their emails come straight into MyVow.
+                </p>
+              </>
+            ) : (
+              <p className="text-sm text-foreground-secondary">Not configured yet.</p>
             )}
           </div>
 

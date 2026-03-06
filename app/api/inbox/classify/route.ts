@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getServiceRoleClient } from "@/lib/supabase/server";
 import Anthropic from "@anthropic-ai/sdk";
+import { extractPdfText } from "@/lib/pdf-extract";
 
 const BUCKET = "inbox";
 
@@ -245,9 +246,9 @@ export async function POST(request: NextRequest) {
         if (isImage(contentType)) {
           const base64FileData = buf.toString("base64");
           const mimeType = contentType as "image/jpeg" | "image/png" | "image/gif" | "image/webp";
-        const response = await anthropic.messages.create({
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 4096,
+          const response = await anthropic.messages.create({
+            model: "claude-sonnet-4-20250514",
+            max_tokens: 4096,
             messages: [
               {
                 role: "user",
@@ -265,40 +266,65 @@ export async function POST(request: NextRequest) {
               },
             ],
           });
-          console.log("[classify] Anthropic response received:", JSON.stringify(response.content[0]).slice(0, 200));
+          console.log(
+            "[classify] Anthropic response received:",
+            JSON.stringify(response.content[0]).slice(0, 200)
+          );
           text = response.content[0].type === "text" ? response.content[0].text : "";
         } else if (contentType === PDF_TYPE) {
-          const base64FileData = buf.toString("base64");
-        const response = await anthropic.messages.create({
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 4096,
-            messages: [
-              {
-                role: "user",
-                content: [
-                  {
-                    type: "document",
-                    source: {
-                      type: "base64",
-                      media_type: "application/pdf",
-                      data: base64FileData,
+          const extracted = await extractPdfText(buf);
+          if (extracted && extracted.length > 100) {
+            const truncated = extracted.slice(0, 8000);
+            const textPrompt = `PDF Content:\n${truncated}\n\n${CLASSIFY_PROMPT}`;
+            const response = await anthropic.messages.create({
+              model: "claude-sonnet-4-20250514",
+              max_tokens: 4096,
+              messages: [{ role: "user", content: textPrompt }],
+            });
+            console.log(
+              "[classify] Anthropic response received (PDF text):",
+              JSON.stringify(response.content[0]).slice(0, 200)
+            );
+            text = response.content[0].type === "text" ? response.content[0].text : "";
+          } else {
+            const base64FileData = buf.toString("base64");
+            const response = await anthropic.messages.create({
+              model: "claude-sonnet-4-20250514",
+              max_tokens: 4096,
+              messages: [
+                {
+                  role: "user",
+                  content: [
+                    {
+                      type: "document",
+                      source: {
+                        type: "base64",
+                        media_type: "application/pdf",
+                        data: base64FileData,
+                      },
                     },
-                  },
-                  { type: "text", text: CLASSIFY_PROMPT },
-                ],
-              },
-            ],
-          });
-          console.log("[classify] Anthropic response received:", JSON.stringify(response.content[0]).slice(0, 200));
-          text = response.content[0].type === "text" ? response.content[0].text : "";
+                    { type: "text", text: CLASSIFY_PROMPT },
+                  ],
+                },
+              ],
+            });
+            console.log(
+              "[classify] Anthropic response received (PDF document):",
+              JSON.stringify(response.content[0]).slice(0, 200)
+            );
+            text = response.content[0].type === "text" ? response.content[0].text : "";
+          }
         } else {
           const textPrompt = `Filename: ${file.name}. File type: ${contentType}. Infer classification and suggested fields from the filename. ${CLASSIFY_PROMPT}`;
-        const response = await anthropic.messages.create({
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 4096,
+          const response = await anthropic.messages.create({
+            model: "claude-sonnet-4-20250514",
+            max_tokens: 4096,
             messages: [{ role: "user", content: textPrompt }],
           });
-          console.log("[classify] Anthropic response received:", JSON.stringify(response.content[0]).slice(0, 200));
+          console.log(
+            "[classify] Anthropic response received:",
+            JSON.stringify(response.content[0]).slice(0, 200)
+          );
           text = response.content[0].type === "text" ? response.content[0].text : "";
         }
       } catch (anthropicError) {

@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { SettingsContent } from "@/components/settings/settings-content";
+import { SubscriptionSection } from "@/components/settings/subscription-section";
 
 export default async function SettingsPage() {
   const supabase = await createClient();
@@ -16,6 +17,12 @@ export default async function SettingsPage() {
         Settings
       </h1>
       <SettingsContent profile={profile} />
+      <div className="mt-8 space-y-3">
+        <h2 className="font-heading text-xl font-semibold text-foreground">
+          Subscription
+        </h2>
+        <SubscriptionSection />
+      </div>
     </div>
   );
 }

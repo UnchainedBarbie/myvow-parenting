@@ -21,8 +21,6 @@ const EXPENSE_CATEGORIES = [
   { value: "other", label: "Other" },
 ] as const;
 
-const EXPENSE_CATEGORY_VALUES = new Set(EXPENSE_CATEGORIES.map((c) => c.value));
-
 const VISIBILITY_OPTIONS = [
   { value: "parents_only", label: "Parents only" },
   { value: "private", label: "Just me" },
@@ -37,14 +35,20 @@ function formatSize(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-/** Map AI category to expense form category (e.g. education -> school). */
-function mapCategory(aiCategory: string | null): string {
-  if (!aiCategory) return "other";
+type ExpenseCategory = "other" | "medical" | "school" | "therapy" |
+  "extracurricular" | "clothing" | "transportation" | "childcare" | "dental";
+
+const VALID_CATEGORIES: ExpenseCategory[] = [
+  "other", "medical", "school", "therapy", "extracurricular",
+  "clothing", "transportation", "childcare", "dental"
+];
+
+function mapAiToCategory(aiCategory: string): ExpenseCategory {
   const lower = aiCategory.toLowerCase();
   if (lower === "education") return "school";
-  return (EXPENSE_CATEGORY_VALUES.has(lower) ? lower : "other") as
-    "other" | "medical" | "school" | "therapy" | "extracurricular" |
-    "clothing" | "transportation" | "childcare" | "dental";
+  return (VALID_CATEGORIES.includes(lower as ExpenseCategory)
+    ? lower
+    : "other") as ExpenseCategory;
 }
 
 type Child = { id: string; first_name: string };
@@ -152,7 +156,7 @@ export function ExpenseForm({
         setAmountSuggested(true);
       }
       if (!categoryTouched && payload.category) {
-        setCategory(mapCategory(payload.category));
+        setCategory(mapAiToCategory(payload.category ?? ""));
         setCategorySuggested(true);
       }
       if (!incurredDate && payload.date) {

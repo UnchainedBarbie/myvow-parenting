@@ -166,7 +166,7 @@ export function DocumentDetailModal({
     async function loadHistory() {
       setLoadingHistory(true);
       try {
-        const res = await fetch(`/api/documents/${doc.id}/history`);
+        const res = await fetch(`/api/documents/${doc?.id ?? ""}/history`);
         if (!res.ok || cancelled) return;
         const data = (await res.json()) as DocumentHistoryEntry[];
         if (!cancelled) setHistory(Array.isArray(data) ? data : []);

@@ -42,7 +42,7 @@ function mapCategory(aiCategory: string | null): string {
   if (!aiCategory) return "other";
   const lower = aiCategory.toLowerCase();
   if (lower === "education") return "school";
-  return EXPENSE_CATEGORY_VALUES.has(lower) ? lower : "other";
+  return EXPENSE_CATEGORY_VALUES.has(lower) ? lower as "other" | "medical" | "school" | "therapy" | "extracurricular" | "clothing" | "transportation" | "childcare" | "dental" : "other";
 }
 
 type Child = { id: string; first_name: string };

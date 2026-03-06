@@ -218,7 +218,8 @@ export default async function CalendarPage({
   }));
 
   const eventIdsInMonth = new Set(events.map((e) => e.id));
-  const toEventRow = (e: (typeof eventsRaw)[number]) => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const toEventRow = (e: any) => {
     const visibility = (e as any).visibility as
       | "family"
       | "parents_only"

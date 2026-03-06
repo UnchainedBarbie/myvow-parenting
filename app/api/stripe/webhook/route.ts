@@ -81,8 +81,8 @@ export async function POST(request: NextRequest) {
               ?.id ??
             null;
           const tier = mapTierFromPriceId(priceId);
-          const periodEnd = subscription.current_period_end
-            ? new Date(subscription.current_period_end * 1000).toISOString()
+          const periodEnd = (subscription as any).current_period_end
+            ? new Date((subscription as any).current_period_end * 1000).toISOString()
             : null;
           const status = subscription.status ?? "active";
           await updateCaseForCustomer(customerId, {
@@ -104,8 +104,8 @@ export async function POST(request: NextRequest) {
           (subscription.items.data[0]?.plan as Stripe.Plan | undefined)?.id ??
           null;
         const tier = mapTierFromPriceId(priceId);
-        const periodEnd = subscription.current_period_end
-          ? new Date(subscription.current_period_end * 1000).toISOString()
+        const periodEnd = (subscription as any).current_period_end
+          ? new Date((subscription as any).current_period_end * 1000).toISOString()
           : null;
         const status = subscription.status ?? "active";
         await updateCaseForCustomer(customerId, {

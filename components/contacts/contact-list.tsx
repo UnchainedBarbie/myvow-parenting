@@ -464,7 +464,6 @@ export function ContactList({ contacts, children }: ContactListProps) {
                         open={roleFilterOpen}
                         onOpenChange={setRoleFilterOpen}
                         active={filterRoles.length > 0}
-                        icon={Filter}
                       />
                     </span>
                   </th>
@@ -480,7 +479,6 @@ export function ContactList({ contacts, children }: ContactListProps) {
                         open={orgFilterOpen}
                         onOpenChange={setOrgFilterOpen}
                         active={filterOrganizations.length > 0}
-                        icon={Filter}
                       />
                     </span>
                   </th>
@@ -497,7 +495,6 @@ export function ContactList({ contacts, children }: ContactListProps) {
                         open={childFilterOpen}
                         onOpenChange={setChildFilterOpen}
                         active={filterChildren.length > 0}
-                        icon={Filter}
                       />
                     </span>
                   </th>

@@ -198,7 +198,7 @@ export async function POST(request: NextRequest) {
         escalation_score: p.escalation_score != null ? String(p.escalation_score) : null,
       }));
       recordCount = msgRows.length + expRows.length + patRows.length;
-      const result = await buildFullReportPdf(msgRows, expRows, patRows, start, end);
+      const result = await buildFullReportPdf(msgRows, expRows, patRows, [], start, end);
       buffer = result.buffer;
       verificationPayload = result.verificationPayload;
     }

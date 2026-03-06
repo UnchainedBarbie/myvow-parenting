@@ -191,7 +191,7 @@ export function EventDetailModal({
       try {
         setLoadingHistory(true);
         const res = await fetch(
-          `/api/calendar/event/history?event_id=${encodeURIComponent(event.id)}`
+          `/api/calendar/event/history?event_id=${encodeURIComponent(event?.id ?? "")}`
         );
         if (!res.ok) {
           setHistory([]);

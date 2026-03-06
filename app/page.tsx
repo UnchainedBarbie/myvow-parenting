@@ -239,7 +239,7 @@ function VowSection() {
             </div>
           </div>
 
-          <div className="hidden md:flex items-center justify-end">
+          <div className="hidden md:flex items-center justify-end" style={{ isolation: "isolate" }}>
             <Image
               src="/dove-translucent.png"
               alt=""
@@ -247,6 +247,7 @@ function VowSection() {
               height={400}
               aria-hidden
               className="w-[320px] lg:w-[380px] opacity-20 mix-blend-multiply select-none"
+              style={{ mixBlendMode: "multiply", filter: "contrast(1.1)" }}
             />
           </div>
         </div>

@@ -469,17 +469,20 @@ export function MyVowClient({ initialVows }: Props) {
               {pinnedVows.length === 0 ? (
                 <div className="rounded-xl border border-[#E4D6BC] bg-[#FBF3E4] px-3 py-3 md:px-4 md:py-4 flex items-start gap-3">
                   <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#E8EDE3]">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src="/dove-translucent.png"
-                      alt="Sage dove"
-                      style={{
-                        width: "20px",
-                        height: "20px",
-                        objectFit: "contain",
-                        display: "block",
-                      }}
-                    />
+                    <div style={{ isolation: "isolate" }}>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src="/dove-translucent.png"
+                        alt="Sage dove"
+                        style={{
+                          width: "20px",
+                          height: "20px",
+                          objectFit: "contain",
+                          display: "block",
+                          mixBlendMode: "multiply",
+                        }}
+                      />
+                    </div>
                   </div>
                   <div className="min-w-0 flex-1">
                     <p className="text-sm md:text-base text-[#6A7A6E]">
@@ -496,17 +499,20 @@ export function MyVowClient({ initialVows }: Props) {
                     >
                       {index === 0 ? (
                         <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#E8EDE3]">
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img
-                            src="/dove-translucent.png"
-                            alt="Sage dove"
-                            style={{
-                              width: "20px",
-                              height: "20px",
-                              objectFit: "contain",
-                              display: "block",
-                            }}
-                          />
+                          <div style={{ isolation: "isolate" }}>
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              src="/dove-translucent.png"
+                              alt="Sage dove"
+                              style={{
+                                width: "20px",
+                                height: "20px",
+                                objectFit: "contain",
+                                display: "block",
+                                mixBlendMode: "multiply",
+                              }}
+                            />
+                          </div>
                         </div>
                       ) : (
                         <div className="mt-0.5 h-8 w-8 shrink-0" aria-hidden />

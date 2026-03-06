@@ -1490,7 +1490,7 @@ export function MessagesSplitView({
                 )}
               </ScrollArea>
 
-              <div className="border-t border-[#E8E4DC] bg-white px-4 py-3 space-y-2">
+              <div className="border-t border-[#E8E4DC] bg-transparent px-4 py-3 space-y-2">
                 {draftIntensityFlag && showDraftNudge && composeText.trim() && (
                   <div className="flex justify-end">
                     <button
@@ -1683,17 +1683,20 @@ export function MessagesSplitView({
                       padding: 0,
                     }}
                   >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src="/dove-translucent.png"
-                      alt="Sage"
-                      style={{
-                        width: "30px",
-                        height: "30px",
-                        objectFit: "contain",
-                        display: "block",
-                      }}
-                    />
+                    <div style={{ isolation: "isolate" }}>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src="/dove-translucent.png"
+                        alt="Sage"
+                        style={{
+                          width: "30px",
+                          height: "30px",
+                          objectFit: "contain",
+                          display: "block",
+                          mixBlendMode: "multiply",
+                        }}
+                      />
+                    </div>
                   </button>
                   <Textarea
                     value={composeText}
@@ -2488,9 +2491,9 @@ export function MessagesSplitView({
             }
           }}
         >
-          <div className="h-full w-full max-w-[480px] bg-white/95 shadow-card border-l border-[#E8E4DC] flex flex-col animate-[sageDrawer_200ms_ease-out_forwards]">
+          <div className="h-full w-full max-w-[480px] bg-transparent shadow-card border-l border-[#E8E4DC] flex flex-col animate-[sageDrawer_200ms_ease-out_forwards]">
             {/* Header with privacy line (sticky) */}
-              <div className="border-b border-[#E8E4DC] bg-white sticky top-0 z-10">
+              <div className="border-b border-[#E8E4DC] bg-transparent sticky top-0 z-10">
               <div className="flex items-center justify-between px-4 pt-3 pb-2">
                 <div className="flex items-center gap-2">
                   <div
@@ -2504,17 +2507,20 @@ export function MessagesSplitView({
                       justifyContent: "center",
                     }}
                   >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src="/dove-translucent.png"
-                      alt="Sage"
-                      style={{
-                        width: "34px",
-                        height: "34px",
-                        objectFit: "contain",
-                        display: "block",
-                      }}
-                    />
+                    <div style={{ isolation: "isolate" }}>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src="/dove-translucent.png"
+                        alt="Sage"
+                        style={{
+                          width: "34px",
+                          height: "34px",
+                          objectFit: "contain",
+                          display: "block",
+                          mixBlendMode: "multiply",
+                        }}
+                      />
+                    </div>
                   </div>
                   <div>
                     <p className="text-sm font-semibold text-[#3D3D3D]">Sage</p>
@@ -2575,17 +2581,20 @@ export function MessagesSplitView({
                             justifyContent: "center",
                           }}
                         >
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img
-                            src="/dove-translucent.png"
-                            alt="Sage"
-                            style={{
-                              width: "18px",
-                              height: "18px",
-                              objectFit: "contain",
-                              display: "block",
-                            }}
-                          />
+                          <div style={{ isolation: "isolate" }}>
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              src="/dove-translucent.png"
+                              alt="Sage"
+                              style={{
+                                width: "18px",
+                                height: "18px",
+                                objectFit: "contain",
+                                display: "block",
+                                mixBlendMode: "multiply",
+                              }}
+                            />
+                          </div>
                         </div>
                       ) : currentUserAvatarUrl ? (
                         // eslint-disable-next-line @next/next/no-img-element

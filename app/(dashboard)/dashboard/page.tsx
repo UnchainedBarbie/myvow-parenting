@@ -473,15 +473,14 @@ export default async function DashboardPage() {
         />
 
         {/* Quick actions */}
-        <div className="grid gap-4 lg:grid-cols-2 items-start">
-          <Card className="shadow-card border-border rounded-card">
-            <CardHeader className="pb-2 px-4 pt-4">
-              <CardTitle className="font-heading text-lg text-foreground">
-                Quick actions
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="px-4 pb-4">
-              <div className="flex flex-wrap gap-2">
+        <Card className="shadow-card border-border rounded-card">
+          <CardHeader className="pb-2 px-4 pt-4">
+            <CardTitle className="font-heading text-lg text-foreground">
+              Quick actions
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="px-4 pb-4">
+            <div className="flex flex-row flex-wrap gap-2">
                 <Button
                   asChild
                   size="sm"
@@ -512,8 +511,7 @@ export default async function DashboardPage() {
                 </Button>
               </div>
             </CardContent>
-          </Card>
-        </div>
+        </Card>
 
         {/* Today: events */}
         <Card className="rounded-card border border-[#E8E4DC] bg-[#FDFBF7]">
@@ -595,6 +593,33 @@ export default async function DashboardPage() {
           </CardContent>
         </Card>
 
+        {/* Review */}
+        <Card className="shadow-card border-border rounded-card">
+          <CardHeader className="pb-2 px-4 pt-4 flex items-center justify-between gap-2">
+            <CardTitle className="font-heading text-lg text-foreground">
+              Review
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="px-4 pb-4 space-y-3">
+            {uploadsCount === 0 ? (
+              <p className="text-sm text-foreground-secondary">All caught up.</p>
+            ) : (
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-sm text-foreground-secondary">
+                  {uploadsCount} item{uploadsCount > 1 ? "s" : ""} to review
+                </p>
+                <Button
+                  asChild
+                  size="sm"
+                  className="rounded-full h-8 text-xs bg-[#7B9E87] hover:bg-[#6A8A78] text-white"
+                >
+                  <Link href="/uploads/review">Review now</Link>
+                </Button>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
         {/* Recent activity */}
         <Card className="shadow-card border-border rounded-card">
           <CardHeader className="pb-2 px-4 pt-4">
@@ -645,49 +670,25 @@ export default async function DashboardPage() {
             )}
           </CardContent>
         </Card>
-
-        {/* Review */}
-        <Card className="shadow-card border-border rounded-card">
-          <CardHeader className="pb-2 px-4 pt-4 flex items-center justify-between gap-2">
-            <CardTitle className="font-heading text-lg text-foreground">
-              Review
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="px-4 pb-4 space-y-3">
-            {uploadsCount === 0 ? (
-              <p className="text-sm text-foreground-secondary">All caught up.</p>
-            ) : (
-              <div className="flex items-center justify-between gap-3">
-                <p className="text-sm text-foreground-secondary">
-                  {uploadsCount} item{uploadsCount > 1 ? "s" : ""} to review
-                </p>
-                <Button
-                  asChild
-                  size="sm"
-                  className="rounded-full h-8 text-xs bg-[#7B9E87] hover:bg-[#6A8A78] text-white"
-                >
-                  <Link href="/uploads/review">Review now</Link>
-                </Button>
-              </div>
-            )}
-          </CardContent>
-        </Card>
         </div>
       </div>
 
       {/* Right: dove watermark ~35%, vertically centered */}
-      <div className="hidden lg:flex lg:w-[35%] lg:max-w-[35%] lg:min-w-0 items-center justify-center shrink-0 py-8">
+      <div className="hidden lg:flex lg:w-[35%] lg:max-w-[35%] lg:min-w-0 items-center justify-center shrink-0 py-8" style={{ backgroundColor: "#FDFBF7" }}>
         <Link
-          href="/dashboard/sage"
-          className="flex items-center justify-center transition-[opacity,transform] duration-200 opacity-[0.18] hover:opacity-30 hover:scale-105 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#7B9E87] focus-visible:ring-offset-2 rounded-full"
+          href="/sage"
+          className="flex items-center justify-center transition-[opacity,transform] duration-200 opacity-40 hover:opacity-50 hover:scale-105 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#7B9E87] focus-visible:ring-offset-2 rounded-full"
           aria-label="Open Sage"
         >
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src="/dove-translucent.png"
-            alt=""
-            className="w-full max-w-[240px] h-auto object-contain pointer-events-none select-none"
-          />
+          <div style={{ isolation: "isolate" }}>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/dove-translucent.png"
+              alt=""
+              className="w-[300px] min-w-[300px] max-w-full h-auto object-contain pointer-events-none select-none"
+              style={{ mixBlendMode: "multiply" }}
+            />
+          </div>
         </Link>
       </div>
     </div>

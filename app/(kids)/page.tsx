@@ -113,7 +113,7 @@ export default function KidsHomePage() {
 
             <Card
               className="min-h-[120px] cursor-pointer rounded-2xl border border-[#E8E4DC] bg-white px-4 py-3 shadow-sm hover:bg-[#F2F5EF] transition-colors flex flex-col justify-center"
-              onClick={() => router.push("/kids/documents")}
+              onClick={() => router.push("/kids-documents")}
             >
               <div className="text-2xl mb-1">📁</div>
               <div className="text-sm font-semibold text-[#3D3D3D]">
@@ -139,7 +139,7 @@ export default function KidsHomePage() {
 
             <Card
               className="min-h-[120px] cursor-pointer rounded-2xl border border-[#E8E4DC] bg-white px-4 py-3 shadow-sm hover:bg-[#F2F5EF] transition-colors flex flex-col justify-center"
-              onClick={() => router.push("/kids/sage")}
+              onClick={() => router.push("/kids-sage")}
             >
               <div className="text-2xl mb-1">🕊️</div>
               <div className="text-sm font-semibold text-[#3D3D3D]">

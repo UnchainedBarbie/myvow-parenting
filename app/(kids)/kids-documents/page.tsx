@@ -107,9 +107,7 @@ export default function KidsDocumentsPage() {
         </div>
         <div className="px-4 py-3 space-y-2 max-h-[420px] overflow-y-auto">
           {loading ? (
-            <p className="text-sm text-foreground-secondary">
-              Loading…
-            </p>
+            <p className="text-sm text-foreground-secondary">Loading…</p>
           ) : error ? (
             <p className="text-sm text-alert">{error}</p>
           ) : docs.length === 0 ? (

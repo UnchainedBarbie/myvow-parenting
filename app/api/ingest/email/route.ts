@@ -586,7 +586,7 @@ export async function POST(req: NextRequest) {
             source_type: "email",
             status: "pending",
             subject: subject || null,
-            coparent_email: fromEmail ?? fromRaw || null,
+            coparent_email: (fromEmail ?? fromRaw) || null,
             raw_content: {
               from: fromRaw || fromEmail || null,
               subject,
@@ -643,7 +643,7 @@ export async function POST(req: NextRequest) {
         source_type: "email",
         status: "pending",
         subject: subject || null,
-        coparent_email: fromEmail ?? fromRaw || null,
+        coparent_email: (fromEmail ?? fromRaw) || null,
         item_type: classification.item_type,
         suggested_category: classification.suggested_category,
         summary: classification.summary,

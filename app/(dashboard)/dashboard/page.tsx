@@ -206,11 +206,11 @@ export default async function DashboardPage() {
     (childrenRaw ?? []).reduce((acc, c) => {
       acc[c.id] = {
         first_name: c.first_name as string,
-        date_of_birth: (c.date_of_birth as string | null) ?? null,
-        profile_image: (c.profile_image as string | null) ?? null,
+        date_of_birth: c.date_of_birth as string | null,
+        profile_image: (c as any).profile_image as string | null ?? null,
       };
       return acc;
-    }, {} as Record<string, { first_name: string; date_of_birth: string | null }>);
+    }, {} as Record<string, { first_name: string; date_of_birth: string | null; profile_image: string | null }>);
 
   const todayEvents: TodayEvent[] = (todayEventsRaw ?? []).map((e) => ({
     id: e.id as string,

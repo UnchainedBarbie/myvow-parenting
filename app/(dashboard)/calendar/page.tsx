@@ -99,11 +99,11 @@ export default async function CalendarPage({
     .is("deleted_at", null)
     .order("start_time", { ascending: true });
 
-  const childIds = [
-    ...new Set(
+  const childIds = Array.from(
+    new Set(
       (eventsRaw ?? []).map((e) => e.child_id).filter(Boolean)
-    ),
-  ] as string[];
+    )
+  ) as string[];
   const { data: childRows } =
     childIds.length > 0
       ? await admin.from("children").select("id, first_name, profile_image").in("id", childIds)

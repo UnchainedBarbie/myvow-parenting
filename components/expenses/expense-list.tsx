@@ -394,6 +394,7 @@ export function ExpenseList({
           ? formatDate((exp as any).paid_at as string)
           : "";
         const paymentRef = (exp as any).payment_reference ?? "";
+        const splitLabel = (exp as any).split_label ?? "";
         return [
           idLabel,
           exp.description ?? "",

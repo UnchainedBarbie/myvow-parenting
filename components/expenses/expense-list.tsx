@@ -607,10 +607,10 @@ export function ExpenseList({
     setEndDate("");
   }
 
-  const dateFilterValue: DateFilterValue = {
-    startDate: startDate || null,
-    endDate: endDate || null,
-  };
+const dateFilterValue: DateFilterValue = {
+  startDate: startDate || "",
+  endDate: endDate || "",
+};
 
   const categoryFilterOptions = [
     { value: "medical", label: "Medical" },

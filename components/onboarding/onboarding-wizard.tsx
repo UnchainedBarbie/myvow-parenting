@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { Upload, Check } from "lucide-react";
+import { CustodyScheduleSetup } from "@/components/custody/CustodyScheduleSetup";
 
 const APP_MODES = [
   { value: "solo", label: "Solo", description: "Parenting on your own" },
@@ -524,6 +525,13 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
                 Choose file
               </Label>
             </div>
+
+            {(effectiveMode === "coparenting" || effectiveMode === "solo_coparenting") && caseId && (
+              <div className="pt-2">
+                <CustodyScheduleSetup caseId={caseId} compact />
+              </div>
+            )}
+
             <div className="flex flex-col gap-3">
               <Button
                 type="button"

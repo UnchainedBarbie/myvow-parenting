@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { CalendarMonth, type CalendarEventRow } from "@/components/calendar/calendar-month";
 import { UpcomingEventsList } from "@/components/calendar/upcoming-events-list";
 import { EventDetailModal } from "@/components/calendar/event-detail-modal";
+import type { CustodySchedule } from "@/lib/custody";
 
 type Child = { id: string; first_name: string };
 
@@ -24,6 +25,14 @@ interface CalendarRootProps {
   /** Merged list (month + full upcoming) so clicking any upcoming row can resolve the event for the modal. */
   eventsForModal: CalendarEventRow[];
   children: Child[];
+  /** When false, hide the Upcoming Events section (e.g. in List view). Default true. */
+  showUpcoming?: boolean;
+  /** Optional: use for header/nav when events span a wide range (e.g. list view). */
+  year?: number;
+  month?: number;
+  custodySchedule?: CustodySchedule | null;
+  appMode?: string | null;
+  userId?: string;
 }
 
 export function CalendarRoot({
@@ -32,12 +41,22 @@ export function CalendarRoot({
   upcoming,
   eventsForModal,
   children,
+  showUpcoming = true,
+  year: yearProp,
+  month: monthProp,
+  custodySchedule = null,
+  appMode = null,
+  userId = "",
 }: CalendarRootProps) {
   const router = useRouter();
   const [selectedEvent, setSelectedEvent] = useState<CalendarEventRow | null>(
     null
   );
   const [modalOpen, setModalOpen] = useState(false);
+
+  const fallbackDate = events[0]?.start_time ?? Date.now();
+  const year = yearProp ?? new Date(fallbackDate).getFullYear();
+  const month = monthProp ?? new Date(fallbackDate).getMonth() + 1;
 
   function handleEventClick(ev: CalendarEventRow) {
     setSelectedEvent(ev);
@@ -53,22 +72,27 @@ export function CalendarRoot({
     <>
       <div className="flex w-full min-w-0 flex-col gap-1.5">
         <CalendarMonth
-          year={new Date(events[0]?.start_time ?? Date.now()).getFullYear()}
-          month={new Date(events[0]?.start_time ?? Date.now()).getMonth() + 1}
+          year={year}
+          month={month}
           events={events}
           caseId={caseId}
           children={children}
           onEventClick={handleEventClick}
           onRefresh={() => router.refresh()}
+          custodySchedule={custodySchedule}
+          appMode={appMode}
+          userId={userId}
         />
-        <UpcomingEventsList
-          caseId={caseId}
-          upcoming={upcoming}
-          events={eventsForModal}
-          children={children}
-          onEventClick={handleEventClick}
-          onRefresh={() => router.refresh()}
-        />
+        {showUpcoming && (
+          <UpcomingEventsList
+            caseId={caseId}
+            upcoming={upcoming}
+            events={eventsForModal}
+            children={children}
+            onEventClick={handleEventClick}
+            onRefresh={() => router.refresh()}
+          />
+        )}
       </div>
       <EventDetailModal
         open={modalOpen && !!selectedEvent}

@@ -1,11 +1,20 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 
+import { CalendarExportButton } from "@/components/calendar/calendar-export-button";
 import { getCalendarEventColors } from "@/lib/categoryColors";
+import {
+  computeCustodyForDate,
+  getStoredCustodyOverlay,
+  setStoredCustodyOverlay,
+  type CustodySchedule,
+  type HolidayCustodyOverride,
+} from "@/lib/custody";
 
 const EVENT_TYPE_LABELS: Record<string, string> = {
   medical: "Medical",
@@ -44,6 +53,9 @@ interface CalendarMonthProps {
   children: { id: string; first_name: string }[];
   onRefresh?: () => void;
   onEventClick?: (event: CalendarEventRow) => void;
+  custodySchedule?: CustodySchedule | null;
+  appMode?: string | null;
+  userId?: string;
 }
 
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -64,14 +76,115 @@ export function CalendarMonth({
   children,
   onRefresh,
   onEventClick,
+  custodySchedule = null,
+  appMode = null,
+  userId = "",
 }: CalendarMonthProps) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [ownerFilter, setOwnerFilter] = useState<"all" | "mine" | "shared">(
     "all"
   );
   const [categoryFilter, setCategoryFilter] = useState<"all" | string>("all");
   const [conflictsOnly, setConflictsOnly] = useState(false);
-  const [viewMode, setViewMode] = useState<"month" | "list">("month");
+  const [dateRangeFilter, setDateRangeFilter] = useState<
+    "all" | "past7" | "past30" | "past90" | "this_month" | "last_month" | "custom"
+  >("all");
+  const [customFrom, setCustomFrom] = useState("");
+  const [customTo, setCustomTo] = useState("");
+  const hasCustodySchedule = !!custodySchedule;
+  const isManualSchedule = custodySchedule?.schedule_type === "manual";
+  const [custodyOverlayOn, setCustodyOverlayOn] = useState(() =>
+    getStoredCustodyOverlay(appMode ?? null, hasCustodySchedule)
+  );
+  const [holidayOverrides, setHolidayOverrides] = useState<HolidayCustodyOverride[]>([]);
+  const [dayOverrides, setDayOverrides] = useState<Record<string, string>>({});
+  const [custodyTapTooltipDismissed, setCustodyTapTooltipDismissed] = useState(() =>
+    typeof window !== "undefined" && localStorage.getItem("myvow_custody_tap_tooltip") === "dismissed"
+  );
+  useEffect(() => {
+    setCustodyOverlayOn(getStoredCustodyOverlay(appMode ?? null, hasCustodySchedule));
+  }, [appMode, hasCustodySchedule]);
+  useEffect(() => {
+    if (!custodyOverlayOn || !caseId) return;
+    fetch("/api/holiday-custody")
+      .then((r) => r.ok ? r.json() : [])
+      .then((rows: { start_date: string; end_date: string; custodial_parent: string }[]) => {
+        setHolidayOverrides(rows);
+      })
+      .catch(() => setHolidayOverrides([]));
+  }, [custodyOverlayOn, caseId]);
+  useEffect(() => {
+    if (!isManualSchedule || !caseId) return;
+    fetch("/api/custody-day-overrides")
+      .then((r) => r.ok ? r.json() : [])
+      .then((rows: { date: string; custodial_parent: string }[]) => {
+        const map: Record<string, string> = {};
+        for (const row of rows ?? []) {
+          if (row.date) map[row.date] = row.custodial_parent ?? "";
+        }
+        setDayOverrides(map);
+      })
+      .catch(() => setDayOverrides({}));
+  }, [isManualSchedule, caseId]);
+  function getCustodyForDate(date: Date): "user" | "coparent" {
+    return computeCustodyForDate(date, custodySchedule ?? null, {
+      holidayOverrides,
+      currentUserId: userId || undefined,
+    });
+  }
+  function getManualCustodyForDate(date: Date): "user" | "coparent" | null {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, "0");
+    const d = String(date.getDate()).padStart(2, "0");
+    const dateStr = `${y}-${m}-${d}`;
+    const val = dayOverrides[dateStr];
+    if (val == null || val === "") return null;
+    if (val === "neither") return null;
+    if (val === userId) return "user";
+    return "coparent";
+  }
+  function handleManualDayClick(dateStr: string, e?: React.MouseEvent) {
+    if (!isManualSchedule || !userId) return;
+    if (e) {
+      const target = e.target as HTMLElement;
+      if (target.closest("button") || target.closest("ul")) return;
+    }
+    const current = dayOverrides[dateStr];
+    const next =
+      current == null || current === ""
+        ? userId
+        : current === userId
+          ? "coparent"
+          : current === "coparent"
+            ? "neither"
+            : null;
+    setDayOverrides((prev) => {
+      const nextMap = { ...prev };
+      if (next == null) delete nextMap[dateStr];
+      else nextMap[dateStr] = next;
+      return nextMap;
+    });
+    if (next == null) {
+      fetch(`/api/custody-day-overrides?date=${encodeURIComponent(dateStr)}`, { method: "DELETE" }).catch(() => {
+        setDayOverrides((prev) => ({ ...prev, [dateStr]: current ?? "" }));
+      });
+    } else {
+      fetch("/api/custody-day-overrides", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ date: dateStr, custodial_parent: next }),
+      }).catch(() => {
+        setDayOverrides((prev) => ({ ...prev, [dateStr]: current ?? "" }));
+      });
+    }
+  }
+  function dismissCustodyTapTooltip() {
+    setCustodyTapTooltipDismissed(true);
+    if (typeof window !== "undefined") localStorage.setItem("myvow_custody_tap_tooltip", "dismissed");
+  }
+  const viewMode: "month" | "list" =
+    searchParams.get("view") === "list" ? "list" : "month";
   const first = new Date(year, month - 1, 1);
   const last = new Date(year, month, 0);
   const startPad = first.getDay();
@@ -86,12 +199,96 @@ export function CalendarMonth({
     );
   }, [viewMode]);
 
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+  function getDateRangeBounds(): { start: Date; end: Date } | null {
+    if (dateRangeFilter === "all") return null;
+    const end = new Date(startOfToday);
+    end.setHours(23, 59, 59, 999);
+    if (dateRangeFilter === "past7") {
+      const start = new Date(end);
+      start.setDate(start.getDate() - 6);
+      start.setHours(0, 0, 0, 0);
+      return { start, end };
+    }
+    if (dateRangeFilter === "past30") {
+      const start = new Date(end);
+      start.setDate(start.getDate() - 29);
+      start.setHours(0, 0, 0, 0);
+      return { start, end };
+    }
+    if (dateRangeFilter === "past90") {
+      const start = new Date(end);
+      start.setDate(start.getDate() - 89);
+      start.setHours(0, 0, 0, 0);
+      return { start, end };
+    }
+    if (dateRangeFilter === "this_month") {
+      const start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+      const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+      return { start, end: lastDay };
+    }
+    if (dateRangeFilter === "last_month") {
+      const start = new Date(now.getFullYear(), now.getMonth() - 1, 1, 0, 0, 0, 0);
+      const lastDay = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
+      return { start, end: lastDay };
+    }
+    if (dateRangeFilter === "custom" && customFrom && customTo && /^\d{4}-\d{2}-\d{2}$/.test(customFrom) && /^\d{4}-\d{2}-\d{2}$/.test(customTo)) {
+      const [sy, sm, sd] = customFrom.split("-").map(Number);
+      const [ey, em, ed] = customTo.split("-").map(Number);
+      const start = new Date(sy, sm - 1, sd, 0, 0, 0, 0);
+      const end = new Date(ey, em - 1, ed, 23, 59, 59, 999);
+      if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return null;
+      return { start, end };
+    }
+    return null;
+  }
+
+  const dateRangeBounds = getDateRangeBounds();
+  const hasActiveFilters =
+    ownerFilter !== "all" ||
+    categoryFilter !== "all" ||
+    conflictsOnly ||
+    dateRangeFilter !== "all";
+  function clearAllFilters() {
+    setOwnerFilter("all");
+    setCategoryFilter("all");
+    setConflictsOnly(false);
+    setDateRangeFilter("all");
+    setCustomFrom("");
+    setCustomTo("");
+  }
+  function getFilterDescription(): string {
+    const parts: string[] = [];
+    if (ownerFilter !== "all") {
+      parts.push(ownerFilter === "mine" ? "My events" : "Shared events");
+    }
+    if (categoryFilter !== "all") {
+      parts.push(EVENT_TYPE_LABELS[categoryFilter] ?? categoryFilter);
+    }
+    if (conflictsOnly) parts.push("Conflicts only");
+    if (viewMode === "list" && dateRangeFilter !== "all") {
+      if (dateRangeFilter === "past7") parts.push("Past 7 days");
+      else if (dateRangeFilter === "past30") parts.push("Past 30 days");
+      else if (dateRangeFilter === "past90") parts.push("Past 90 days");
+      else if (dateRangeFilter === "this_month") parts.push("This month");
+      else if (dateRangeFilter === "last_month") parts.push("Last month");
+      else if (dateRangeFilter === "custom" && customFrom && customTo) {
+        parts.push(`${customFrom} to ${customTo}`);
+      } else if (dateRangeFilter === "custom") parts.push("Custom");
+    }
+    return parts.join(" · ");
+  }
   const filteredEvents = events.filter((e) => {
     if (ownerFilter === "mine" && !e.isMine) return false;
     if (ownerFilter === "shared" && e.isPrivate) return false;
     if (categoryFilter !== "all" && e.event_type !== categoryFilter)
       return false;
     if (conflictsOnly && e.status !== "conflict") return false;
+    if (viewMode === "list" && dateRangeBounds) {
+      const d = new Date(e.start_time).getTime();
+      if (d < dateRangeBounds.start.getTime() || d > dateRangeBounds.end.getTime()) return false;
+    }
     return true;
   });
 
@@ -103,9 +300,32 @@ export function CalendarMonth({
     eventsByDay[key].push(e);
   }
 
+  function buildViewHref(nextView: "month" | "list") {
+    const params = new URLSearchParams();
+    params.set("year", String(year));
+    params.set("month", String(month));
+    const from = searchParams.get("from");
+    const to = searchParams.get("to");
+    if (from) params.set("from", from);
+    if (to) params.set("to", to);
+    if (nextView === "list") params.set("view", "list");
+    return `/calendar?${params.toString()}`;
+  }
+
+  const monthHref = buildViewHref("month");
+  const listHref = buildViewHref("list");
+
   function goMonth(delta: number) {
     const next = new Date(year, month - 1 + delta, 1);
-    router.push(`/calendar?year=${next.getFullYear()}&month=${next.getMonth() + 1}`);
+    const params = new URLSearchParams();
+    params.set("year", String(next.getFullYear()));
+    params.set("month", String(next.getMonth() + 1));
+    if (viewMode === "list") params.set("view", "list");
+    const from = searchParams.get("from");
+    const to = searchParams.get("to");
+    if (from) params.set("from", from);
+    if (to) params.set("to", to);
+    router.push(`/calendar?${params.toString()}`);
   }
 
   const monthName = first.toLocaleDateString("en-US", {
@@ -165,9 +385,8 @@ export function CalendarMonth({
           <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-foreground-secondary">
             <div className="flex items-center gap-2">
               <div className="inline-flex rounded-full border border-border bg-background-secondary/60 p-0.5">
-                <button
-                  type="button"
-                  onClick={() => setViewMode("month")}
+                <Link
+                  href={monthHref}
                   className={cn(
                     "px-3 py-1 text-xs rounded-full",
                     isMonthView
@@ -176,10 +395,9 @@ export function CalendarMonth({
                   )}
                 >
                   Month
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setViewMode("list")}
+                </Link>
+                <Link
+                  href={listHref}
                   className={cn(
                     "px-3 py-1 text-xs rounded-full",
                     !isMonthView
@@ -188,10 +406,43 @@ export function CalendarMonth({
                   )}
                 >
                   List
-                </button>
+                </Link>
+                <Link
+                  href={`/calendar?view=year&year=${year}`}
+                  className="px-3 py-1 text-xs rounded-full text-foreground-secondary hover:text-foreground"
+                >
+                  Year
+                </Link>
               </div>
+              {hasCustodySchedule && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = !custodyOverlayOn;
+                    setCustodyOverlayOn(next);
+                    setStoredCustodyOverlay(next);
+                  }}
+                  className={cn(
+                    "rounded-full px-3 py-1 text-xs font-medium border transition-colors",
+                    custodyOverlayOn
+                      ? "bg-[#7B9E87] border-[#7B9E87] text-white"
+                      : "border-border text-foreground-secondary bg-background hover:bg-muted hover:text-foreground"
+                  )}
+                >
+                  Custody
+                </button>
+              )}
             </div>
             <div className="flex flex-wrap items-center gap-2">
+              {!isMonthView && hasActiveFilters && (
+                <button
+                  type="button"
+                  onClick={clearAllFilters}
+                  className="text-sm text-foreground-secondary hover:text-foreground transition-colors"
+                >
+                  Clear filters ×
+                </button>
+              )}
               <select
                 value={ownerFilter}
                 onChange={(e) =>
@@ -229,12 +480,79 @@ export function CalendarMonth({
               >
                 Conflicts only
               </button>
+              {!isMonthView && (
+                <>
+                  <select
+                    value={dateRangeFilter}
+                    onChange={(e) =>
+                      setDateRangeFilter(
+                        e.target.value as
+                          | "all"
+                          | "past7"
+                          | "past30"
+                          | "past90"
+                          | "this_month"
+                          | "last_month"
+                          | "custom"
+                      )
+                    }
+                    className="h-8 rounded-card border border-border bg-background px-2"
+                  >
+                    <option value="all">All dates</option>
+                    <option value="past7">Past 7 days</option>
+                    <option value="past30">Past 30 days</option>
+                    <option value="past90">Past 90 days</option>
+                    <option value="this_month">This month</option>
+                    <option value="last_month">Last month</option>
+                    <option value="custom">Custom</option>
+                  </select>
+                  {dateRangeFilter === "custom" && (
+                    <span className="inline-flex items-center gap-1.5">
+                      <input
+                        type="date"
+                        value={customFrom}
+                        onChange={(e) => setCustomFrom(e.target.value)}
+                        className="h-8 rounded-card border border-border bg-background px-2 text-xs"
+                        placeholder="From"
+                      />
+                      <span className="text-foreground-secondary">to</span>
+                      <input
+                        type="date"
+                        value={customTo}
+                        onChange={(e) => setCustomTo(e.target.value)}
+                        className="h-8 rounded-card border border-border bg-background px-2 text-xs"
+                        placeholder="To"
+                      />
+                    </span>
+                  )}
+                </>
+              )}
+              <CalendarExportButton
+                view={viewMode}
+                year={year}
+                month={month}
+                events={filteredEvents}
+                filterDescription={getFilterDescription() || undefined}
+              />
             </div>
           </div>
         </CardHeader>
         <CardContent className="pt-0.5">
           {viewMode === "month" ? (
             <>
+              {isManualSchedule && custodyOverlayOn && !custodyTapTooltipDismissed && (
+                <p className="text-xs text-foreground-secondary mb-2 flex items-center justify-between gap-2">
+                  <span>Tap a day to mark custody</span>
+                  <button
+                    type="button"
+                    onClick={dismissCustodyTapTooltip}
+                    className="text-foreground-secondary hover:text-foreground shrink-0"
+                    aria-label="Dismiss"
+                  >
+                    ×
+                  </button>
+                </p>
+              )}
               <div className="grid grid-cols-7 gap-px rounded-card border border-gray-300 bg-gray-300">
                 {DAYS.map((day) => (
                   <div
@@ -250,16 +568,43 @@ export function CalendarMonth({
                     year === todayYear &&
                     month === todayMonth &&
                     day === todayDate;
+                  const dateForCustody = key ? new Date(key + "T12:00:00") : null;
+                  const custodyBg =
+                    custodyOverlayOn &&
+                    hasCustodySchedule &&
+                    key
+                      ? isManualSchedule
+                        ? (() => {
+                            const manual = getManualCustodyForDate(dateForCustody!);
+                            return manual === "user" ? "bg-green-50" : manual === "coparent" ? "bg-stone-100" : null;
+                          })()
+                        : getCustodyForDate(dateForCustody!) === "user"
+                          ? "bg-green-50"
+                          : "bg-stone-100"
+                      : null;
                   return (
                   <div
                     key={i}
+                    role={isManualSchedule && day != null ? "button" : undefined}
+                    tabIndex={isManualSchedule && day != null ? 0 : undefined}
+                    onClick={isManualSchedule && key ? (e) => handleManualDayClick(key, e) : undefined}
+                    onKeyDown={
+                      isManualSchedule && key
+                        ? (e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              handleManualDayClick(key);
+                            }
+                          }
+                        : undefined
+                    }
                     className={cn(
                       "min-h-[100px] border-r border-b border-gray-300 p-1.5",
                       !day && "bg-background-secondary/30",
-                      day != null && !isToday && "bg-background",
-                      day != null &&
-                        isToday &&
-                        "bg-[#EBE9E6]"
+                      day != null && !isToday && !custodyBg && "bg-background",
+                      day != null && isToday && !custodyBg && "bg-[#EBE9E6]",
+                      custodyBg,
+                      isManualSchedule && day != null && "cursor-pointer"
                     )}
                   >
                     {day != null && (
@@ -340,7 +685,7 @@ export function CalendarMonth({
             </>
           ) : (
             <div className="mt-1.5 overflow-x-auto rounded-card border border-border bg-background">
-              {events.length === 0 ? (
+              {filteredEvents.length === 0 ? (
                 <p className="px-4 py-4 text-xs text-foreground-secondary text-center">
                   No events scheduled yet.
                 </p>
@@ -359,126 +704,109 @@ export function CalendarMonth({
                     </tr>
                   </thead>
                   <tbody>
-                    {events
-                      .slice()
-                      .sort(
-                        (a, b) =>
-                          new Date(a.start_time).getTime() -
-                          new Date(b.start_time).getTime()
-                      )
-                      .slice(0, 25)
-                      .map((ev, index) => {
-                        const isCanceled = ev.status === "canceled";
-                        const color = isCanceled
-                          ? { bg: "bg-gray-100", dot: "bg-gray-400" }
-                          : getCalendarEventColors(ev.event_type);
-                        const categoryLabel =
-                          EVENT_TYPE_LABELS[ev.event_type ?? ""] ??
-                          ev.event_type ??
-                          "Event";
-                        const rowBg = isCanceled
-                          ? "bg-gray-50"
-                          : index % 2 === 0
-                            ? "bg-background"
-                            : "bg-[#FAF8F5]";
-                        const rawStatus = ev.status ?? "scheduled";
-                        const statusKey = (
-                          ["completed", "no_show", "conflict", "canceled"].includes(
-                            rawStatus
-                          )
-                            ? rawStatus
-                            : "scheduled"
-                        ) as "scheduled" | "completed" | "no_show" | "conflict" | "canceled";
-                        const statusLabelMap: Record<
-                          "scheduled" | "completed" | "no_show" | "conflict" | "canceled",
-                          string
-                        > = {
-                          scheduled: "Scheduled",
-                          completed: "Completed",
-                          no_show: "No-show",
-                          conflict: "Conflict",
-                          canceled: "Canceled",
-                        };
-                        const statusClassMap: Record<
-                          "scheduled" | "completed" | "no_show" | "conflict" | "canceled",
-                          string
-                        > = {
-                          scheduled: "bg-[#7B9E87]/15 text-[#7B9E87]",
-                          completed: "bg-[#7B9E87]/25 text-[#5A7A63]",
-                          no_show: "bg-[#C9A97B]/20 text-[#A08050]",
-                          conflict: "bg-[#C97B7B]/15 text-[#A05555]",
-                          canceled: "bg-gray-100 text-gray-400",
-                        };
-                        const dateStr = new Date(
-                          ev.start_time
-                        ).toLocaleDateString("en-US", {
-                          month: "short",
-                          day: "numeric",
-                          year: "numeric",
-                        });
-                        const timeStr = formatTime(ev.start_time);
-                        return (
-                          <tr
-                            key={ev.id}
-                            className={cn(
-                              rowBg,
-                              "border-t border-border cursor-pointer hover:bg-background-secondary/50",
-                              isCanceled ? "text-gray-500" : "text-foreground"
-                            )}
-                            onClick={() => onEventClick?.(ev)}
-                          >
-                            <td className="px-3 py-1.5 align-middle">
-                              <span
-                                className={cn(
-                                  "inline-block h-2.5 w-2.5 rounded-full opacity-75",
-                                  color.dot
-                                )}
-                              />
-                            </td>
-                            <td
+                    {(() => {
+                      const sorted = filteredEvents
+                        .slice()
+                        .sort(
+                          (a, b) =>
+                            new Date(a.start_time).getTime() -
+                            new Date(b.start_time).getTime()
+                        )
+                        .slice(0, 25);
+                      const groups = new Map<string, typeof sorted>();
+                      for (const ev of sorted) {
+                        const d = new Date(ev.start_time);
+                        const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+                        if (!groups.has(key)) groups.set(key, []);
+                        groups.get(key)!.push(ev);
+                      }
+                      const statusLabelMap: Record<string, string> = {
+                        scheduled: "Scheduled",
+                        completed: "Completed",
+                        no_show: "No-show",
+                        conflict: "Conflict",
+                        canceled: "Canceled",
+                      };
+                      const statusClassMap: Record<string, string> = {
+                        scheduled: "bg-[#7B9E87]/15 text-[#7B9E87]",
+                        completed: "bg-[#7B9E87]/25 text-[#5A7A63]",
+                        no_show: "bg-[#C9A97B]/20 text-[#A08050]",
+                        conflict: "bg-[#C97B7B]/15 text-[#A05555]",
+                        canceled: "bg-gray-100 text-gray-400",
+                      };
+                      let rowIndex = 0;
+                      return Array.from(groups.entries()).flatMap(([dateKey, groupEvents]) => {
+                        const dateForCustody = new Date(dateKey + "T12:00:00");
+                        const custody = custodyOverlayOn && hasCustodySchedule ? getCustodyForDate(dateForCustody) : null;
+                        const borderClass = custody === "user" ? "border-l-4 border-l-green-500" : custody === "coparent" ? "border-l-4 border-l-stone-400" : "";
+                        const dateStr = dateForCustody.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+                        const headerRow =
+                          custodyOverlayOn && hasCustodySchedule ? (
+                            <tr key={`h-${dateKey}`} className={cn("border-t border-border", borderClass)}>
+                              <td colSpan={7} className="px-3 py-1 text-foreground-secondary font-medium">
+                                {dateStr}
+                              </td>
+                            </tr>
+                          ) : null;
+                        const eventRows = groupEvents.map((ev) => {
+                          const isCanceled = ev.status === "canceled";
+                          const color = isCanceled ? { bg: "bg-gray-100", dot: "bg-gray-400" } : getCalendarEventColors(ev.event_type);
+                          const categoryLabel = EVENT_TYPE_LABELS[ev.event_type ?? ""] ?? ev.event_type ?? "Event";
+                          const rowBg = isCanceled ? "bg-gray-50" : rowIndex++ % 2 === 0 ? "bg-background" : "bg-[#FAF8F5]";
+                          const rawStatus = ev.status ?? "scheduled";
+                          const statusKey = ["completed", "no_show", "conflict", "canceled"].includes(rawStatus) ? rawStatus : "scheduled";
+                          const dateStrEv = new Date(ev.start_time).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+                          const timeStr = formatTime(ev.start_time);
+                          return (
+                            <tr
+                              key={ev.id}
                               className={cn(
-                                "px-3 py-1.5 align-middle font-medium",
-                                isCanceled && "line-through"
+                                rowBg,
+                                "border-t border-border cursor-pointer hover:bg-background-secondary/50",
+                                isCanceled ? "text-gray-500" : "text-foreground"
                               )}
+                              onClick={() => onEventClick?.(ev)}
                             >
-                              {ev.title}
-                            </td>
-                            <td className="px-3 py-1.5 align-middle text-foreground-secondary">
-                              {dateStr}
-                            </td>
-                            <td className="px-3 py-1.5 align-middle text-foreground-secondary">
-                              {timeStr}
-                            </td>
-                            <td className="px-3 py-1.5 align-middle text-foreground-secondary">
-                              {ev.child_name || "All children"}
-                            </td>
-                            <td className="px-3 py-1.5 align-middle text-foreground-secondary">
-                              {categoryLabel}
-                            </td>
-                            <td className="px-3 py-1.5 align-middle">
-                              <span
-                                className={cn(
-                                  "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] md:text-xs font-medium",
-                                  statusClassMap[statusKey]
-                                )}
-                              >
-                                {statusLabelMap[statusKey]}
-                              </span>
-                            </td>
-                          </tr>
-                        );
-                      })}
+                              <td className="px-3 py-1.5 align-middle">
+                                <span className={cn("inline-block h-2.5 w-2.5 rounded-full opacity-75", color.dot)} />
+                              </td>
+                              <td className={cn("px-3 py-1.5 align-middle font-medium", isCanceled && "line-through")}>
+                                {ev.title}
+                              </td>
+                              <td className="px-3 py-1.5 align-middle text-foreground-secondary">{dateStrEv}</td>
+                              <td className="px-3 py-1.5 align-middle text-foreground-secondary">{timeStr}</td>
+                              <td className="px-3 py-1.5 align-middle text-foreground-secondary">
+                                {ev.child_name || "All children"}
+                              </td>
+                              <td className="px-3 py-1.5 align-middle text-foreground-secondary">
+                                {categoryLabel}
+                              </td>
+                              <td className="px-3 py-1.5 align-middle">
+                                <span
+                                  className={cn(
+                                    "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] md:text-xs font-medium",
+                                    statusClassMap[statusKey]
+                                  )}
+                                >
+                                  {statusLabelMap[statusKey]}
+                                </span>
+                              </td>
+                            </tr>
+                          );
+                        });
+                        return headerRow ? [headerRow, ...eventRows] : eventRows;
+                      });
+                    })()}
                   </tbody>
                 </table>
-                {events.length > 25 && (
+                {filteredEvents.length > 25 && (
                   <div className="border-t border-border px-3 py-2 text-center">
-                    <button
-                      type="button"
-                      onClick={() => setViewMode("month")}
+                    <Link
+                      href={monthHref}
                       className="text-xs text-foreground-secondary underline-offset-2 hover:underline"
                     >
                       View all events
-                    </button>
+                    </Link>
                   </div>
                 )}
                 </>

@@ -10,6 +10,7 @@ import { ChevronRight, ChevronDown, FileText, Image, Trash2, Pencil, X, Download
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { showErrorToast } from "@/components/ui/toaster";
+import { CustodyScheduleSetup } from "@/components/custody/CustodyScheduleSetup";
 
 const COURT_ORDER_TYPES = [
   { value: "parenting_plan", label: "Parenting Plan" },
@@ -117,6 +118,8 @@ export type ProfileContentProps = {
   courtOrders: CourtOrderRow[];
   accountNumber: string | null;
   coparent?: CoparentRow | null;
+  caseId?: string | null;
+  appMode?: string | null;
 };
 
 function formatAge(dateOfBirth: string | null): string {
@@ -142,11 +145,14 @@ export function ProfileContent({
   courtOrders,
   accountNumber,
   coparent = null,
+  caseId = null,
+  appMode: appModeProp = null,
 }: ProfileContentProps) {
   const router = useRouter();
   const [openYourInfo, setOpenYourInfo] = useState(false);
   const [openFamily, setOpenFamily] = useState(false);
   const [openCourtOrders, setOpenCourtOrders] = useState(false);
+  const [openCustodySchedule, setOpenCustodySchedule] = useState(true);
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
   const [selectedCourtOrder, setSelectedCourtOrder] = useState<CourtOrderRow | null>(null);
   const [courtOrderDetailOpen, setCourtOrderDetailOpen] = useState(false);
@@ -1031,6 +1037,21 @@ export function ProfileContent({
               </div>
             )}
           </div>
+
+          {(appModeProp === "coparenting" || appModeProp === "solo_coparenting") && caseId && (
+            <div className="pt-4 mt-4 border-t border-border">
+              <CollapsibleCard
+                open={openCustodySchedule}
+                onToggle={() => setOpenCustodySchedule((o) => !o)}
+                title="Custody Schedule"
+              >
+                <CustodyScheduleSetup
+                  caseId={caseId}
+                  onSave={() => router.refresh()}
+                />
+              </CollapsibleCard>
+            </div>
+          )}
         </div>
       </CollapsibleCard>
 

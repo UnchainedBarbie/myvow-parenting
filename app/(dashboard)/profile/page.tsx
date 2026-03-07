@@ -19,6 +19,17 @@ export default async function ProfilePage() {
 
   const caseId = membership?.case_id ?? null;
 
+  let appMode: string | null = null;
+  if (caseId) {
+    const { data: caseRow } = await admin
+      .from("cases")
+      .select("mode, app_mode")
+      .eq("id", caseId)
+      .single();
+    const row = caseRow as { mode?: string | null; app_mode?: string | null } | null;
+    appMode = (row?.mode ?? row?.app_mode) ?? null;
+  }
+
   const { data: profile } = await supabase
     .from("users")
     .select("full_name, email, profile_image")
@@ -109,6 +120,8 @@ export default async function ProfilePage() {
         courtOrders={courtOrders}
         accountNumber={accountNumber}
         coparent={caseId ? coparent : null}
+        caseId={caseId}
+        appMode={appMode}
       />
     </div>
   );

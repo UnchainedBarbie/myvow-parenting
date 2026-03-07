@@ -4,10 +4,9 @@ import Link from "next/link";
 import { AddEventForm } from "@/components/calendar/add-event-form";
 import type { CalendarEventRow } from "@/components/calendar/calendar-month";
 import { CalendarRoot } from "@/components/calendar/calendar-root";
-import { CalendarInboxButton } from "@/components/calendar/calendar-inbox-button";
-import { Label } from "@/components/ui/label";
-import { Button } from "@/components/ui/button";
 import { CalendarExportButton } from "@/components/calendar/calendar-export-button";
+import { CalendarYearView } from "@/components/calendar/calendar-year-view";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 
 function getMonthRange(year: number, month: number) {
   const start = new Date(year, month - 1, 1);
@@ -21,6 +20,19 @@ function getMonthRange(year: number, month: number) {
 function getYearRange(year: number) {
   const start = new Date(year, 0, 1, 0, 0, 0, 0);
   const end = new Date(year, 11, 31, 23, 59, 59, 999);
+  return {
+    start: start.toISOString(),
+    end: end.toISOString(),
+  };
+}
+
+/** For list view: wide range so "Past 7/30/90", "Last month", "This month", and "Custom" have data. */
+function getListRange() {
+  const now = new Date();
+  const start = new Date(now);
+  start.setDate(start.getDate() - 90);
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(now.getFullYear(), now.getMonth() + 2, 0, 23, 59, 59, 999);
   return {
     start: start.toISOString(),
     end: end.toISOString(),
@@ -62,6 +74,25 @@ export default async function CalendarPage({
 
   const caseId = membership?.case_id ?? null;
 
+  let custodySchedule: { schedule_type: string; rotation_start_date: string | null; user_starts_first: boolean | null } | null = null;
+  let appMode: string | null = null;
+  if (caseId) {
+    const [scheduleRes, caseRes] = await Promise.all([
+      admin.from("custody_schedules").select("schedule_type, rotation_start_date, user_starts_first").eq("case_id", caseId).limit(1).maybeSingle(),
+      admin.from("cases").select("mode, app_mode").eq("id", caseId).single(),
+    ]);
+    const row = scheduleRes.data as { schedule_type?: string; rotation_start_date?: string | null; user_starts_first?: boolean | null } | null;
+    if (row && (row.schedule_type === "week_on_week_off" || row.schedule_type === "five_two_two_five" || row.schedule_type === "two_two_three" || row.schedule_type === "manual")) {
+      custodySchedule = {
+        schedule_type: row.schedule_type,
+        rotation_start_date: row.rotation_start_date ?? null,
+        user_starts_first: row.user_starts_first ?? null,
+      };
+    }
+    const caseRow = caseRes.data as { mode?: string | null; app_mode?: string | null } | null;
+    appMode = caseRow?.mode ?? caseRow?.app_mode ?? null;
+  }
+
   if (!caseId) {
     return (
       <div className="p-6 md:p-8">
@@ -87,7 +118,11 @@ export default async function CalendarPage({
     .order("first_name");
 
   const { start, end } =
-    view === "year" ? getYearRange(safeYear) : getMonthRange(safeYear, safeMonth);
+    view === "year"
+      ? getYearRange(safeYear)
+      : view === "list"
+        ? getListRange()
+        : getMonthRange(safeYear, safeMonth);
   const { data: eventsRaw } = await admin
     .from("calendar_events")
     .select(
@@ -287,16 +322,9 @@ export default async function CalendarPage({
     eventsByDateKey.add(key);
   }
 
-  const today = new Date();
-  const todayYear = today.getFullYear();
-  const todayMonth = today.getMonth() + 1;
-  const todayDate = today.getDate();
-
   const baseParams = new URLSearchParams();
   baseParams.set("year", String(safeYear));
   baseParams.set("month", String(safeMonth));
-  if (searchParams.from) baseParams.set("from", searchParams.from);
-  if (searchParams.to) baseParams.set("to", searchParams.to);
 
   function hrefForView(nextView: "month" | "list" | "year") {
     const params = new URLSearchParams(baseParams);
@@ -313,110 +341,26 @@ export default async function CalendarPage({
   const listHref = hrefForView("list");
   const yearHref = hrefForView("year");
 
-  // List view date range (default: today -> +30 days)
-  const defaultFromDate = new Date(
-    today.getFullYear(),
-    today.getMonth(),
-    today.getDate(),
-    0,
-    0,
-    0,
-    0
-  );
-  const defaultToDate = new Date(defaultFromDate);
-  defaultToDate.setDate(defaultToDate.getDate() + 30);
-
-  function normalizeDateParam(value: string | undefined, fallback: Date): string {
-    if (!value) return fallback.toISOString().slice(0, 10);
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return fallback.toISOString().slice(0, 10);
-    return value;
-  }
-
-  const listFromStr = normalizeDateParam(
-    searchParams.from,
-    defaultFromDate
-  );
-  const listToStr = normalizeDateParam(
-    searchParams.to,
-    defaultToDate
-  );
-
-  const listFromDate = new Date(listFromStr);
-  const listToDate = new Date(listToStr);
-  if (!Number.isNaN(listToDate.getTime())) {
-    listToDate.setHours(23, 59, 59, 999);
-  }
-
-  const inListRange = (iso: string | null | undefined): boolean => {
-    if (!iso) return false;
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return false;
-    if (Number.isNaN(listFromDate.getTime()) || Number.isNaN(listToDate.getTime())) {
-      return true;
-    }
-    return d >= listFromDate && d <= listToDate;
-  };
-
-  const filteredUpcoming = view === "list"
-    ? upcoming.filter((e) => inListRange(e.start_time))
-    : upcoming;
-
-  const filteredEventsForModal = view === "list"
-    ? eventsForModal.filter((e) => inListRange(e.start_time))
-    : eventsForModal;
-
   return (
     <div className="px-3 pt-3 pb-1 md:px-4 md:pt-4 md:pb-2">
-      <div className="flex items-center justify-between gap-2 mb-1">
+      <div className="flex items-center gap-2 mb-1">
         <h1 className="font-heading text-xl md:text-2xl font-semibold text-foreground">
           Calendar
         </h1>
-        <CalendarInboxButton />
       </div>
       <p className="text-xs md:text-sm text-foreground-secondary mb-2">
         Shared record of parenting events.
       </p>
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-        <div className="inline-flex rounded-full border border-[#E8E4DC] bg-[#FDFBF7] p-0.5 text-xs">
-          <Link
-            href={monthHref}
-            className={`px-3 py-1.5 rounded-full ${
-              view === "month"
-                ? "bg-white text-[#3D3D3D] border border-[#7C8B6E]"
-                : "text-foreground-secondary"
-            }`}
-          >
-            Month
-          </Link>
-          <Link
-            href={listHref}
-            className={`px-3 py-1.5 rounded-full ${
-              view === "list"
-                ? "bg-white text-[#3D3D3D] border border-[#7C8B6E]"
-                : "text-foreground-secondary"
-            }`}
-          >
-            List
-          </Link>
-          <Link
-            href={yearHref}
-            className={`px-3 py-1.5 rounded-full ${
-              view === "year"
-                ? "bg-white text-[#3D3D3D] border border-[#7C8B6E]"
-                : "text-foreground-secondary"
-            }`}
-          >
-            Year
-          </Link>
+      {view === "year" && (
+        <div className="mb-3 flex flex-wrap items-center justify-end gap-3">
+          <CalendarExportButton
+            view="year"
+            year={safeYear}
+            month={safeMonth}
+            events={events}
+          />
         </div>
-        <CalendarExportButton
-          view={view}
-          year={safeYear}
-          month={safeMonth}
-          events={events}
-          listEvents={filteredEventsForModal}
-        />
-      </div>
+      )}
       <div className="space-y-2.5">
         <div className="grid gap-3 lg:grid-cols-[460px_minmax(0,1fr)] items-start">
           <AddEventForm
@@ -427,132 +371,52 @@ export default async function CalendarPage({
           />
           {view === "year" ? (
             <div className="w-full min-w-0">
-              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-                {Array.from({ length: 12 }).map((_, index) => {
-                  const monthNumber = index + 1;
-                  const firstDay = new Date(safeYear, monthNumber - 1, 1).getDay(); // 0=Sun
-                  const daysInMonth = new Date(safeYear, monthNumber, 0).getDate();
-                  const blanks = Array.from({ length: firstDay });
-                  const days = Array.from({ length: daysInMonth }, (_, i) => i + 1);
-                  const monthName = new Date(
-                    safeYear,
-                    monthNumber - 1,
-                    1
-                  ).toLocaleString("en-US", { month: "short" });
-
-                  return (
-                    <div
-                      key={monthNumber}
-                      className="rounded-card border border-[#E8E4DC] bg-[#FDFBF7] p-3 flex flex-col gap-2"
+              <Card className="shadow-card">
+                <CardHeader className="flex flex-col gap-2 space-y-0 pb-0.5">
+                  <div className="flex items-center gap-3">
+                    <Link
+                      href={`/calendar?view=year&year=${safeYear - 1}`}
+                      className="p-1 rounded-md hover:bg-muted"
+                      aria-label="Previous year"
                     >
-                      <div className="text-xs font-semibold text-foreground mb-1">
-                        {monthName} {safeYear}
-                      </div>
-                      <div className="grid grid-cols-7 gap-1 text-[10px] text-foreground-secondary">
-                        {["S", "M", "T", "W", "T", "F", "S"].map((d) => (
-                          <div
-                            key={d}
-                            className="flex items-center justify-center h-5"
-                          >
-                            {d}
-                          </div>
-                        ))}
-                      </div>
-                      <div className="grid grid-cols-7 gap-1 text-[11px]">
-                        {blanks.map((_, i) => (
-                          <div key={`b-${i}`} className="h-6" />
-                        ))}
-                        {days.map((day) => {
-                          const key = `${safeYear}-${String(monthNumber).padStart(
-                            2,
-                            "0"
-                          )}-${String(day).padStart(2, "0")}`;
-                          const hasEvent = eventsByDateKey.has(key);
-                          const isToday =
-                            safeYear === todayYear &&
-                            monthNumber === todayMonth &&
-                            day === todayDate;
-                          const dayClasses =
-                            "flex flex-col items-center justify-center h-7 w-7 mx-auto rounded-full";
-                          const activeClasses = isToday
-                            ? "bg-[#EEF2E9] text-[#5B7A52]"
-                            : "text-foreground";
-
-                          const params = new URLSearchParams();
-                          params.set("year", String(safeYear));
-                          params.set("month", String(monthNumber));
-                          const href = `/calendar?${params.toString()}`;
-
-                          return (
-                            <Link
-                              key={day}
-                              href={href}
-                              className="flex flex-col items-center gap-0.5"
-                            >
-                              <div className={`${dayClasses} ${activeClasses}`}>
-                                {day}
-                              </div>
-                              {hasEvent && (
-                                <div className="h-1.5 w-1.5 rounded-full bg-[#7C8B6E]" />
-                              )}
-                            </Link>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
+                      ←
+                    </Link>
+                    <h2 className="text-lg font-semibold">{safeYear}</h2>
+                    <Link
+                      href={`/calendar?view=year&year=${safeYear + 1}`}
+                      className="p-1 rounded-md hover:bg-muted"
+                      aria-label="Next year"
+                    >
+                      →
+                    </Link>
+                  </div>
+                </CardHeader>
+                <CardContent className="pt-0.5">
+                  <CalendarYearView
+                    year={safeYear}
+                    eventDateKeys={Array.from(eventsByDateKey)}
+                    custodySchedule={custodySchedule}
+                    appMode={appMode}
+                    userId={user.id}
+                    caseId={caseId}
+                  />
+                </CardContent>
+              </Card>
             </div>
           ) : (
             <div className="w-full min-w-0 space-y-3">
-              {view === "list" && (
-                <form
-                  method="get"
-                  className="rounded-card border border-[#E8E4DC] bg-[#FDFBF7] px-3 py-2 flex flex-wrap items-end gap-3"
-                >
-                  <input type="hidden" name="year" value={safeYear} />
-                  <input type="hidden" name="month" value={safeMonth} />
-                  <input type="hidden" name="view" value="list" />
-                  <div className="space-y-1">
-                    <Label className="text-[11px] text-foreground-secondary">
-                      From
-                    </Label>
-                    <input
-                      type="date"
-                      name="from"
-                      defaultValue={listFromStr}
-                      className="h-8 rounded-md border border-[#E8E4DC] bg-white px-2 text-xs text-[#3D3D3D]"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <Label className="text-[11px] text-foreground-secondary">
-                      To
-                    </Label>
-                    <input
-                      type="date"
-                      name="to"
-                      defaultValue={listToStr}
-                      className="h-8 rounded-md border border-[#E8E4DC] bg-white px-2 text-xs text-[#3D3D3D]"
-                    />
-                  </div>
-                  <div className="ml-auto">
-                    <Button
-                      type="submit"
-                      size="sm"
-                      className="h-8 rounded-full text-xs bg-[#7B9E87] hover:bg-[#6A8A78] text-white"
-                    >
-                      Apply
-                    </Button>
-                  </div>
-                </form>
-              )}
               <CalendarRoot
                 caseId={caseId}
                 events={events}
-                upcoming={filteredUpcoming}
-                eventsForModal={filteredEventsForModal}
+                upcoming={upcoming}
+                eventsForModal={eventsForModal}
                 children={children ?? []}
+                showUpcoming={view !== "list"}
+                year={safeYear}
+                month={safeMonth}
+                custodySchedule={custodySchedule}
+                appMode={appMode}
+                userId={user.id}
               />
             </div>
           )}

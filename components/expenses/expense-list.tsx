@@ -806,7 +806,7 @@ const dateFilterValue: DateFilterValue = {
                       <span>Category</span>
                       <ColumnFilterPopover
                         title="Category"
-                        options={categoryFilterOptions}
+                        options={[...categoryFilterOptions]}
                         selected={filterCategories}
                         onApply={setFilterCategories}
                         onClear={() => setFilterCategories([])}

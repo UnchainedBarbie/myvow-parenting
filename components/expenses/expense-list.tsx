@@ -829,7 +829,6 @@ const dateFilterValue: DateFilterValue = {
                         open={childFilterOpen}
                         onOpenChange={setChildFilterOpen}
                         active={childFilterActive}
-                        icon={Filter}
                       />
                     </span>
                   </th>

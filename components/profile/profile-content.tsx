@@ -1047,6 +1047,7 @@ export function ProfileContent({
               >
                 <CustodyScheduleSetup
                   caseId={caseId}
+                  userId={userId}
                   onSave={() => router.refresh()}
                 />
               </CollapsibleCard>

@@ -8,13 +8,8 @@ import { cn } from "@/lib/utils";
 
 import { CalendarExportButton } from "@/components/calendar/calendar-export-button";
 import { getCalendarEventColors } from "@/lib/categoryColors";
-import {
-  computeCustodyForDate,
-  getStoredCustodyOverlay,
-  setStoredCustodyOverlay,
-  type CustodySchedule,
-  type HolidayCustodyOverride,
-} from "@/lib/custody";
+import { getCustodyFromRotation } from "@/lib/calendarCustody";
+import type { CustodyOverridesMap } from "@/components/calendar/calendar-with-custody";
 
 const EVENT_TYPE_LABELS: Record<string, string> = {
   medical: "Medical",
@@ -45,6 +40,12 @@ export type CalendarEventRow = {
   kid_title?: string | null;
 };
 
+export type CustodyScheduleForOverlay = {
+  schedule_type: string;
+  rotation_start_date: string | null;
+  user_starts_first: boolean | null;
+} | null;
+
 interface CalendarMonthProps {
   year: number;
   month: number;
@@ -53,7 +54,10 @@ interface CalendarMonthProps {
   children: { id: string; first_name: string }[];
   onRefresh?: () => void;
   onEventClick?: (event: CalendarEventRow) => void;
-  custodySchedule?: CustodySchedule | null;
+  custodySchedule?: CustodyScheduleForOverlay;
+  custodyOverrides?: CustodyOverridesMap;
+  custodyOverlayOn?: boolean;
+  onCustodyOverlayChange?: (on: boolean) => void;
   appMode?: string | null;
   userId?: string;
 }
@@ -77,6 +81,9 @@ export function CalendarMonth({
   onRefresh,
   onEventClick,
   custodySchedule = null,
+  custodyOverrides = {},
+  custodyOverlayOn = false,
+  onCustodyOverlayChange,
   appMode = null,
   userId = "",
 }: CalendarMonthProps) {
@@ -93,96 +100,24 @@ export function CalendarMonth({
   const [customFrom, setCustomFrom] = useState("");
   const [customTo, setCustomTo] = useState("");
   const hasCustodySchedule = !!custodySchedule;
-  const isManualSchedule = custodySchedule?.schedule_type === "manual";
-  const [custodyOverlayOn, setCustodyOverlayOn] = useState(() =>
-    getStoredCustodyOverlay(appMode ?? null, hasCustodySchedule)
-  );
-  const [holidayOverrides, setHolidayOverrides] = useState<HolidayCustodyOverride[]>([]);
-  const [dayOverrides, setDayOverrides] = useState<Record<string, string>>({});
-  const [custodyTapTooltipDismissed, setCustodyTapTooltipDismissed] = useState(() =>
-    typeof window !== "undefined" && localStorage.getItem("myvow_custody_tap_tooltip") === "dismissed"
-  );
-  useEffect(() => {
-    setCustodyOverlayOn(getStoredCustodyOverlay(appMode ?? null, hasCustodySchedule));
-  }, [appMode, hasCustodySchedule]);
-  useEffect(() => {
-    if (!custodyOverlayOn || !caseId) return;
-    fetch("/api/holiday-custody")
-      .then((r) => r.ok ? r.json() : [])
-      .then((rows: { start_date: string; end_date: string; custodial_parent: string }[]) => {
-        setHolidayOverrides(rows);
-      })
-      .catch(() => setHolidayOverrides([]));
-  }, [custodyOverlayOn, caseId]);
-  useEffect(() => {
-    if (!isManualSchedule || !caseId) return;
-    fetch("/api/custody-day-overrides")
-      .then((r) => r.ok ? r.json() : [])
-      .then((rows: { date: string; custodial_parent: string }[]) => {
-        const map: Record<string, string> = {};
-        for (const row of rows ?? []) {
-          if (row.date) map[row.date] = row.custodial_parent ?? "";
-        }
-        setDayOverrides(map);
-      })
-      .catch(() => setDayOverrides({}));
-  }, [isManualSchedule, caseId]);
-  function getCustodyForDate(date: Date): "user" | "coparent" {
-    return computeCustodyForDate(date, custodySchedule ?? null, {
-      holidayOverrides,
-      currentUserId: userId || undefined,
-    });
+
+  /**
+   * Custody for a single date. Resolution order: (a) overridesMap, (b) rotation, (c) manual + no override → no tint.
+   * dateKey must be YYYY-MM-DD (e.g. from calendar cell key).
+   */
+  function getCustodyForDateKey(dateKey: string): "user" | "coparent" | null {
+    if (!custodySchedule || !custodyOverlayOn) return null;
+    const dateString = /^\d{4}-\d{2}-\d{2}/.test(dateKey) ? dateKey.slice(0, 10) : dateKey;
+    const override = custodyOverrides[dateString];
+    if (override === "user") return "user";
+    if (override === "coparent") return "coparent";
+    if (override === "neither") return null;
+    if (custodySchedule.schedule_type === "manual" || custodySchedule.schedule_type === "school_year") return null;
+    const [y, m, d] = dateString.split("-").map(Number);
+    const date = new Date(y, m - 1, d);
+    return getCustodyFromRotation(date, custodySchedule);
   }
-  function getManualCustodyForDate(date: Date): "user" | "coparent" | null {
-    const y = date.getFullYear();
-    const m = String(date.getMonth() + 1).padStart(2, "0");
-    const d = String(date.getDate()).padStart(2, "0");
-    const dateStr = `${y}-${m}-${d}`;
-    const val = dayOverrides[dateStr];
-    if (val == null || val === "") return null;
-    if (val === "neither") return null;
-    if (val === userId) return "user";
-    return "coparent";
-  }
-  function handleManualDayClick(dateStr: string, e?: React.MouseEvent) {
-    if (!isManualSchedule || !userId) return;
-    if (e) {
-      const target = e.target as HTMLElement;
-      if (target.closest("button") || target.closest("ul")) return;
-    }
-    const current = dayOverrides[dateStr];
-    const next =
-      current == null || current === ""
-        ? userId
-        : current === userId
-          ? "coparent"
-          : current === "coparent"
-            ? "neither"
-            : null;
-    setDayOverrides((prev) => {
-      const nextMap = { ...prev };
-      if (next == null) delete nextMap[dateStr];
-      else nextMap[dateStr] = next;
-      return nextMap;
-    });
-    if (next == null) {
-      fetch(`/api/custody-day-overrides?date=${encodeURIComponent(dateStr)}`, { method: "DELETE" }).catch(() => {
-        setDayOverrides((prev) => ({ ...prev, [dateStr]: current ?? "" }));
-      });
-    } else {
-      fetch("/api/custody-day-overrides", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ date: dateStr, custodial_parent: next }),
-      }).catch(() => {
-        setDayOverrides((prev) => ({ ...prev, [dateStr]: current ?? "" }));
-      });
-    }
-  }
-  function dismissCustodyTapTooltip() {
-    setCustodyTapTooltipDismissed(true);
-    if (typeof window !== "undefined") localStorage.setItem("myvow_custody_tap_tooltip", "dismissed");
-  }
+
   const viewMode: "month" | "list" =
     searchParams.get("view") === "list" ? "list" : "month";
   const first = new Date(year, month - 1, 1);
@@ -382,8 +317,8 @@ export function CalendarMonth({
             </button>
           </div>
           {/* Row 2: Month/List toggle far left, filters grouped to the right — same for both views */}
-          <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-foreground-secondary">
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-foreground-secondary">
+              <div className="flex items-center gap-2">
               <div className="inline-flex rounded-full border border-border bg-background-secondary/60 p-0.5">
                 <Link
                   href={monthHref}
@@ -413,25 +348,21 @@ export function CalendarMonth({
                 >
                   Year
                 </Link>
+                {hasCustodySchedule && onCustodyOverlayChange != null && (
+                  <button
+                    type="button"
+                    onClick={() => onCustodyOverlayChange(!custodyOverlayOn)}
+                    className={cn(
+                      "rounded-full px-3 py-1 text-xs font-medium transition-colors",
+                      custodyOverlayOn
+                        ? "bg-[#7B9E87] text-white"
+                        : "text-foreground-secondary hover:text-foreground"
+                    )}
+                  >
+                    Custody
+                  </button>
+                )}
               </div>
-              {hasCustodySchedule && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    const next = !custodyOverlayOn;
-                    setCustodyOverlayOn(next);
-                    setStoredCustodyOverlay(next);
-                  }}
-                  className={cn(
-                    "rounded-full px-3 py-1 text-xs font-medium border transition-colors",
-                    custodyOverlayOn
-                      ? "bg-[#7B9E87] border-[#7B9E87] text-white"
-                      : "border-border text-foreground-secondary bg-background hover:bg-muted hover:text-foreground"
-                  )}
-                >
-                  Custody
-                </button>
-              )}
             </div>
             <div className="flex flex-wrap items-center gap-2">
               {!isMonthView && hasActiveFilters && (
@@ -540,19 +471,6 @@ export function CalendarMonth({
         <CardContent className="pt-0.5">
           {viewMode === "month" ? (
             <>
-              {isManualSchedule && custodyOverlayOn && !custodyTapTooltipDismissed && (
-                <p className="text-xs text-foreground-secondary mb-2 flex items-center justify-between gap-2">
-                  <span>Tap a day to mark custody</span>
-                  <button
-                    type="button"
-                    onClick={dismissCustodyTapTooltip}
-                    className="text-foreground-secondary hover:text-foreground shrink-0"
-                    aria-label="Dismiss"
-                  >
-                    ×
-                  </button>
-                </p>
-              )}
               <div className="grid grid-cols-7 gap-px rounded-card border border-gray-300 bg-gray-300">
                 {DAYS.map((day) => (
                   <div
@@ -568,43 +486,18 @@ export function CalendarMonth({
                     year === todayYear &&
                     month === todayMonth &&
                     day === todayDate;
-                  const dateForCustody = key ? new Date(key + "T12:00:00") : null;
+                  const custody = key ? getCustodyForDateKey(key) : null;
                   const custodyBg =
-                    custodyOverlayOn &&
-                    hasCustodySchedule &&
-                    key
-                      ? isManualSchedule
-                        ? (() => {
-                            const manual = getManualCustodyForDate(dateForCustody!);
-                            return manual === "user" ? "bg-green-50" : manual === "coparent" ? "bg-stone-100" : null;
-                          })()
-                        : getCustodyForDate(dateForCustody!) === "user"
-                          ? "bg-green-50"
-                          : "bg-stone-100"
-                      : null;
+                    custody === "user" ? "bg-green-50" : custody === "coparent" ? "bg-stone-100" : null;
                   return (
                   <div
                     key={i}
-                    role={isManualSchedule && day != null ? "button" : undefined}
-                    tabIndex={isManualSchedule && day != null ? 0 : undefined}
-                    onClick={isManualSchedule && key ? (e) => handleManualDayClick(key, e) : undefined}
-                    onKeyDown={
-                      isManualSchedule && key
-                        ? (e) => {
-                            if (e.key === "Enter" || e.key === " ") {
-                              e.preventDefault();
-                              handleManualDayClick(key);
-                            }
-                          }
-                        : undefined
-                    }
                     className={cn(
                       "min-h-[100px] border-r border-b border-gray-300 p-1.5",
                       !day && "bg-background-secondary/30",
                       day != null && !isToday && !custodyBg && "bg-background",
                       day != null && isToday && !custodyBg && "bg-[#EBE9E6]",
-                      custodyBg,
-                      isManualSchedule && day != null && "cursor-pointer"
+                      custodyBg
                     )}
                   >
                     {day != null && (
@@ -736,9 +629,13 @@ export function CalendarMonth({
                       };
                       let rowIndex = 0;
                       return Array.from(groups.entries()).flatMap(([dateKey, groupEvents]) => {
-                        const dateForCustody = new Date(dateKey + "T12:00:00");
-                        const custody = custodyOverlayOn && hasCustodySchedule ? getCustodyForDate(dateForCustody) : null;
+                        const custody =
+                          custodyOverlayOn && hasCustodySchedule
+                            ? getCustodyForDateKey(dateKey)
+                            : null;
                         const borderClass = custody === "user" ? "border-l-4 border-l-green-500" : custody === "coparent" ? "border-l-4 border-l-stone-400" : "";
+                        const [y, m, d] = dateKey.split("-").map(Number);
+                        const dateForCustody = new Date(y, m - 1, d);
                         const dateStr = dateForCustody.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
                         const headerRow =
                           custodyOverlayOn && hasCustodySchedule ? (

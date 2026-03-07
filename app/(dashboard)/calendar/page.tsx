@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { AddEventForm } from "@/components/calendar/add-event-form";
 import type { CalendarEventRow } from "@/components/calendar/calendar-month";
-import { CalendarRoot } from "@/components/calendar/calendar-root";
+import { CalendarWithCustody } from "@/components/calendar/calendar-with-custody";
 import { CalendarExportButton } from "@/components/calendar/calendar-export-button";
 import { CalendarYearView } from "@/components/calendar/calendar-year-view";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -405,8 +405,9 @@ export default async function CalendarPage({
             </div>
           ) : (
             <div className="w-full min-w-0 space-y-3">
-              <CalendarRoot
+              <CalendarWithCustody
                 caseId={caseId}
+                userId={user.id}
                 events={events}
                 upcoming={upcoming}
                 eventsForModal={eventsForModal}
@@ -414,9 +415,7 @@ export default async function CalendarPage({
                 showUpcoming={view !== "list"}
                 year={safeYear}
                 month={safeMonth}
-                custodySchedule={custodySchedule}
                 appMode={appMode}
-                userId={user.id}
               />
             </div>
           )}

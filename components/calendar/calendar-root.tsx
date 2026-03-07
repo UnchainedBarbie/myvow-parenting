@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { CalendarMonth, type CalendarEventRow } from "@/components/calendar/calendar-month";
 import { UpcomingEventsList } from "@/components/calendar/upcoming-events-list";
 import { EventDetailModal } from "@/components/calendar/event-detail-modal";
-import type { CustodySchedule } from "@/lib/custody";
+import type { CustodyOverridesMap } from "@/components/calendar/calendar-with-custody";
 
 type Child = { id: string; first_name: string };
 
@@ -17,6 +17,12 @@ type UpcomingEvent = {
   start_time: string;
   status: string | null;
 };
+
+export type CustodyScheduleForOverlay = {
+  schedule_type: string;
+  rotation_start_date: string | null;
+  user_starts_first: boolean | null;
+} | null;
 
 interface CalendarRootProps {
   caseId: string;
@@ -30,9 +36,13 @@ interface CalendarRootProps {
   /** Optional: use for header/nav when events span a wide range (e.g. list view). */
   year?: number;
   month?: number;
-  custodySchedule?: CustodySchedule | null;
-  appMode?: string | null;
   userId?: string;
+  /** Custody overlay: from client fetch (CalendarWithCustody). */
+  custodySchedule?: CustodyScheduleForOverlay;
+  custodyOverrides?: CustodyOverridesMap;
+  custodyOverlayOn?: boolean;
+  onCustodyOverlayChange?: (on: boolean) => void;
+  appMode?: string | null;
 }
 
 export function CalendarRoot({
@@ -44,9 +54,12 @@ export function CalendarRoot({
   showUpcoming = true,
   year: yearProp,
   month: monthProp,
-  custodySchedule = null,
-  appMode = null,
   userId = "",
+  custodySchedule = null,
+  custodyOverrides = {},
+  custodyOverlayOn = false,
+  onCustodyOverlayChange,
+  appMode = null,
 }: CalendarRootProps) {
   const router = useRouter();
   const [selectedEvent, setSelectedEvent] = useState<CalendarEventRow | null>(
@@ -80,6 +93,9 @@ export function CalendarRoot({
           onEventClick={handleEventClick}
           onRefresh={() => router.refresh()}
           custodySchedule={custodySchedule}
+          custodyOverrides={custodyOverrides}
+          custodyOverlayOn={custodyOverlayOn}
+          onCustodyOverlayChange={onCustodyOverlayChange}
           appMode={appMode}
           userId={userId}
         />

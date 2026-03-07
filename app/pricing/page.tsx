@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
@@ -54,10 +55,17 @@ export default function PricingPage() {
     <div className="min-h-screen bg-background">
       <header className="border-b border-border bg-background/95 backdrop-blur">
         <div className="container mx-auto flex h-16 items-center justify-between px-4">
-          <Link href="/" className="flex items-center">
-            <span className="font-heading text-lg md:text-xl font-semibold tracking-tight text-foreground">
-              MyVow
-            </span>
+          <Link href="/" className="flex items-center focus:outline-none">
+            <div style={{ isolation: "isolate" }}>
+              <Image
+                src="/Horiztonal%20logo%20translucent.png"
+                alt="MyVow Parenting"
+                width={160}
+                height={48}
+                className="h-auto w-[160px] object-contain object-left"
+                style={{ mixBlendMode: "multiply" }}
+              />
+            </div>
           </Link>
           <nav className="flex items-center gap-4">
             <Link
@@ -95,7 +103,7 @@ export default function PricingPage() {
           {tiers.map((tier) => (
             <Card
               key={tier.name}
-              className={`shadow-card relative ${tier.mostPopular ? "ring-2 ring-foreground/10" : ""}`}
+              className={`shadow-card relative flex h-full flex-col ${tier.mostPopular ? "ring-2 ring-foreground/10" : ""}`}
             >
               {tier.mostPopular && (
                 <div className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-foreground px-3 py-0.5 text-xs font-medium text-background">
@@ -109,8 +117,8 @@ export default function PricingPage() {
                   <span className="text-sm font-normal text-foreground-secondary">/parent/month</span>
                 </p>
               </CardHeader>
-              <CardContent>
-                <ul className="text-sm text-foreground-secondary space-y-2 mb-6">
+              <CardContent className="flex flex-1 flex-col min-h-0">
+                <ul className="text-sm text-foreground-secondary space-y-2 mb-6 flex-1">
                   {tier.features.map((feature) => (
                     <li key={feature} className="flex gap-2">
                       <span className="text-foreground shrink-0">•</span>
@@ -118,7 +126,7 @@ export default function PricingPage() {
                     </li>
                   ))}
                 </ul>
-                <Button asChild className="w-full">
+                <Button asChild className="w-full mt-auto shrink-0">
                   <Link href="/signup">Get started</Link>
                 </Button>
               </CardContent>

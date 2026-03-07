@@ -1,23 +1,51 @@
 import Link from "next/link";
-import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 const tiers = [
   {
-    name: "Base",
-    price: 25,
-    description: "Essential messaging and documentation.",
+    name: "Essential",
+    price: 14,
+    mostPopular: false,
+    features: [
+      "Parenting calendar",
+      "Child profiles",
+      "Document storage",
+      "Expense tracking",
+      "Basic messaging",
+      "Shared tasks",
+      "Personal notes",
+      "Sage AI reflection",
+      "Court-ready documentation exports included",
+    ],
   },
   {
-    name: "Standard",
-    price: 35,
-    description: "Expenses, calendar, and more export options.",
+    name: "Peace",
+    price: 26,
+    mostPopular: true,
+    features: [
+      "Everything in Essential",
+      "AI-assisted messaging moderation",
+      "Delivery windows",
+      "Cool-off timers",
+      "Message flags",
+      "Incident documentation",
+      "Conversation archiving",
+      "Structured communication exports",
+    ],
   },
   {
-    name: "Premium",
-    price: 50,
-    description: "Full features and priority support.",
+    name: "Clarity",
+    price: 48,
+    mostPopular: false,
+    features: [
+      "Everything in Peace",
+      "Conversation analytics",
+      "Pattern detection",
+      "Incident timeline builder",
+      "Exportable evidence logs",
+      "Attorney / mediator access sharing",
+    ],
   },
 ];
 
@@ -27,16 +55,27 @@ export default function PricingPage() {
       <header className="border-b border-border bg-background/95 backdrop-blur">
         <div className="container mx-auto flex h-16 items-center justify-between px-4">
           <Link href="/" className="flex items-center">
-            <Image
-              src="/Horiztonal%20log.png"
-              alt="MyVow Parenting"
-              width={140}
-              height={40}
-              className="h-auto w-[140px] object-contain object-left"
-            />
+            <span className="font-heading text-lg md:text-xl font-semibold tracking-tight text-foreground">
+              MyVow
+            </span>
           </Link>
           <nav className="flex items-center gap-4">
-            <Link href="/login" className="text-sm text-foreground-secondary hover:text-foreground">
+            <Link
+              href="/pricing"
+              className="text-sm text-foreground-secondary hover:text-foreground"
+            >
+              Pricing
+            </Link>
+            <Link
+              href="/contact"
+              className="text-sm text-foreground-secondary hover:text-foreground"
+            >
+              Contact
+            </Link>
+            <Link
+              href="/login"
+              className="text-sm text-foreground-secondary hover:text-foreground"
+            >
               Log in
             </Link>
             <Button asChild>
@@ -49,13 +88,21 @@ export default function PricingPage() {
         <h1 className="font-heading text-3xl font-semibold text-center text-foreground mb-4">
           Simple pricing per parent
         </h1>
-        <p className="text-center text-foreground-secondary mb-12 max-w-lg mx-auto">
-          Three tiers so you can choose what fits your family. Billed monthly per parent.
+        <p className="text-center text-foreground-secondary mb-12 max-w-2xl mx-auto">
+          Three tiers so you can choose what fits your family. Billed monthly per parent. Court-ready documentation included on every plan.
         </p>
-        <div className="grid gap-6 md:grid-cols-3 max-w-4xl mx-auto">
+        <div className="grid gap-6 md:grid-cols-3 max-w-5xl mx-auto">
           {tiers.map((tier) => (
-            <Card key={tier.name} className="shadow-card">
-              <CardHeader>
+            <Card
+              key={tier.name}
+              className={`shadow-card relative ${tier.mostPopular ? "ring-2 ring-foreground/10" : ""}`}
+            >
+              {tier.mostPopular && (
+                <div className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-foreground px-3 py-0.5 text-xs font-medium text-background">
+                  Most Popular
+                </div>
+              )}
+              <CardHeader className={tier.mostPopular ? "pt-6" : ""}>
                 <CardTitle className="font-heading">{tier.name}</CardTitle>
                 <p className="text-2xl font-body font-semibold text-foreground">
                   ${tier.price}
@@ -63,9 +110,14 @@ export default function PricingPage() {
                 </p>
               </CardHeader>
               <CardContent>
-                <p className="text-sm text-foreground-secondary mb-6">
-                  {tier.description}
-                </p>
+                <ul className="text-sm text-foreground-secondary space-y-2 mb-6">
+                  {tier.features.map((feature) => (
+                    <li key={feature} className="flex gap-2">
+                      <span className="text-foreground shrink-0">•</span>
+                      <span>{feature}</span>
+                    </li>
+                  ))}
+                </ul>
                 <Button asChild className="w-full">
                   <Link href="/signup">Get started</Link>
                 </Button>
@@ -73,6 +125,9 @@ export default function PricingPage() {
             </Card>
           ))}
         </div>
+        <p className="text-center text-sm text-foreground-secondary mt-10 max-w-2xl mx-auto">
+          All plans include a 7-day free trial. Kids accounts: 2 included free per parent, $3/month each after that.
+        </p>
       </main>
     </div>
   );

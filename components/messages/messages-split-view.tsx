@@ -623,7 +623,7 @@ export function MessagesSplitView({
 
   const displayCoparentName = "Co-Parent";
 
-  const activeTone: "calm" | "elevated" = "calm";
+  const activeTone: "calm" | "elevated" | "tense" = "calm";
 
   const now = new Date();
   const last30Start = new Date(

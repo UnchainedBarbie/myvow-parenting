@@ -45,9 +45,7 @@ export async function getKidSession(request: NextRequest): Promise<KidSession | 
   void admin
     .from("kid_sessions")
     .update({ last_active_at: new Date().toISOString() })
-    .eq("id", session.id)
-    .then(() => {})
-    .catch(() => {});
+    .eq("id", session.id);
 
   return {
     kid_id: session.kid_id as string,

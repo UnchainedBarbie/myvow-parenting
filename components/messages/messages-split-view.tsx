@@ -1871,7 +1871,7 @@ export function MessagesSplitView({
                 <select
                   value="coparent"
                   className="h-8 w-full rounded-md border border-[#E8E4DC] bg-[#FDFBF7] px-2 text-xs text-[#3D3D3D] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E]"
-                  readOnly
+                  disabled
                 >
                   <option value="coparent">Co-Parent</option>
                 </select>

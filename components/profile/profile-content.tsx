@@ -1017,7 +1017,7 @@ export function ProfileContent({
                                 aria-label="Delete"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  setDeleteCourtOrderConfirm(order.id);
+                                  setDeleteCourtOrderConfirm(order.id ?? null);
                                 }}
                               >
                                 <Trash2 className="h-3.5 w-3.5" />

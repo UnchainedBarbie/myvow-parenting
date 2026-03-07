@@ -20,6 +20,12 @@ export default function LandingPage() {
           </Link>
           <nav className="flex items-center gap-4">
             <Link
+              href="/about"
+              className="text-sm text-foreground-secondary hover:text-foreground"
+            >
+              About
+            </Link>
+            <Link
               href="/pricing"
               className="text-sm text-foreground-secondary hover:text-foreground"
             >

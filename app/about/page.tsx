@@ -51,11 +51,11 @@ export default function AboutPage() {
           </h1>
           <div className="font-body text-foreground space-y-6 text-left">
             <p>
-              I&apos;m Allison — a CPA and a mom. I built MyVow because I needed to stop
-              communicating directly with my ex, document everything cleanly for court,
-              and create a structure that made it easier for both of us to just behave.
-              Not because we wanted to. Because the app made cooperation easier than
-              conflict.
+              I&apos;m Allison, a mom who needed to be free from my ex. I built MyVow
+              because I needed to stop communicating with him directly, document
+              everything cleanly for court, and create a structure that made it easier
+              for both of us to just behave. Not because we wanted to. Because the app
+              made cooperation easier than conflict.
             </p>
             <p>
               I couldn&apos;t find a tool that did all of that. So I built it.

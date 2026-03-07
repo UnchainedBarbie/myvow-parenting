@@ -813,7 +813,6 @@ const dateFilterValue: DateFilterValue = {
                         open={categoryFilterOpen}
                         onOpenChange={setCategoryFilterOpen}
                         active={categoryFilterActive}
-                        icon={Filter}
                         getOptionDotClass={(value) => getCategoryColor(value).dotClass}
                       />
                     </span>
@@ -869,7 +868,6 @@ const dateFilterValue: DateFilterValue = {
                         open={statusFilterOpen}
                         onOpenChange={setStatusFilterOpen}
                         active={statusFilterActive}
-                        icon={Filter}
                       />
                     </span>
                   </th>

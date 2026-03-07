@@ -1246,7 +1246,7 @@ const dateFilterValue: DateFilterValue = {
               className="h-8 rounded-full bg-[#D4A843] text-xs text-white hover:bg-[#C39A35]"
               onClick={() => {
                 if (!disputeExpense) return;
-                void handleRespond(disputeExpense.id, "dispute", disputeText.trim() || undefined);
+                void handleRespond(disputeExpense.id, "dispute", disputeText.trim() ? { dispute_reason: disputeText.trim() } : undefined);
                 setDisputeExpense(null);
                 setDisputeText("");
               }}

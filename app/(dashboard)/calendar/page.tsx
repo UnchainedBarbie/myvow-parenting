@@ -117,6 +117,30 @@ export default async function CalendarPage({
     .eq("case_id", caseId)
     .order("first_name");
 
+  const { data: caseRow } = await admin
+    .from("cases")
+    .select("kids_label_user, kids_label_coparent")
+    .eq("id", caseId)
+    .single();
+  const kidsLabelUser = (caseRow as { kids_label_user?: string | null } | null)?.kids_label_user ?? null;
+  const kidsLabelCoparent = (caseRow as { kids_label_coparent?: string | null } | null)?.kids_label_coparent ?? null;
+
+  const { data: holidaysRaw } = await admin
+    .from("holiday_custody")
+    .select("id, holiday_name, start_date, end_date, custodial_parent, year")
+    .eq("case_id", caseId)
+    .eq("year", safeYear)
+    .is("deleted_at", null)
+    .order("start_date", { ascending: true });
+  const holidays = (holidaysRaw ?? []).map((h) => ({
+    id: h.id as string,
+    holiday_name: h.holiday_name as string,
+    start_date: h.start_date as string,
+    end_date: h.end_date as string,
+    custodial_parent: h.custodial_parent as string,
+    year: h.year as number,
+  }));
+
   const { start, end } =
     view === "year"
       ? getYearRange(safeYear)
@@ -424,6 +448,9 @@ export default async function CalendarPage({
                 year={safeYear}
                 month={safeMonth}
                 appMode={appMode}
+                holidays={holidays}
+                kidsLabelUser={kidsLabelUser}
+                kidsLabelCoparent={kidsLabelCoparent}
               />
             </div>
           )}

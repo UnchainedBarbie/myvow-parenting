@@ -70,6 +70,15 @@ type UpcomingEvent = {
   status: string | null;
 };
 
+export type HolidayCustodyRow = {
+  id: string;
+  holiday_name: string;
+  start_date: string;
+  end_date: string;
+  custodial_parent: string;
+  year: number;
+};
+
 interface CalendarWithCustodyProps {
   caseId: string;
   userId: string;
@@ -81,6 +90,9 @@ interface CalendarWithCustodyProps {
   year?: number;
   month?: number;
   appMode?: string | null;
+  holidays?: HolidayCustodyRow[];
+  kidsLabelUser?: string | null;
+  kidsLabelCoparent?: string | null;
 }
 
 function getDefaultOverlayOn(): boolean {
@@ -226,6 +238,9 @@ export function CalendarWithCustody({
       custodyOverrides={custodyOverrides}
       custodyOverlayOn={custodyOverlayOn}
       onCustodyOverlayChange={handleCustodyOverlayChange}
+      holidays={holidays}
+      kidsLabelUser={kidsLabelUser}
+      kidsLabelCoparent={kidsLabelCoparent}
     />
   );
 }

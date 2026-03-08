@@ -12,9 +12,10 @@ async function getCaseIdForUser(admin: ReturnType<typeof getServiceRoleClient>, 
 }
 
 /**
- * GET /api/holiday-custody — fetch all holiday_custody rows for the current user's case_id, ordered by year then start_date.
+ * GET /api/holiday-custody — fetch holiday_custody rows for the current user's case.
+ * Query: ?year= — filter by year. Returns id, holiday_name, start_date, end_date, custodial_parent, year. Excludes deleted_at.
  */
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     const supabase = await createClient();
     const { data: { user } } = await supabase.auth.getUser();
@@ -24,13 +25,23 @@ export async function GET() {
     const caseId = await getCaseIdForUser(admin, user.id);
     if (!caseId) return NextResponse.json({ error: "No case found" }, { status: 403 });
 
-    const { data: rows, error } = await admin
+    const { searchParams } = new URL(request.url);
+    const yearParam = searchParams.get("year");
+    const yearFilter = yearParam != null && yearParam !== "" ? parseInt(yearParam, 10) : null;
+
+    let query = admin
       .from("holiday_custody")
-      .select("*")
+      .select("id, holiday_name, start_date, end_date, custodial_parent, year")
       .eq("case_id", caseId)
       .is("deleted_at", null)
       .order("year", { ascending: true })
       .order("start_date", { ascending: true });
+
+    if (yearFilter != null && !Number.isNaN(yearFilter)) {
+      query = query.eq("year", yearFilter);
+    }
+
+    const { data: rows, error } = await query;
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     return NextResponse.json(rows ?? []);
@@ -147,41 +158,3 @@ export async function PUT(req: NextRequest) {
   }
 }
 
-/**
- * DELETE /api/holiday-custody — soft delete by id (sets deleted_at = now()).
- */
-export async function DELETE(req: NextRequest) {
-  try {
-    const supabase = await createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-    const admin = getServiceRoleClient();
-    const caseId = await getCaseIdForUser(admin, user.id);
-    if (!caseId) return NextResponse.json({ error: "No case found" }, { status: 403 });
-
-    const { searchParams } = new URL(req.url);
-    const id = searchParams.get("id");
-    if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });
-
-    const { data: existing, error: fetchError } = await admin
-      .from("holiday_custody")
-      .select("id, case_id")
-      .eq("id", id)
-      .maybeSingle();
-
-    if (fetchError || !existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
-    if (existing.case_id !== caseId) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-
-    const { error } = await admin
-      .from("holiday_custody")
-      .update({ deleted_at: new Date().toISOString() })
-      .eq("id", id);
-
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-    return NextResponse.json({ ok: true });
-  } catch (e) {
-    console.error("[holiday-custody DELETE]", e);
-    return NextResponse.json({ error: "Failed to delete holiday custody" }, { status: 500 });
-  }
-}

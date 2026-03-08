@@ -40,13 +40,13 @@ export function CalendarYearView({
 
   useEffect(() => {
     if (!custodyOverlayOn || !caseId) return;
-    fetch("/api/holiday-custody")
+    fetch(`/api/holiday-custody?year=${year}`)
       .then((r) => (r.ok ? r.json() : []))
       .then((rows: { start_date: string; end_date: string; custodial_parent: string }[]) => {
         setHolidayOverrides(rows);
       })
       .catch(() => setHolidayOverrides([]));
-  }, [custodyOverlayOn, caseId]);
+  }, [custodyOverlayOn, caseId, year]);
 
   function getCustodyForDate(date: Date): "user" | "coparent" {
     return computeCustodyForDate(date, custodySchedule, {

@@ -191,6 +191,25 @@ export function ProfileContent({
   const [addFormSaving, setAddFormSaving] = useState(false);
   const addFormFileRef = useRef<HTMLInputElement>(null);
 
+  const [holidayYear, setHolidayYear] = useState(() => new Date().getFullYear());
+  const [holidays, setHolidays] = useState<{ id: string; holiday_name: string; start_date: string; end_date: string; custodial_parent: string; year: number }[]>([]);
+  const [holidaysLoading, setHolidaysLoading] = useState(false);
+  const [holidayFormName, setHolidayFormName] = useState("");
+  const [holidayFormStart, setHolidayFormStart] = useState("");
+  const [holidayFormEnd, setHolidayFormEnd] = useState("");
+  const [holidayFormAssigned, setHolidayFormAssigned] = useState<"user" | "coparent">("user");
+  const [holidayFormSaving, setHolidayFormSaving] = useState(false);
+
+  useEffect(() => {
+    if (!openCourtOrders || !caseId) return;
+    setHolidaysLoading(true);
+    fetch(`/api/holiday-custody?year=${holidayYear}`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data) => setHolidays(Array.isArray(data) ? data : []))
+      .catch(() => setHolidays([]))
+      .finally(() => setHolidaysLoading(false));
+  }, [openCourtOrders, holidayYear, caseId]);
+
   useEffect(() => {
     if (courtOrderDetailOpen && selectedCourtOrder) {
       const o = selectedCourtOrder;
@@ -1111,6 +1130,163 @@ export function ProfileContent({
               </div>
             )}
           </div>
+
+          {caseId && (
+            <div className="pt-4 mt-4 border-t border-border space-y-4">
+              <h3 className="text-sm font-semibold text-foreground">Holidays &amp; Special Days</h3>
+              <div className="flex flex-wrap items-center gap-2">
+                <Label htmlFor="holiday-year" className="text-xs text-foreground-secondary">Year</Label>
+                <select
+                  id="holiday-year"
+                  value={holidayYear}
+                  onChange={(e) => setHolidayYear(parseInt(e.target.value, 10))}
+                  className="h-8 rounded-card border border-border bg-background px-2 text-sm"
+                >
+                  {[new Date().getFullYear() - 1, new Date().getFullYear(), new Date().getFullYear() + 1].map((y) => (
+                    <option key={y} value={y}>{y}</option>
+                  ))}
+                </select>
+              </div>
+              {holidaysLoading ? (
+                <p className="text-sm text-foreground-secondary">Loading…</p>
+              ) : (
+                <div className="rounded-card border border-border bg-background overflow-hidden">
+                  {holidays.length === 0 ? (
+                    <p className="text-sm text-foreground-secondary py-3 px-2">No holidays or special days for this year.</p>
+                  ) : (
+                    <ul>
+                      {holidays.map((h) => (
+                        <li key={h.id} className="border-b border-border last:border-b-0 flex items-center justify-between gap-2 py-2 px-2 hover:bg-muted/30">
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium text-foreground truncate">{h.holiday_name}</p>
+                            <p className="text-xs text-foreground-secondary">
+                              {new Date(h.start_date).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                              {" – "}
+                              {new Date(h.end_date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                              {" · "}
+                              {h.custodial_parent === "user" ? "With you" : "With Co-Parent"}
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            className="p-1.5 rounded text-foreground-secondary hover:text-destructive hover:bg-muted"
+                            aria-label="Delete"
+                            onClick={async () => {
+                              const res = await fetch(`/api/holiday-custody/${h.id}`, { method: "DELETE" });
+                              if (res.ok) {
+                                setHolidays((prev) => prev.filter((x) => x.id !== h.id));
+                                router.refresh();
+                              }
+                            }}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+              <div className="rounded-card border border-border bg-muted/20 p-3 space-y-3">
+                <p className="text-xs font-medium text-foreground-secondary">Add holiday or special day</p>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <div>
+                    <Label htmlFor="holiday-name" className="text-xs">Holiday name</Label>
+                    <Input
+                      id="holiday-name"
+                      value={holidayFormName}
+                      onChange={(e) => setHolidayFormName(e.target.value)}
+                      placeholder="e.g. Spring Break"
+                      className="mt-0.5"
+                    />
+                  </div>
+                  <div className="flex gap-2">
+                    <div className="flex-1">
+                      <Label htmlFor="holiday-start" className="text-xs">Start date</Label>
+                      <Input
+                        id="holiday-start"
+                        type="date"
+                        value={holidayFormStart}
+                        onChange={(e) => setHolidayFormStart(e.target.value.slice(0, 10))}
+                        className="mt-0.5"
+                      />
+                    </div>
+                    <div className="flex-1">
+                      <Label htmlFor="holiday-end" className="text-xs">End date</Label>
+                      <Input
+                        id="holiday-end"
+                        type="date"
+                        value={holidayFormEnd}
+                        onChange={(e) => setHolidayFormEnd(e.target.value.slice(0, 10))}
+                        className="mt-0.5"
+                      />
+                    </div>
+                  </div>
+                </div>
+                <div>
+                  <Label className="text-xs block mb-1">Assigned to</Label>
+                  <div className="inline-flex rounded-full border border-border bg-background p-0.5">
+                    <button
+                      type="button"
+                      onClick={() => setHolidayFormAssigned("user")}
+                      className={cn(
+                        "px-3 py-1 text-xs rounded-full",
+                        holidayFormAssigned === "user" ? "bg-[#7B9E87] text-white" : "text-foreground-secondary hover:text-foreground"
+                      )}
+                    >
+                      With Me
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setHolidayFormAssigned("coparent")}
+                      className={cn(
+                        "px-3 py-1 text-xs rounded-full",
+                        holidayFormAssigned === "coparent" ? "bg-[#7B9E87] text-white" : "text-foreground-secondary hover:text-foreground"
+                      )}
+                    >
+                      With Co-Parent
+                    </button>
+                  </div>
+                </div>
+                <Button
+                  size="sm"
+                  className="rounded-full h-9 bg-[#7B9E87] hover:bg-[#6A8A78] text-white"
+                  disabled={holidayFormSaving || !holidayFormName.trim() || !holidayFormStart || !holidayFormEnd}
+                  onClick={async () => {
+                    setHolidayFormSaving(true);
+                    try {
+                      const res = await fetch("/api/holiday-custody", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          holiday_name: holidayFormName.trim(),
+                          start_date: holidayFormStart.slice(0, 10),
+                          end_date: holidayFormEnd.slice(0, 10),
+                          custodial_parent: holidayFormAssigned,
+                          year: holidayYear,
+                        }),
+                      });
+                      const data = await res.json().catch(() => ({}));
+                      if (res.ok) {
+                        setHolidayFormName("");
+                        setHolidayFormStart("");
+                        setHolidayFormEnd("");
+                        const row = data as { id: string; holiday_name: string; start_date: string; end_date: string; custodial_parent: string; year: number };
+                        setHolidays((prev) => [...prev, row]);
+                        router.refresh();
+                      } else {
+                        showErrorToast((data as { error?: string }).error ?? "Failed to add holiday");
+                      }
+                    } finally {
+                      setHolidayFormSaving(false);
+                    }
+                  }}
+                >
+                  {holidayFormSaving ? "Saving…" : "Save"}
+                </Button>
+              </div>
+            </div>
+          )}
 
           {(appModeProp === "coparenting" || appModeProp === "solo_coparenting") && caseId && (
             <div className="pt-4 mt-4 border-t border-border">

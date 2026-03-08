@@ -47,6 +47,15 @@ export type CustodyScheduleForOverlay = {
   manual_pattern?: (string | null)[] | null;
 } | null;
 
+export type HolidayCustodyRow = {
+  id: string;
+  holiday_name: string;
+  start_date: string;
+  end_date: string;
+  custodial_parent: string;
+  year: number;
+};
+
 interface CalendarMonthProps {
   year: number;
   month: number;
@@ -61,6 +70,9 @@ interface CalendarMonthProps {
   onCustodyOverlayChange?: (on: boolean) => void;
   appMode?: string | null;
   userId?: string;
+  holidays?: HolidayCustodyRow[];
+  kidsLabelUser?: string | null;
+  kidsLabelCoparent?: string | null;
 }
 
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -87,6 +99,9 @@ export function CalendarMonth({
   onCustodyOverlayChange,
   appMode = null,
   userId = "",
+  holidays = [],
+  kidsLabelUser = null,
+  kidsLabelCoparent = null,
 }: CalendarMonthProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -299,6 +314,33 @@ export function CalendarMonth({
     }
   }
 
+  /** For week row w (0-based), return bars to render: holiday overlap with startCol and span. */
+  function getBarsForWeek(w: number): { id: string; holiday_name: string; custodial_parent: string; startCol: number; span: number }[] {
+    const result: { id: string; holiday_name: string; custodial_parent: string; startCol: number; span: number }[] = [];
+    for (const h of holidays) {
+      let startCol = 7;
+      let endCol = -1;
+      for (let c = 0; c < 7; c++) {
+        const idx = w * 7 + c;
+        const key = cells[idx]?.key;
+        if (key && key >= h.start_date && key <= h.end_date) {
+          if (c < startCol) startCol = c;
+          if (c > endCol) endCol = c;
+        }
+      }
+      if (endCol >= 0) {
+        result.push({
+          id: h.id,
+          holiday_name: h.holiday_name,
+          custodial_parent: h.custodial_parent,
+          startCol,
+          span: endCol - startCol + 1,
+        });
+      }
+    }
+    return result;
+  }
+
   const isMonthView = viewMode === "month";
 
   return (
@@ -482,47 +524,77 @@ export function CalendarMonth({
         <CardContent className="pt-0.5">
           {viewMode === "month" ? (
             <>
-              <div className="grid grid-cols-7 gap-px rounded-card border border-gray-300 bg-gray-300">
+              <div
+                className="grid grid-cols-7 gap-px rounded-card border border-gray-300 bg-gray-300"
+                style={{ gridTemplateRows: `auto repeat(${rows * 2}, auto)` }}
+              >
                 {DAYS.map((day) => (
                   <div
                     key={day}
                     className="border-r border-b border-gray-300 bg-gray-200/95 px-1 py-1 text-center text-[11px] font-medium text-gray-600"
+                    style={{ gridRow: 1 }}
                   >
                     {day}
                   </div>
                 ))}
-                {cells.map(({ day, key }, i) => {
-                  const isToday =
-                    day != null &&
-                    year === todayYear &&
-                    month === todayMonth &&
-                    day === todayDate;
-                  const custody = key ? getCustodyForDateKey(key) : null;
-                  const custodyBg =
-                    custody === "user" ? "bg-green-50" : custody === "coparent" ? "bg-stone-100" : null;
+                {Array.from({ length: rows }, (_, w) => {
+                  const weekBars = getBarsForWeek(w);
+                  const labelUser = kidsLabelUser && kidsLabelUser.trim() !== "" ? kidsLabelUser : "you";
+                  const labelCoparent = kidsLabelCoparent && kidsLabelCoparent.trim() !== "" ? kidsLabelCoparent : "Co-Parent";
                   return (
-                  <div
-                    key={i}
-                    className={cn(
-                      "min-h-[100px] border-r border-b border-gray-300 p-1.5",
-                      !day && "bg-background-secondary/30",
-                      day != null && !isToday && !custodyBg && "bg-background",
-                      day != null && isToday && !custodyBg && "bg-[#EBE9E6]",
-                      custodyBg
-                    )}
-                  >
-                    {day != null && (
-                      <>
-                        <p
-                          className={cn(
-                            "text-sm font-medium",
-                            isToday ? "text-gray-800" : "text-gray-700"
-                          )}
-                        >
-                          {day}
-                        </p>
-                        <ul className="mt-1 space-y-1">
-                          {(eventsByDay[key!] ?? []).map((ev) => {
+                    <span key={`week-${w}`} style={{ display: "contents" }}>
+                      {weekBars.map((bar) => {
+                        const isUser = bar.custodial_parent === "user";
+                        const label = isUser ? `with ${labelUser}` : `with ${labelCoparent}`;
+                        return (
+                          <div
+                            key={bar.id}
+                            className={cn(
+                              "h-5 rounded-sm px-1 flex items-center border text-xs font-medium truncate",
+                              isUser ? "bg-green-100 border-green-300 text-green-900" : "bg-stone-200 border-stone-300 text-stone-800"
+                            )}
+                            style={{ gridRow: 2 + w * 2, gridColumn: `${bar.startCol + 1} / span ${bar.span}` }}
+                            title={`${bar.holiday_name} — ${label}`}
+                          >
+                            🌴 {bar.holiday_name} — {label}
+                          </div>
+                        );
+                      })}
+                      {[0, 1, 2, 3, 4, 5, 6].map((c) => {
+                        const i = w * 7 + c;
+                        const { day, key } = cells[i];
+                        const isToday =
+                          day != null &&
+                          year === todayYear &&
+                          month === todayMonth &&
+                          day === todayDate;
+                        const custody = key ? getCustodyForDateKey(key) : null;
+                        const custodyBg =
+                          custody === "user" ? "bg-green-50" : custody === "coparent" ? "bg-stone-100" : null;
+                        return (
+                          <div
+                            key={i}
+                            className={cn(
+                              "min-h-[100px] border-r border-b border-gray-300 p-1.5",
+                              !day && "bg-background-secondary/30",
+                              day != null && !isToday && !custodyBg && "bg-background",
+                              day != null && isToday && !custodyBg && "bg-[#EBE9E6]",
+                              custodyBg
+                            )}
+                            style={{ gridRow: 3 + w * 2, gridColumn: c + 1 }}
+                          >
+                            {day != null && (
+                              <>
+                                <p
+                                  className={cn(
+                                    "text-sm font-medium",
+                                    isToday ? "text-gray-800" : "text-gray-700"
+                                  )}
+                                >
+                                  {day}
+                                </p>
+                                <ul className="mt-1 space-y-1">
+                                  {(eventsByDay[key!] ?? []).map((ev) => {
                             const isCanceled = ev.status === "canceled";
                             const color = isCanceled
                               ? { bg: "bg-gray-100", dot: "bg-gray-400" }
@@ -574,11 +646,14 @@ export function CalendarMonth({
                               </li>
                             );
                           })}
-                        </ul>
-                      </>
-                    )}
-                  </div>
-                );
+                                </ul>
+                              </>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </span>
+                  );
                 })}
               </div>
               {filteredEvents.length === 0 && (

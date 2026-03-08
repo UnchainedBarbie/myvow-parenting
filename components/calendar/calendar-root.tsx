@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { CalendarMonth, type CalendarEventRow } from "@/components/calendar/calendar-month";
 import { UpcomingEventsList } from "@/components/calendar/upcoming-events-list";
 import { EventDetailModal } from "@/components/calendar/event-detail-modal";
-import type { CustodyOverridesMap } from "@/components/calendar/calendar-with-custody";
+import type { CustodyOverridesMap, HolidayCustodyRow } from "@/components/calendar/calendar-with-custody";
 
 type Child = { id: string; first_name: string };
 
@@ -44,6 +44,9 @@ interface CalendarRootProps {
   custodyOverlayOn?: boolean;
   onCustodyOverlayChange?: (on: boolean) => void;
   appMode?: string | null;
+  holidays?: HolidayCustodyRow[];
+  kidsLabelUser?: string | null;
+  kidsLabelCoparent?: string | null;
 }
 
 export function CalendarRoot({
@@ -61,6 +64,9 @@ export function CalendarRoot({
   custodyOverlayOn = false,
   onCustodyOverlayChange,
   appMode = null,
+  holidays = [],
+  kidsLabelUser = null,
+  kidsLabelCoparent = null,
 }: CalendarRootProps) {
   const router = useRouter();
   const [selectedEvent, setSelectedEvent] = useState<CalendarEventRow | null>(
@@ -99,6 +105,9 @@ export function CalendarRoot({
           onCustodyOverlayChange={onCustodyOverlayChange}
           appMode={appMode}
           userId={userId}
+          holidays={holidays}
+          kidsLabelUser={kidsLabelUser}
+          kidsLabelCoparent={kidsLabelCoparent}
         />
         {showUpcoming && (
           <UpcomingEventsList

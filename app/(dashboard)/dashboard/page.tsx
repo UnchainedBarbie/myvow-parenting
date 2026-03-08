@@ -235,7 +235,7 @@ export default async function DashboardPage() {
       }
     : null;
 
-  // Recent activity: last 5 actions across the app
+  // Recent activity: calendar events, expenses, documents (and messages) merged by created_at DESC, limit 10
   const [
     { data: recentExpensesRaw },
     { data: recentDocumentsRaw },
@@ -247,26 +247,26 @@ export default async function DashboardPage() {
       .select("id, description, created_at")
       .eq("case_id", caseId)
       .order("created_at", { ascending: false })
-      .limit(5),
+      .limit(10),
     admin
       .from("documents")
       .select("id, title, created_at")
       .eq("case_id", caseId)
       .order("created_at", { ascending: false })
-      .limit(5),
+      .limit(10),
     admin
       .from("calendar_events")
       .select("id, title, created_at")
       .eq("case_id", caseId)
       .is("deleted_at", null)
       .order("created_at", { ascending: false })
-      .limit(5),
+      .limit(10),
     admin
       .from("messages")
       .select("id, created_at")
       .eq("case_id", caseId)
       .order("created_at", { ascending: false })
-      .limit(5),
+      .limit(10),
   ]);
 
   type RecentActivityItem = {
@@ -311,7 +311,7 @@ export default async function DashboardPage() {
       (a, b) =>
         new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
     )
-    .slice(0, 5);
+    .slice(0, 10);
 
   // Pending event requests (from kids) — only those directed to this parent
   const isPrimary = membership?.is_primary === true;
@@ -684,87 +684,67 @@ export default async function DashboardPage() {
             )}
 
             <ReviewCard />
-
-            {/* Recent activity */}
-            <Card className="shadow-card border-border rounded-card">
-              <CardHeader className="pb-2 px-4 pt-4">
-                <CardTitle className="font-heading text-lg text-foreground">
-                  Recent activity
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="px-4 pb-4">
-                {recentActivity.length === 0 ? (
-                  <p className="text-sm text-foreground-secondary">
-                    Nothing yet.
-                  </p>
-                ) : (
-                  <ul className="space-y-2">
-                    {recentActivity.map((item) => (
-                      <li
-                        key={`${item.type}-${item.id}`}
-                        className="flex items-center justify-between gap-2 text-sm"
-                      >
-                        <div className="flex items-center gap-2 min-w-0">
-                          <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-[#F2F5EF] text-[#5B7A52]">
-                            {item.type === "expense" ? (
-                              <span className="text-[11px]">$</span>
-                            ) : item.type === "document" ? (
-                              <span className="text-[11px]">D</span>
-                            ) : item.type === "event" ? (
-                              <span className="text-[11px]">C</span>
-                            ) : (
-                              <span className="text-[11px]">M</span>
-                            )}
-                          </span>
-                          <div className="min-w-0">
-                            <p className="text-[11px] text-foreground-secondary">
-                              {item.label}
-                            </p>
-                            <p className="truncate text-sm text-foreground">
-                              {item.description}
-                            </p>
-                          </div>
-                        </div>
-                        <span className="shrink-0 text-[11px] text-foreground-secondary">
-                          {new Date(item.created_at).toLocaleDateString(
-                            "en-US",
-                            {
-                              month: "short",
-                              day: "numeric",
-                            }
-                          )}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </CardContent>
-            </Card>
               </>
             }
           />
         </div>
 
-        {/* Right: dove watermark ~35%, vertically centered */}
-        <div
-          className="hidden lg:flex lg:w-[35%] lg:max-w-[35%] lg:min-w-0 items-center justify-center shrink-0 py-8"
-          style={{ backgroundColor: "#FDFBF7" }}
-        >
-          <Link
-            href="/sage"
-            className="flex items-center justify-center transition-[opacity,transform] duration-200 opacity-40 hover:opacity-50 hover:scale-105 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#7B9E87] focus-visible:ring-offset-2 rounded-full"
-            aria-label="Open Sage"
-          >
-            <div style={{ isolation: "isolate" }}>
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src="/dove-translucent.png"
-                alt=""
-                className="w-[300px] min-w-[300px] max-w-full h-auto object-contain pointer-events-none select-none"
-                style={{ mixBlendMode: "multiply" }}
-              />
-            </div>
-          </Link>
+        {/* Right: Recent Activity */}
+        <div className="hidden lg:block lg:w-[35%] lg:max-w-[35%] lg:min-w-0 shrink-0">
+          <Card className="shadow-card border-border rounded-card sticky top-4">
+            <CardHeader className="pb-2 px-4 pt-4">
+              <CardTitle className="font-heading text-lg text-foreground">
+                Recent activity
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="px-4 pb-4">
+              {recentActivity.length === 0 ? (
+                <p className="text-sm text-foreground-secondary">
+                  Nothing yet.
+                </p>
+              ) : (
+                <ul className="space-y-2">
+                  {recentActivity.map((item) => (
+                    <li
+                      key={`${item.type}-${item.id}`}
+                      className="flex items-center justify-between gap-2 text-sm"
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-[#F2F5EF] text-[#5B7A52] shrink-0">
+                          {item.type === "expense" ? (
+                            <span className="text-[11px]">$</span>
+                          ) : item.type === "document" ? (
+                            <span className="text-[11px]">D</span>
+                          ) : item.type === "event" ? (
+                            <span className="text-[11px]">C</span>
+                          ) : (
+                            <span className="text-[11px]">M</span>
+                          )}
+                        </span>
+                        <div className="min-w-0">
+                          <p className="text-[11px] text-foreground-secondary">
+                            {item.label}
+                          </p>
+                          <p className="truncate text-sm text-foreground">
+                            {item.description}
+                          </p>
+                        </div>
+                      </div>
+                      <span className="shrink-0 text-[11px] text-foreground-secondary">
+                        {new Date(item.created_at).toLocaleDateString(
+                          "en-US",
+                          {
+                            month: "short",
+                            day: "numeric",
+                          }
+                        )}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </CardContent>
+          </Card>
         </div>
       </div>
     </div>

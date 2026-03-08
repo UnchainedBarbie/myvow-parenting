@@ -124,7 +124,7 @@ export type ParsedEvent = {
   notes: string | null;
   category: string;
   child_name: string | null;
-  visibility: "family" | "parents_only" | "private";
+  visibility: "family" | "parents_only" | "just_me_and_kids" | "private";
   confidence: number;
 };
 
@@ -161,6 +161,7 @@ export function parseEmailBody(subject: string, bodyText: string): ParsedEvent {
         const v = parsed.value.toLowerCase();
         if (v.includes("private")) result.visibility = "private";
         else if (v.includes("parent")) result.visibility = "parents_only";
+        else if (v.includes("kids")) result.visibility = "just_me_and_kids";
         else result.visibility = "family";
       }
     }
@@ -197,7 +198,7 @@ export function parseEmailBody(subject: string, bodyText: string): ParsedEvent {
     notes: result.notes || null,
     category: result.category,
     child_name: result.child || null,
-    visibility: result.visibility as "family" | "parents_only" | "private",
+    visibility: result.visibility as "family" | "parents_only" | "just_me_and_kids" | "private",
     confidence,
   };
 }

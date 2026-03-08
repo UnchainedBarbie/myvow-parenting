@@ -344,15 +344,17 @@ export function EventDetailModal({
 
   const currentDisplayStatus = status;
 
-  function visibilityLabel(value: "family" | "parents_only" | "private") {
+  function visibilityLabel(value: "family" | "parents_only" | "just_me_and_kids" | "private") {
     if (value === "parents_only") return "👩‍⚖️ Parents only";
     if (value === "private") return "🔒 Visible only to me";
+    if (value === "just_me_and_kids") return "Just me and kids";
     return "👨‍👩‍👧 Family";
   }
 
-  function visibilityHelper(value: "family" | "parents_only" | "private") {
+  function visibilityHelper(value: "family" | "parents_only" | "just_me_and_kids" | "private") {
     if (value === "parents_only") return "Kids won't see this.";
     if (value === "private") return "Only you can see this.";
+    if (value === "just_me_and_kids") return "Kids can view this. Co-parent won't see it.";
     return "Kids can view this.";
   }
 

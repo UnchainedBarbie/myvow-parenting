@@ -56,6 +56,7 @@ export default function KidsCalendarPage() {
     photo_url?: string | null;
     status: string;
   }[]>([]);
+  const [holidays, setHolidays] = useState<{ id: string; holiday_name: string; start_date: string; end_date: string; custodial_parent: string; year: number }[]>([]);
   const [notifications, setNotifications] = useState<NotificationRow[]>([]);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [editingRequest, setEditingRequest] = useState<{
@@ -79,7 +80,7 @@ export default function KidsCalendarPage() {
         fetch("/api/kids/notifications"),
       ]);
 
-      if (eventsRes.status === 401 || scheduleRes.status === 401 || requestsRes.status === 401 || notificationsRes.status === 401) {
+      if (eventsRes.status === 401 || scheduleRes.status === 401 || requestsRes.status === 401 || notificationsRes.status === 401 || holidaysRes.status === 401) {
         router.push("/kids-login");
         return;
       }
@@ -116,6 +117,9 @@ export default function KidsCalendarPage() {
 
       const notificationsData = notificationsRes.ok ? await notificationsRes.json().catch(() => []) : [];
       setNotifications(Array.isArray(notificationsData) ? notificationsData : []);
+
+      const holidaysData = holidaysRes.ok ? await holidaysRes.json().catch(() => []) : [];
+      setHolidays(Array.isArray(holidaysData) ? holidaysData : []);
     } catch {
       setError("Could not load calendar.");
       setEvents([]);
@@ -126,13 +130,13 @@ export default function KidsCalendarPage() {
 
   useEffect(() => {
     let cancelled = false;
-    loadData().then(() => {
+    loadData(year).then(() => {
       if (cancelled) return;
     });
     return () => {
       cancelled = true;
     };
-  }, [loadData]);
+  }, [loadData, year]);
 
   const todayCustody =
     custodySchedule &&
@@ -336,13 +340,6 @@ export default function KidsCalendarPage() {
                   const dateStr = reqDate.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
                   const custody = custodySchedule ? getCustodyFromRotation(reqDate, custodySchedule) : null;
                   const parentLabel = custody === "user" ? kidsLabelUser : custody === "coparent" ? kidsLabelCoparent : "your parent";
-                  const statusDisplay =
-                    req.status === "approved"
-                      ? { text: "✓ Added to calendar", className: "text-green-600" }
-                      : req.status === "declined"
-                        ? { text: "Not this time", className: "text-stone-400" }
-                        : { text: "Pending...", className: "text-stone-400" };
-                  const isPending = req.status === "pending";
                   return (
                     <li key={req.id} className="border-b border-[#E8E4DC] last:border-b-0 pb-3 last:pb-0">
                       <div className="flex items-start justify-between gap-2">
@@ -351,44 +348,42 @@ export default function KidsCalendarPage() {
                             {req.title} — {dateStr}
                           </p>
                           <p className="text-xs text-foreground-secondary mt-0.5">
-                            Sent to {parentLabel} · <span className={statusDisplay.className}>{statusDisplay.text}</span>
+                            Sent to {parentLabel}
                           </p>
                         </div>
-                        {isPending && (
-                          <div className="flex items-center gap-1 shrink-0">
-                            <button
-                              type="button"
-                              className="p-1.5 rounded-md hover:bg-[#E8E4DC] text-foreground-secondary hover:text-foreground"
-                              aria-label="Edit request"
-                              onClick={() =>
-                                setEditingRequest({
-                                  id: req.id,
-                                  title: req.title,
-                                  requested_date: req.requested_date,
-                                  requested_time: req.requested_time ?? null,
-                                  notes: req.notes ?? null,
-                                  photo_url: req.photo_url ?? null,
-                                })
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button
+                            type="button"
+                            className="p-1.5 rounded-md hover:bg-[#E8E4DC] text-foreground-secondary hover:text-foreground"
+                            aria-label="Edit request"
+                            onClick={() =>
+                              setEditingRequest({
+                                id: req.id,
+                                title: req.title,
+                                requested_date: req.requested_date,
+                                requested_time: req.requested_time ?? null,
+                                notes: req.notes ?? null,
+                                photo_url: req.photo_url ?? null,
+                              })
+                            }
+                          >
+                            ✏️
+                          </button>
+                          <button
+                            type="button"
+                            className="p-1.5 rounded-md hover:bg-[#E8E4DC] text-foreground-secondary hover:text-foreground"
+                            aria-label="Delete request"
+                            onClick={async () => {
+                              if (!confirm("Cancel this request?")) return;
+                              const res = await fetch(`/api/kids/event-requests/${req.id}`, { method: "DELETE" });
+                              if (res.ok) {
+                                setEventRequests((prev) => prev.filter((r) => r.id !== req.id));
                               }
-                            >
-                              ✏️
-                            </button>
-                            <button
-                              type="button"
-                              className="p-1.5 rounded-md hover:bg-[#E8E4DC] text-foreground-secondary hover:text-foreground"
-                              aria-label="Delete request"
-                              onClick={async () => {
-                                if (!confirm("Cancel this request?")) return;
-                                const res = await fetch(`/api/kids/event-requests/${req.id}`, { method: "DELETE" });
-                                if (res.ok) {
-                                  setEventRequests((prev) => prev.filter((r) => r.id !== req.id));
-                                }
-                              }}
-                            >
-                              🗑️
-                            </button>
-                          </div>
-                        )}
+                            }}
+                          >
+                            🗑️
+                          </button>
+                        </div>
                       </div>
                     </li>
                   );

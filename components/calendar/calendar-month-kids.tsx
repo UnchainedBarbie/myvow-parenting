@@ -60,6 +60,7 @@ interface CalendarMonthKidsProps {
     photo_url?: string | null;
   } | null;
   onEditDone?: () => void;
+  holidays?: { id: string; holiday_name: string; start_date: string; end_date: string; custodial_parent: string; year: number }[];
 }
 
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -153,6 +154,32 @@ export function CalendarMonthKids({
         cells.push({ day: null, key: null });
       }
     }
+  }
+
+  function getBarsForWeek(w: number): { id: string; holiday_name: string; custodial_parent: string; startCol: number; span: number }[] {
+    const result: { id: string; holiday_name: string; custodial_parent: string; startCol: number; span: number }[] = [];
+    for (const h of holidays) {
+      let startCol = 7;
+      let endCol = -1;
+      for (let c = 0; c < 7; c++) {
+        const idx = w * 7 + c;
+        const key = cells[idx]?.key;
+        if (key && key >= h.start_date && key <= h.end_date) {
+          if (c < startCol) startCol = c;
+          if (c > endCol) endCol = c;
+        }
+      }
+      if (endCol >= 0) {
+        result.push({
+          id: h.id,
+          holiday_name: h.holiday_name,
+          custodial_parent: h.custodial_parent,
+          startCol,
+          span: endCol - startCol + 1,
+        });
+      }
+    }
+    return result;
   }
 
   function goMonth(delta: number) {
@@ -340,96 +367,129 @@ export function CalendarMonthKids({
         </div>
       </CardHeader>
       <CardContent className="pt-0.5">
-        <div className="grid grid-cols-7 gap-px rounded-card border border-gray-300 bg-gray-300">
+        <div
+          className="grid grid-cols-7 gap-px rounded-card border border-gray-300 bg-gray-300"
+          style={{ gridTemplateRows: `auto repeat(${rows * 2}, auto)` }}
+        >
           {DAYS.map((day) => (
             <div
               key={day}
               className="border-r border-b border-gray-300 bg-gray-200/95 px-1 py-1 text-center text-[11px] font-medium text-gray-600"
+              style={{ gridRow: 1 }}
             >
               {day}
             </div>
           ))}
-          {cells.map(({ day, key }, i) => {
-            const isToday =
-              day != null &&
-              year === todayYear &&
-              month === todayMonth &&
-              day === todayDate;
-            const custody = key ? getCustodyForDateKey(key) : null;
-            const custodyBg =
-              custody === "user"
-                ? "bg-green-100"
-                : custody === "coparent"
-                  ? "bg-stone-200"
-                  : "bg-white";
-            const isFuture = key ? key > todayKey : false;
-            const isFirstDayOfNextBlock = key === firstDayOfNextBlockKey;
+          {Array.from({ length: rows }, (_, w) => {
+            const weekBars = getBarsForWeek(w);
+            const labelUser = kidsLabelUser.trim() !== "" ? kidsLabelUser : "Mom";
+            const labelCoparent = kidsLabelCoparent.trim() !== "" ? kidsLabelCoparent : "Dad";
             return (
-              <div
-                key={i}
-                className={cn(
-                  "min-h-[100px] border-r border-b border-gray-300 p-1.5",
-                  !day && "bg-background-secondary/30",
-                  day != null && custodyBg,
-                  isFuture && "cursor-pointer hover:ring-2 hover:ring-[#7B9E87] hover:ring-inset"
-                )}
-                onClick={day != null && isFuture && key ? () => openRequestModal(key) : undefined}
-                role={isFuture ? "button" : undefined}
-                aria-label={isFuture && key ? `Request event on ${key}` : undefined}
-              >
-                {day != null && (
-                  <>
-                    <p
+              <span key={`week-${w}`} style={{ display: "contents" }}>
+                {weekBars.map((bar) => {
+                  const isUser = bar.custodial_parent === "user";
+                  const label = isUser ? `with ${labelUser}` : `with ${labelCoparent}`;
+                  return (
+                    <div
+                      key={bar.id}
                       className={cn(
-                        "text-sm font-medium flex items-center gap-1",
-                        isToday ? "text-gray-900" : "text-gray-700"
+                        "h-5 rounded-sm px-1 flex items-center border text-xs font-medium truncate",
+                        isUser ? "bg-green-100 border-green-300 text-green-900" : "bg-stone-200 border-stone-300 text-stone-800"
                       )}
+                      style={{ gridRow: 2 + w * 2, gridColumn: `${bar.startCol + 1} / span ${bar.span}` }}
+                      title={`${bar.holiday_name} — ${label}`}
                     >
-                      {day}
-                      {isFirstDayOfNextBlock && (
-                        <span className="h-1.5 w-1.5 rounded-full bg-[#7B9E87] ring-2 ring-white shrink-0" aria-hidden />
+                      🌴 {bar.holiday_name} — {label}
+                    </div>
+                  );
+                })}
+                {[0, 1, 2, 3, 4, 5, 6].map((c) => {
+                  const i = w * 7 + c;
+                  const { day, key } = cells[i];
+                  const isToday =
+                    day != null &&
+                    year === todayYear &&
+                    month === todayMonth &&
+                    day === todayDate;
+                  const custody = key ? getCustodyForDateKey(key) : null;
+                  const custodyBg =
+                    custody === "user"
+                      ? "bg-green-100"
+                      : custody === "coparent"
+                        ? "bg-stone-200"
+                        : "bg-white";
+                  const isFuture = key ? key > todayKey : false;
+                  const isFirstDayOfNextBlock = key === firstDayOfNextBlockKey;
+                  return (
+                    <div
+                      key={i}
+                      className={cn(
+                        "min-h-[100px] border-r border-b border-gray-300 p-1.5",
+                        !day && "bg-background-secondary/30",
+                        day != null && custodyBg,
+                        isFuture && "cursor-pointer hover:ring-2 hover:ring-[#7B9E87] hover:ring-inset"
                       )}
-                    </p>
-                    <ul className="mt-1 space-y-1">
-                      {(eventsByDay[key!] ?? []).map((ev) => {
-                        const color = getCalendarEventColors(ev.event_type);
-                        const categoryLabel =
-                          EVENT_TYPE_LABELS[ev.event_type ?? ""] ??
-                          ev.event_type ??
-                          "Event";
-                        return (
-                          <li key={ev.id}>
-                            <div
-                              className={cn(
-                                "w-full text-left rounded-card px-2 py-1 text-xs shadow-sm",
-                                "bg-white/80 border border-gray-200/80",
-                                color.bg
-                              )}
-                            >
-                              <div className="flex items-center gap-1">
-                                <span
-                                  className={cn(
-                                    "inline-block h-2.5 w-2.5 rounded-full",
-                                    color.dot
-                                  )}
-                                />
-                                <span className="truncate font-semibold text-foreground">
-                                  {ev.title}
-                                </span>
-                              </div>
-                              <span className="mt-0.5 block truncate text-[10px] text-foreground-secondary/80">
-                                {formatTime(ev.start_time)
-                                  ? `${formatTime(ev.start_time)} · ${categoryLabel}`
-                                  : categoryLabel}
-                              </span>
-                            </div>
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  </>
-                )}
-              </div>
+                      style={{ gridRow: 3 + w * 2, gridColumn: c + 1 }}
+                      onClick={day != null && isFuture && key ? () => openRequestModal(key) : undefined}
+                      role={isFuture ? "button" : undefined}
+                      aria-label={isFuture && key ? `Request event on ${key}` : undefined}
+                    >
+                      {day != null && (
+                        <>
+                          <p
+                            className={cn(
+                              "text-sm font-medium flex items-center gap-1",
+                              isToday ? "text-gray-900" : "text-gray-700"
+                            )}
+                          >
+                            {day}
+                            {isFirstDayOfNextBlock && (
+                              <span className="h-1.5 w-1.5 rounded-full bg-[#7B9E87] ring-2 ring-white shrink-0" aria-hidden />
+                            )}
+                          </p>
+                          <ul className="mt-1 space-y-1">
+                            {(eventsByDay[key!] ?? []).map((ev) => {
+                              const color = getCalendarEventColors(ev.event_type);
+                              const categoryLabel =
+                                EVENT_TYPE_LABELS[ev.event_type ?? ""] ??
+                                ev.event_type ??
+                                "Event";
+                              return (
+                                <li key={ev.id}>
+                                  <div
+                                    className={cn(
+                                      "w-full text-left rounded-card px-2 py-1 text-xs shadow-sm",
+                                      "bg-white/80 border border-gray-200/80",
+                                      color.bg
+                                    )}
+                                  >
+                                    <div className="flex items-center gap-1">
+                                      <span
+                                        className={cn(
+                                          "inline-block h-2.5 w-2.5 rounded-full",
+                                          color.dot
+                                        )}
+                                      />
+                                      <span className="truncate font-semibold text-foreground">
+                                        {ev.title}
+                                      </span>
+                                    </div>
+                                    <span className="mt-0.5 block truncate text-[10px] text-foreground-secondary/80">
+                                      {formatTime(ev.start_time)
+                                        ? `${formatTime(ev.start_time)} · ${categoryLabel}`
+                                        : categoryLabel}
+                                    </span>
+                                  </div>
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
+              </span>
             );
           })}
         </div>

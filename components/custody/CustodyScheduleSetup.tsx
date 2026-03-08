@@ -371,29 +371,27 @@ export function CustodyScheduleSetup({
   }
 
   return (
-    <div className={cn(compact ? "" : "p-4 md:p-6 space-y-6")}>
+    <div className={cn(compact ? "" : "p-3 space-y-4")}>
       {!compact && (
-        <div>
-          <h2 className="font-heading text-xl font-semibold text-foreground mb-1">
-            What&apos;s your custody schedule?
-          </h2>
-        </div>
+        <p className="text-sm font-medium text-foreground-secondary">
+          What&apos;s your custody schedule?
+        </p>
       )}
 
-      <div className="grid grid-cols-2 gap-3 min-w-0">
+      <div className="grid grid-cols-2 gap-2 min-w-0">
         {SCHEDULE_OPTIONS.map((opt) => (
           <Card
             key={opt.value}
             className={cn(
-              "cursor-pointer transition-all rounded-card border-2 min-w-0 w-full",
+              "cursor-pointer transition-all rounded-card border min-w-0 w-full",
               scheduleType === opt.value
-                ? "border-[#7B9E87] shadow-md bg-[#EEF2E9]/30"
-                : "border-[#E8E4DC] bg-[#FDFBF7] hover:border-[#B0A899]"
+                ? "border-[#7B9E87] bg-[#EEF2E9]/30"
+                : "border-border bg-muted/20 hover:border-[#B0A899]"
             )}
             onClick={() => setScheduleType(opt.value)}
           >
-            <CardContent className="p-4 min-w-0">
-              <p className="font-medium text-foreground">{opt.label}</p>
+            <CardContent className="p-2.5 min-w-0">
+              <p className="text-sm font-medium text-foreground">{opt.label}</p>
               <p className="text-xs text-foreground-secondary mt-0.5">
                 {opt.description}
               </p>
@@ -514,7 +512,7 @@ export function CustodyScheduleSetup({
       {showRotationFields && (
         <div className="space-y-4">
           <div>
-            <Label htmlFor="custody-rotation-start" className="text-foreground">
+            <Label htmlFor="custody-rotation-start" className="text-sm text-foreground-secondary">
               My custody starts on
             </Label>
             <Input
@@ -522,12 +520,12 @@ export function CustodyScheduleSetup({
               type="date"
               value={rotationStartDate}
               onChange={(e) => setRotationStartDate(e.target.value)}
-              className="mt-1.5 rounded-card border-[#E8E4DC] max-w-[200px]"
+              className="mt-1 rounded-card border-border max-w-[200px]"
             />
           </div>
           {showWhoStartsFirst && (
             <div>
-              <Label className="text-foreground block mb-2">
+              <Label className="text-sm text-foreground-secondary block mb-2">
                 Who starts first?
               </Label>
               <div className="inline-flex rounded-full border border-[#E8E4DC] bg-[#F5F3EF] p-0.5">

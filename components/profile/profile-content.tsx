@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { showErrorToast } from "@/components/ui/toaster";
 import { CustodyScheduleSetup } from "@/components/custody/CustodyScheduleSetup";
+import { SchoolCalendarSection } from "@/components/profile/school-calendar-section";
 
 const COURT_ORDER_TYPES = [
   { value: "parenting_plan", label: "Parenting Plan" },
@@ -98,10 +99,29 @@ export type CoparentRow = {
   status: "not_invited" | "invited" | "connected";
 };
 
+const GRADE_OPTIONS: { value: string; label: string }[] = [
+  { value: "", label: "Select grade" },
+  { value: "PK", label: "Pre-K" },
+  { value: "K", label: "Kindergarten" },
+  { value: "1", label: "1st Grade" },
+  { value: "2", label: "2nd Grade" },
+  { value: "3", label: "3rd Grade" },
+  { value: "4", label: "4th Grade" },
+  { value: "5", label: "5th Grade" },
+  { value: "6", label: "6th Grade" },
+  { value: "7", label: "7th Grade" },
+  { value: "8", label: "8th Grade" },
+  { value: "9", label: "9th Grade" },
+  { value: "10", label: "10th Grade" },
+  { value: "11", label: "11th Grade" },
+  { value: "12", label: "12th Grade" },
+];
+
 export type ChildRow = {
   id: string;
   first_name: string;
   date_of_birth: string | null;
+  grade_level?: string | null;
   member_status: "not_invited" | "invited" | "active";
   invited_email?: string | null;
   invited_phone?: string | null;
@@ -153,7 +173,9 @@ export function ProfileContent({
   const [openYourInfo, setOpenYourInfo] = useState(false);
   const [openFamily, setOpenFamily] = useState(false);
   const [openCourtOrders, setOpenCourtOrders] = useState(false);
+  const [openCalendarSettings, setOpenCalendarSettings] = useState(false);
   const [openCustodySchedule, setOpenCustodySchedule] = useState(true);
+  const [openHolidays, setOpenHolidays] = useState(false);
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
   const [selectedCourtOrder, setSelectedCourtOrder] = useState<CourtOrderRow | null>(null);
   const [courtOrderDetailOpen, setCourtOrderDetailOpen] = useState(false);
@@ -192,13 +214,27 @@ export function ProfileContent({
   const addFormFileRef = useRef<HTMLInputElement>(null);
 
   const [holidayYear, setHolidayYear] = useState(() => new Date().getFullYear());
-  const [holidays, setHolidays] = useState<{ id: string; holiday_name: string; start_date: string; end_date: string; custodial_parent: string; year: number }[]>([]);
+  type HolidayRow = { id: string; holiday_name: string; start_date: string | null; end_date: string | null; custodial_parent: string; year: number; odd_year_parent?: string | null; even_year_parent?: string | null; notes?: string | null; is_relative?: boolean };
+  const [holidays, setHolidays] = useState<HolidayRow[]>([]);
   const [holidaysLoading, setHolidaysLoading] = useState(false);
+  const [holidayImporting, setHolidayImporting] = useState(false);
+  const [holidayImportMessage, setHolidayImportMessage] = useState<string | null>(null);
+  const [holidayImportCount, setHolidayImportCount] = useState(0);
+  const [holidayImportRelative, setHolidayImportRelative] = useState<string[]>([]);
   const [holidayFormName, setHolidayFormName] = useState("");
   const [holidayFormStart, setHolidayFormStart] = useState("");
   const [holidayFormEnd, setHolidayFormEnd] = useState("");
   const [holidayFormAssigned, setHolidayFormAssigned] = useState<"user" | "coparent">("user");
   const [holidayFormSaving, setHolidayFormSaving] = useState(false);
+  const [editingHolidayId, setEditingHolidayId] = useState<string | null>(null);
+  const [holidayEditSaving, setHolidayEditSaving] = useState(false);
+  const [holidayEditName, setHolidayEditName] = useState("");
+  const [holidayEditAssigned, setHolidayEditAssigned] = useState<"user" | "coparent" | "alternating">("user");
+  const [holidayEditOddYear, setHolidayEditOddYear] = useState<"user" | "coparent">("user");
+  const [holidayEditEvenYear, setHolidayEditEvenYear] = useState<"user" | "coparent">("coparent");
+  const [holidayEditStart, setHolidayEditStart] = useState("");
+  const [holidayEditEnd, setHolidayEditEnd] = useState("");
+  const [holidayEditNotes, setHolidayEditNotes] = useState("");
 
   useEffect(() => {
     if (!openCourtOrders || !caseId) return;
@@ -253,12 +289,14 @@ export function ProfileContent({
   const [showAddChildForm, setShowAddChildForm] = useState(false);
   const [addChildFirstName, setAddChildFirstName] = useState("");
   const [addChildDob, setAddChildDob] = useState("");
+  const [addChildGrade, setAddChildGrade] = useState("");
   const [addChildSaving, setAddChildSaving] = useState(false);
   const [addChildError, setAddChildError] = useState<string | null>(null);
   // Children section: edit
   const [editingChildId, setEditingChildId] = useState<string | null>(null);
   const [editChildFirstName, setEditChildFirstName] = useState("");
   const [editChildDob, setEditChildDob] = useState("");
+  const [editChildGrade, setEditChildGrade] = useState("");
   const [editChildSaving, setEditChildSaving] = useState(false);
   const [editChildError, setEditChildError] = useState<string | null>(null);
   // Children section: delete
@@ -477,6 +515,7 @@ export function ProfileContent({
         body: JSON.stringify({
           first_name: first,
           date_of_birth: addChildDob || null,
+          grade_level: addChildGrade || null,
           minor_no_account: false,
         }),
       });
@@ -488,6 +527,7 @@ export function ProfileContent({
       setShowAddChildForm(false);
       setAddChildFirstName("");
       setAddChildDob("");
+      setAddChildGrade("");
       router.refresh();
     } finally {
       setAddChildSaving(false);
@@ -498,6 +538,7 @@ export function ProfileContent({
     setEditingChildId(c.id);
     setEditChildFirstName(c.first_name);
     setEditChildDob(c.date_of_birth ? String(c.date_of_birth).slice(0, 10) : "");
+    setEditChildGrade(c.grade_level ?? "");
     setEditChildError(null);
   }
 
@@ -522,6 +563,7 @@ export function ProfileContent({
         body: JSON.stringify({
           first_name: first,
           date_of_birth: editChildDob || null,
+          grade_level: editChildGrade || null,
         }),
       });
       if (!res.ok) {
@@ -1130,11 +1172,58 @@ export function ProfileContent({
               </div>
             )}
           </div>
+        </div>
+      </CollapsibleCard>
+
+      <CollapsibleCard
+        open={openCalendarSettings}
+        onToggle={() => setOpenCalendarSettings((o) => !o)}
+        title="Calendar Settings"
+      >
+        <div className="flex flex-col gap-4">
+          <p className="text-sm text-foreground-secondary">Custody schedule, school calendars, and holidays</p>
+
+          {(appModeProp === "coparenting" || appModeProp === "solo_coparenting") && caseId && (
+            <div className="pt-4 border-t border-border">
+              <button
+                type="button"
+                className="flex items-center gap-2 w-full text-left"
+                onClick={() => setOpenCustodySchedule((o) => !o)}
+              >
+                {openCustodySchedule ? <ChevronDown className="h-4 w-4 text-foreground-secondary shrink-0" /> : <ChevronRight className="h-4 w-4 text-foreground-secondary shrink-0" />}
+                <h3 className="text-sm font-semibold text-foreground">Custody Schedule</h3>
+              </button>
+              {openCustodySchedule && (
+                <div className="mt-3 space-y-4">
+                  <CustodyScheduleSetup
+                    caseId={caseId}
+                    userId={userId}
+                    onSave={() => router.refresh()}
+                  />
+                </div>
+              )}
+            </div>
+          )}
 
           {caseId && (
-            <div className="pt-4 mt-4 border-t border-border space-y-4">
-              <h3 className="text-sm font-semibold text-foreground">Holidays &amp; Special Days</h3>
-              <div className="flex flex-wrap items-center gap-2">
+            <div id="school-calendar-section" className="pt-4 border-t border-border">
+              <SchoolCalendarSection caseId={caseId} children={children} />
+            </div>
+          )}
+
+          {caseId && (
+            <div className="pt-4 border-t border-border">
+              <button
+                type="button"
+                className="flex items-center gap-2 w-full text-left"
+                onClick={() => setOpenHolidays((o) => !o)}
+              >
+                {openHolidays ? <ChevronDown className="h-4 w-4 text-foreground-secondary shrink-0" /> : <ChevronRight className="h-4 w-4 text-foreground-secondary shrink-0" />}
+                <h3 className="text-sm font-semibold text-foreground">Holidays & Special Days</h3>
+              </button>
+              {openHolidays && (
+                <div className="mt-3 space-y-4">
+                  <div className="flex flex-wrap items-center gap-2">
                 <Label htmlFor="holiday-year" className="text-xs text-foreground-secondary">Year</Label>
                 <select
                   id="holiday-year"
@@ -1146,7 +1235,65 @@ export function ProfileContent({
                     <option key={y} value={y}>{y}</option>
                   ))}
                 </select>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={holidayImporting}
+                  onClick={async () => {
+                    setHolidayImportMessage(null);
+                    setHolidayImporting(true);
+                    try {
+                      const res = await fetch("/api/holiday-custody/import", { method: "POST" });
+                      const data = await res.json().catch(() => ({}));
+                      if (!res.ok) {
+                        showErrorToast(data?.error ?? "Import failed");
+                        return;
+                      }
+                      const count = typeof data.imported === "number" ? data.imported : 0;
+                      const relativeNames = Array.isArray(data.relative) ? data.relative : [];
+                      setHolidayImportCount(count);
+                      setHolidayImportMessage(
+                        relativeNames.length === 0
+                          ? `✅ ${count} holidays imported.`
+                          : "relative"
+                      );
+                      setHolidayImportRelative(relativeNames);
+                      const refetch = await fetch(`/api/holiday-custody?year=${holidayYear}`);
+                      const list = await refetch.json().catch(() => []);
+                      setHolidays(Array.isArray(list) ? list : []);
+                      setTimeout(() => { setHolidayImportMessage(null); setHolidayImportRelative([]); }, 8000);
+                    } finally {
+                      setHolidayImporting(false);
+                    }
+                  }}
+                  className="gap-1.5"
+                >
+                  {holidayImporting ? (
+                    <>
+                      <span className="inline-block h-3.5 w-3.5 rounded-full border-2 border-current border-t-transparent animate-spin" aria-hidden />
+                      Importing…
+                    </>
+                  ) : (
+                    "Import from court order"
+                  )}
+                </Button>
               </div>
+              {holidayImportMessage && (
+                <div className="text-sm text-green-600 dark:text-green-400 space-y-1">
+                  {holidayImportMessage === "relative" ? (
+                    <>
+                      <p>✅ {holidayImportCount} holidays imported.</p>
+                      <p>📅 {holidayImportRelative.join(", ")} need school calendar dates.</p>
+                      <p>
+                        <a href="#school-calendar-section" className="underline hover:no-underline focus:outline-none">Add your school calendar below</a> to complete these.
+                      </p>
+                    </>
+                  ) : (
+                    <p>{holidayImportMessage}</p>
+                  )}
+                </div>
+              )}
               {holidaysLoading ? (
                 <p className="text-sm text-foreground-secondary">Loading…</p>
               ) : (
@@ -1156,31 +1303,160 @@ export function ProfileContent({
                   ) : (
                     <ul>
                       {holidays.map((h) => (
-                        <li key={h.id} className="border-b border-border last:border-b-0 flex items-center justify-between gap-2 py-2 px-2 hover:bg-muted/30">
-                          <div className="min-w-0">
-                            <p className="text-sm font-medium text-foreground truncate">{h.holiday_name}</p>
-                            <p className="text-xs text-foreground-secondary">
-                              {new Date(h.start_date).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
-                              {" – "}
-                              {new Date(h.end_date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
-                              {" · "}
-                              {h.custodial_parent === "user" ? "With you" : "With Co-Parent"}
-                            </p>
+                        <li key={h.id} className="border-b border-border last:border-b-0">
+                          <div className="flex items-center justify-between gap-2 py-2 px-2 hover:bg-muted/30">
+                            <div className="min-w-0">
+                              <p className="text-sm font-medium text-foreground truncate">{h.holiday_name}</p>
+                              <p className="text-xs text-foreground-secondary">
+                                {h.start_date != null ? (
+                                  <>
+                                    {new Date(h.start_date).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                                    {" – "}
+                                    {new Date(h.end_date ?? h.start_date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                                    {" · "}
+                                    {h.custodial_parent === "user" ? "With you" : h.custodial_parent === "coparent" ? "With Co-Parent" : "Alternates (odd/even)"}
+                                  </>
+                                ) : (
+                                  <>
+                                    <span className="text-amber-600 dark:text-amber-500 text-sm">📅 Needs school calendar</span>
+                                    {" · "}
+                                    {h.custodial_parent === "user" ? "With you" : h.custodial_parent === "coparent" ? "With Co-Parent" : "Alternates (odd/even)"}
+                                  </>
+                                )}
+                              </p>
+                            </div>
+                            <div className="flex items-center gap-0.5 shrink-0">
+                              <button
+                                type="button"
+                                className="p-1.5 rounded text-foreground-secondary hover:text-foreground hover:bg-muted"
+                                aria-label="Edit"
+                                onClick={() => {
+                                  setEditingHolidayId(h.id);
+                                  setHolidayEditName(h.holiday_name);
+                                  setHolidayEditAssigned((h.custodial_parent === "user" || h.custodial_parent === "coparent" || h.custodial_parent === "alternating") ? h.custodial_parent : "user");
+                                  setHolidayEditOddYear((h.odd_year_parent === "user" || h.odd_year_parent === "coparent") ? h.odd_year_parent : "user");
+                                  setHolidayEditEvenYear((h.even_year_parent === "user" || h.even_year_parent === "coparent") ? h.even_year_parent : "coparent");
+                                  setHolidayEditStart(h.start_date ?? "");
+                                  setHolidayEditEnd(h.end_date ?? "");
+                                  setHolidayEditNotes(h.notes ?? "");
+                                }}
+                              >
+                                <Pencil className="h-4 w-4" />
+                              </button>
+                              <button
+                                type="button"
+                                className="p-1.5 rounded text-foreground-secondary hover:text-destructive hover:bg-muted"
+                                aria-label="Delete"
+                                onClick={async () => {
+                                  const res = await fetch(`/api/holiday-custody/${h.id}`, { method: "DELETE" });
+                                  if (res.ok) {
+                                    setHolidays((prev) => prev.filter((x) => x.id !== h.id));
+                                    if (editingHolidayId === h.id) setEditingHolidayId(null);
+                                    router.refresh();
+                                  }
+                                }}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </button>
+                            </div>
                           </div>
-                          <button
-                            type="button"
-                            className="p-1.5 rounded text-foreground-secondary hover:text-destructive hover:bg-muted"
-                            aria-label="Delete"
-                            onClick={async () => {
-                              const res = await fetch(`/api/holiday-custody/${h.id}`, { method: "DELETE" });
-                              if (res.ok) {
-                                setHolidays((prev) => prev.filter((x) => x.id !== h.id));
-                                router.refresh();
-                              }
-                            }}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
+                          {editingHolidayId === h.id && (
+                            <div className="border-t border-border bg-muted/20 px-3 py-3 space-y-3">
+                              <p className="text-xs font-medium text-foreground-secondary">Edit holiday</p>
+                              <div className="grid gap-2 sm:grid-cols-2">
+                                <div>
+                                  <Label className="text-xs">Holiday name</Label>
+                                  <Input value={holidayEditName} onChange={(e) => setHolidayEditName(e.target.value)} className="mt-0.5" placeholder="e.g. Spring Break" />
+                                </div>
+                                <div>
+                                  <Label className="text-xs block mb-1">Assigned to</Label>
+                                  <div className="inline-flex rounded-full border border-border bg-background p-0.5">
+                                    {(["user", "coparent", "alternating"] as const).map((v) => (
+                                      <button
+                                        key={v}
+                                        type="button"
+                                        onClick={() => setHolidayEditAssigned(v)}
+                                        className={cn("px-3 py-1 text-xs rounded-full", holidayEditAssigned === v ? "bg-[#7B9E87] text-white" : "text-foreground-secondary hover:text-foreground")}
+                                      >
+                                        {v === "user" ? "With Me" : v === "coparent" ? "With Co-Parent" : "Alternating"}
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+                              </div>
+                              {holidayEditAssigned === "alternating" && (
+                                <div className="grid gap-2 sm:grid-cols-2">
+                                  <div>
+                                    <Label className="text-xs">Odd year</Label>
+                                    <select value={holidayEditOddYear} onChange={(e) => setHolidayEditOddYear(e.target.value as "user" | "coparent")} className="h-8 w-full rounded-card border border-border bg-background px-2 text-sm mt-0.5">
+                                      <option value="user">With Me</option>
+                                      <option value="coparent">With Co-Parent</option>
+                                    </select>
+                                  </div>
+                                  <div>
+                                    <Label className="text-xs">Even year</Label>
+                                    <select value={holidayEditEvenYear} onChange={(e) => setHolidayEditEvenYear(e.target.value as "user" | "coparent")} className="h-8 w-full rounded-card border border-border bg-background px-2 text-sm mt-0.5">
+                                      <option value="user">With Me</option>
+                                      <option value="coparent">With Co-Parent</option>
+                                    </select>
+                                  </div>
+                                </div>
+                              )}
+                              <div className="grid gap-2 sm:grid-cols-2">
+                                <div>
+                                  <Label className="text-xs">Start date</Label>
+                                  <Input type="date" value={holidayEditStart} onChange={(e) => setHolidayEditStart(e.target.value.slice(0, 10))} className="mt-0.5" />
+                                </div>
+                                <div>
+                                  <Label className="text-xs">End date</Label>
+                                  <Input type="date" value={holidayEditEnd} onChange={(e) => setHolidayEditEnd(e.target.value.slice(0, 10))} className="mt-0.5" />
+                                </div>
+                              </div>
+                              <div>
+                                <Label className="text-xs">Notes (optional)</Label>
+                                <Input value={holidayEditNotes} onChange={(e) => setHolidayEditNotes(e.target.value)} className="mt-0.5" placeholder="Optional notes" />
+                              </div>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <Button size="sm" className="rounded-full h-9 bg-[#7B9E87] hover:bg-[#6A8A78] text-white" disabled={holidayEditSaving || !holidayEditName.trim()} onClick={async () => {
+                                  setHolidayEditSaving(true);
+                                  try {
+                                    const payload: Record<string, unknown> = {
+                                      holiday_name: holidayEditName.trim(),
+                                      custodial_parent: holidayEditAssigned,
+                                      odd_year_parent: holidayEditAssigned === "alternating" ? holidayEditOddYear : null,
+                                      even_year_parent: holidayEditAssigned === "alternating" ? holidayEditEvenYear : null,
+                                      start_date: holidayEditStart ? holidayEditStart.slice(0, 10) : null,
+                                      end_date: holidayEditEnd ? holidayEditEnd.slice(0, 10) : null,
+                                      notes: holidayEditNotes.trim() || null,
+                                    };
+                                    if (h.is_relative && (holidayEditStart || holidayEditEnd)) payload.is_relative = false;
+                                    const res = await fetch(`/api/holiday-custody/${h.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+                                    const data = await res.json().catch(() => ({}));
+                                    if (res.ok) {
+                                      setHolidays((prev) => prev.map((x) => (x.id === h.id ? (data as HolidayRow) : x)));
+                                      setEditingHolidayId(null);
+                                      router.refresh();
+                                    } else {
+                                      showErrorToast((data as { error?: string }).error ?? "Failed to update holiday");
+                                    }
+                                  } finally {
+                                    setHolidayEditSaving(false);
+                                  }
+                                }}>
+                                  {holidayEditSaving ? "Saving…" : "Save"}
+                                </Button>
+                                <Button type="button" variant="outline" size="sm" className="rounded-full h-9" disabled={holidayEditSaving} onClick={() => setEditingHolidayId(null)}>Cancel</Button>
+                                <Button type="button" variant="ghost" size="sm" className="rounded-full h-9 text-destructive hover:text-destructive hover:bg-destructive/10" disabled={holidayEditSaving} onClick={async () => {
+                                  const res = await fetch(`/api/holiday-custody/${h.id}`, { method: "DELETE" });
+                                  if (res.ok) {
+                                    setHolidays((prev) => prev.filter((x) => x.id !== h.id));
+                                    setEditingHolidayId(null);
+                                    router.refresh();
+                                  }
+                                }}>Delete</Button>
+                              </div>
+                            </div>
+                          )}
                         </li>
                       ))}
                     </ul>
@@ -1285,22 +1561,8 @@ export function ProfileContent({
                   {holidayFormSaving ? "Saving…" : "Save"}
                 </Button>
               </div>
-            </div>
-          )}
-
-          {(appModeProp === "coparenting" || appModeProp === "solo_coparenting") && caseId && (
-            <div className="pt-4 mt-4 border-t border-border">
-              <CollapsibleCard
-                open={openCustodySchedule}
-                onToggle={() => setOpenCustodySchedule((o) => !o)}
-                title="Custody Schedule"
-              >
-                <CustodyScheduleSetup
-                  caseId={caseId}
-                  userId={userId}
-                  onSave={() => router.refresh()}
-                />
-              </CollapsibleCard>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -1523,6 +1785,18 @@ export function ProfileContent({
                   onChange={(e) => setAddChildDob(e.target.value)}
                 />
               </div>
+              <div>
+                <Label className="text-xs font-medium">Grade</Label>
+                <select
+                  className="mt-1 h-9 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  value={addChildGrade}
+                  onChange={(e) => setAddChildGrade(e.target.value)}
+                >
+                  {GRADE_OPTIONS.map((o) => (
+                    <option key={o.value || "empty"} value={o.value}>{o.label}</option>
+                  ))}
+                </select>
+              </div>
               {addChildError && <p className="text-xs text-destructive">{addChildError}</p>}
               <div className="flex gap-2">
                 <Button type="submit" size="sm" className="rounded-full h-8 text-xs bg-[#7B9E87] hover:bg-[#6A8A78] text-white" disabled={addChildSaving}>
@@ -1533,7 +1807,7 @@ export function ProfileContent({
                   size="sm"
                   variant="outline"
                   className="rounded-full h-8 text-xs"
-                  onClick={() => { setShowAddChildForm(false); setAddChildError(null); setAddChildFirstName(""); setAddChildDob(""); }}
+                  onClick={() => { setShowAddChildForm(false); setAddChildError(null); setAddChildFirstName(""); setAddChildDob(""); setAddChildGrade(""); }}
                   disabled={addChildSaving}
                 >
                   Cancel
@@ -1733,6 +2007,7 @@ export function ProfileContent({
                   <col className="w-16" />
                   <col className="w-28" />
                   <col className="w-24" />
+                  <col className="w-24" />
                   <col className="w-28" />
                   <col className="w-28" />
                   <col className="w-20" />
@@ -1743,6 +2018,7 @@ export function ProfileContent({
                     <th className="py-2 px-2 text-left font-medium text-foreground-secondary whitespace-nowrap">Role</th>
                     <th className="py-2 px-2 text-left font-medium text-foreground-secondary whitespace-nowrap">Age</th>
                     <th className="py-2 px-2 text-left font-medium text-foreground-secondary whitespace-nowrap">DOB</th>
+                    <th className="py-2 px-2 text-left font-medium text-foreground-secondary whitespace-nowrap">Grade</th>
                     <th className="py-2 px-2 text-left font-medium text-foreground-secondary whitespace-nowrap">Status</th>
                     <th className="py-2 px-2 text-left font-medium text-foreground-secondary whitespace-nowrap">Kids Access</th>
                     <th className="py-2 px-2 text-left font-medium text-foreground-secondary whitespace-nowrap">
@@ -1768,6 +2044,7 @@ export function ProfileContent({
                       <td className="py-2 px-2 whitespace-nowrap text-stone-500">Co-Parent</td>
                       <td className="py-2 px-2 whitespace-nowrap text-stone-500">—</td>
                       <td className="py-2 px-2 whitespace-nowrap text-stone-500">—</td>
+                      <td className="py-2 px-2 whitespace-nowrap text-stone-500">—</td>
                       <td className="py-2 px-2 whitespace-nowrap">
                         {coparent.status === "not_invited" && (
                           <button type="button" className="text-primary hover:underline" onClick={() => setShowAddCoparentForm(true)}>Invite</button>
@@ -1787,7 +2064,7 @@ export function ProfileContent({
                   {[...children].sort((a, b) => a.first_name.localeCompare(b.first_name)).map((c) => (
                     <tr key={c.id} className="border-b border-stone-100 last:border-b-0">
                       {editingChildId === c.id ? (
-                        <td colSpan={8} className="py-2 px-2 align-top">
+                        <td colSpan={9} className="py-2 px-2 align-top">
                           <form onSubmit={(e) => handleEditChildSave(e, c.id)} className="flex flex-wrap items-end gap-2 min-w-0">
                             <div className="min-w-[100px]">
                               <Label className="text-xs font-medium">First name *</Label>
@@ -1796,6 +2073,14 @@ export function ProfileContent({
                             <div className="w-[120px]">
                               <Label className="text-xs font-medium">Date of birth</Label>
                               <Input type="date" className="mt-1 h-8 text-xs" value={editChildDob} onChange={(e) => setEditChildDob(e.target.value)} />
+                            </div>
+                            <div className="w-[100px]">
+                              <Label className="text-xs font-medium">Grade</Label>
+                              <select className="mt-1 h-8 w-full text-xs rounded-md border border-input bg-background px-2" value={editChildGrade} onChange={(e) => setEditChildGrade(e.target.value)}>
+                                {GRADE_OPTIONS.map((o) => (
+                                  <option key={o.value || "empty"} value={o.value}>{o.label}</option>
+                                ))}
+                              </select>
                             </div>
                             {editChildError && <p className="text-xs text-destructive w-full">{editChildError}</p>}
                             <div className="flex gap-1">
@@ -1825,7 +2110,9 @@ export function ProfileContent({
                           <td className="py-2 px-2 whitespace-nowrap text-stone-500">Child</td>
                           <td className="py-2 px-2 whitespace-nowrap text-stone-500">{formatAge(c.date_of_birth)}</td>
                           <td className="py-2 px-2 whitespace-nowrap text-stone-500 truncate" title={formatDate(c.date_of_birth)}>{formatDate(c.date_of_birth)}</td>
-                          <td className="py-2 px-2 whitespace-nowrap text-stone-500">—</td>
+                          <td className="py-2 px-2 whitespace-nowrap text-stone-500">
+                            {GRADE_OPTIONS.find((o) => o.value === (c.grade_level ?? ""))?.label ?? (c.grade_level ? c.grade_level : "—")}
+                          </td>
                           <td className="py-2 px-2 whitespace-nowrap">
                             {c.pin_set_at ? (
                               <div>

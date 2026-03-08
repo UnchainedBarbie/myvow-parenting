@@ -38,7 +38,7 @@ export default async function ProfilePage() {
     .eq("id", user.id)
     .single();
 
-  let children: { id: string; first_name: string; date_of_birth: string | null; member_status: "not_invited" | "invited" | "active"; invited_email: string | null; invited_phone: string | null; case_id?: string | null; profile_image?: string | null; pin_set_at?: string | null; kid_sage_tone?: string | null }[] = [];
+  let children: { id: string; first_name: string; date_of_birth: string | null; grade_level: string | null; member_status: "not_invited" | "invited" | "active"; invited_email: string | null; invited_phone: string | null; case_id?: string | null; profile_image?: string | null; pin_set_at?: string | null; kid_sage_tone?: string | null }[] = [];
   let courtOrders: CourtOrderRow[] = [];
   let coparent: { id: string | null; name: string; email: string | null; status: "not_invited" | "invited" | "connected" } | null = null;
 
@@ -66,7 +66,7 @@ export default async function ProfilePage() {
     const childrenResult = await admin
       .from("children")
       .select(
-        "id, first_name, date_of_birth, member_status, invited_email, invited_phone, case_id, profile_image, pin_set_at, kid_sage_tone"
+        "id, first_name, date_of_birth, grade_level, member_status, invited_email, invited_phone, case_id, profile_image, pin_set_at, kid_sage_tone"
       )
       .eq("case_id", caseId)
       .is("deleted_at", null)
@@ -79,11 +79,12 @@ export default async function ProfilePage() {
       error: childrenResult.error ?? null,
     });
 
-    const rawChildren = (childrenResult.data ?? []) as { id: string; first_name: string; date_of_birth: string | null; member_status?: string | null; invited_email?: string | null; invited_phone?: string | null; case_id?: string | null; profile_image?: string | null; pin_set_at?: string | null; kid_sage_tone?: string | null }[];
+    const rawChildren = (childrenResult.data ?? []) as { id: string; first_name: string; date_of_birth: string | null; grade_level: string | null; member_status?: string | null; invited_email?: string | null; invited_phone?: string | null; case_id?: string | null; profile_image?: string | null; pin_set_at?: string | null; kid_sage_tone?: string | null }[];
     children = rawChildren.map((c) => ({
       id: c.id,
       first_name: c.first_name,
       date_of_birth: c.date_of_birth,
+      grade_level: c.grade_level ?? null,
       member_status: (c.member_status === "invited" || c.member_status === "active" ? c.member_status : "not_invited") as "not_invited" | "invited" | "active",
       invited_email: c.invited_email ?? null,
       invited_phone: c.invited_phone ?? null,

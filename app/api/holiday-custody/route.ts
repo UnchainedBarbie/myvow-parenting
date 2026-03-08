@@ -31,7 +31,7 @@ export async function GET(request: NextRequest) {
 
     let query = admin
       .from("holiday_custody")
-      .select("id, holiday_name, start_date, end_date, custodial_parent, year")
+      .select("id, holiday_name, start_date, end_date, custodial_parent, year, odd_year_parent, even_year_parent, notes, is_relative")
       .eq("case_id", caseId)
       .is("deleted_at", null)
       .order("year", { ascending: true })

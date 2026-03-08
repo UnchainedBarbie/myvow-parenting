@@ -4,7 +4,7 @@ import { getServiceRoleClient } from "@/lib/supabase/server";
 
 /**
  * POST /api/children/add
- * Body: { first_name: string; date_of_birth?: string | null }
+ * Body: { first_name: string; date_of_birth?: string | null; grade_level?: string | null }
  * Creates a child for the authenticated user's case.
  */
 export async function POST(req: NextRequest) {
@@ -29,6 +29,10 @@ export async function POST(req: NextRequest) {
       body.date_of_birth == null || body.date_of_birth === ""
         ? null
         : String(body.date_of_birth).slice(0, 10);
+    const grade_level =
+      body.grade_level == null || body.grade_level === ""
+        ? null
+        : String(body.grade_level).trim();
     const minorNoAccount = body.minor_no_account === true;
     const member_status = minorNoAccount ? "active" : "not_invited";
 
@@ -38,9 +42,10 @@ export async function POST(req: NextRequest) {
         case_id: membership.case_id,
         first_name,
         date_of_birth: date_of_birth || null,
+        grade_level: grade_level || null,
         member_status,
       })
-      .select("id, first_name, date_of_birth, member_status")
+      .select("id, first_name, date_of_birth, grade_level, member_status")
       .single();
 
     if (error) {

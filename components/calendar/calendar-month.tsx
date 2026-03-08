@@ -44,6 +44,7 @@ export type CustodyScheduleForOverlay = {
   schedule_type: string;
   rotation_start_date: string | null;
   user_starts_first: boolean | null;
+  manual_pattern?: (string | null)[] | null;
 } | null;
 
 interface CalendarMonthProps {
@@ -102,19 +103,29 @@ export function CalendarMonth({
   const hasCustodySchedule = !!custodySchedule;
 
   /**
-   * Custody for a single date. Resolution order: (a) overridesMap, (b) rotation, (c) manual + no override → no tint.
+   * Custody for a single date. Manual: use 14-day pattern only (no overrides). Other types: override then rotation.
    * dateKey must be YYYY-MM-DD (e.g. from calendar cell key).
    */
   function getCustodyForDateKey(dateKey: string): "user" | "coparent" | null {
     if (!custodySchedule || !custodyOverlayOn) return null;
     const dateString = /^\d{4}-\d{2}-\d{2}/.test(dateKey) ? dateKey.slice(0, 10) : dateKey;
-    const override = custodyOverrides[dateString];
+    const [y, m, d] = dateString.split("-").map(Number);
+    const date = new Date(y, m - 1, d);
+    if (custodySchedule.schedule_type === "manual") {
+      if (dateKey.includes("03-15")) {
+        console.log("[CalendarWithCustody] computing custody for Mar 15:", {
+          schedule: custodySchedule,
+          has_pattern: !!custodySchedule?.manual_pattern,
+        });
+      }
+      return getCustodyFromRotation(date, custodySchedule);
+    }
+    if (custodySchedule.schedule_type === "school_year") return null;
+    const override = custodyOverrides?.[dateString];
+    console.log("[getCustodyForDateKey]", dateKey, "override:", override);
     if (override === "user") return "user";
     if (override === "coparent") return "coparent";
     if (override === "neither") return null;
-    if (custodySchedule.schedule_type === "manual" || custodySchedule.schedule_type === "school_year") return null;
-    const [y, m, d] = dateString.split("-").map(Number);
-    const date = new Date(y, m - 1, d);
     return getCustodyFromRotation(date, custodySchedule);
   }
 

@@ -1,76 +1,100 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
-import { getCalendarEventColors } from "@/lib/categoryColors";
-
-type KidCalendarEvent = {
-  id: string;
-  title: string;
-  event_type: string | null;
-  start_time: string;
-  end_time: string | null;
-};
-
-function formatDate(iso: string) {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleDateString(undefined, {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-  });
-}
-
-function formatTime(iso: string | null) {
-  if (!iso) return "";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleTimeString(undefined, {
-    hour: "numeric",
-    minute: "2-digit",
-  });
-}
+import { getCustodyFromRotation } from "@/lib/calendarCustody";
+import {
+  CalendarMonthKids,
+  type CalendarEventRowKids,
+  type CustodyScheduleForOverlay,
+} from "@/components/calendar/calendar-month-kids";
 
 export default function KidsCalendarPage() {
   const router = useRouter();
-  const [events, setEvents] = useState<KidCalendarEvent[]>([]);
+  const today = new Date();
+  const [year, setYear] = useState(today.getFullYear());
+  const [month, setMonth] = useState(today.getMonth() + 1);
+  const [events, setEvents] = useState<CalendarEventRowKids[]>([]);
+  const [custodySchedule, setCustodySchedule] = useState<CustodyScheduleForOverlay>(null);
+  const [kidsLabelUser, setKidsLabelUser] = useState<string>("Your parent");
+  const [kidsLabelCoparent, setKidsLabelCoparent] = useState<string>("Co-parent");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const loadData = useCallback(async () => {
+    try {
+      const [eventsRes, scheduleRes, caseRes] = await Promise.all([
+        fetch("/api/kids/calendar/events"),
+        fetch("/api/kids/custody-schedule"),
+        fetch("/api/kids/case-details"),
+      ]);
+
+      if (eventsRes.status === 401 || scheduleRes.status === 401) {
+        router.push("/kids/login");
+        return;
+      }
+
+      const eventsData = (await eventsRes.json().catch(() => ({}))) as {
+        events?: CalendarEventRowKids[];
+        message?: string;
+      };
+      if (!eventsRes.ok) {
+        setError(eventsData.message ?? "Could not load calendar.");
+        setEvents([]);
+      } else {
+        setEvents(eventsData.events ?? []);
+      }
+
+      const scheduleData = scheduleRes.ok
+        ? await scheduleRes.json().catch(() => null)
+        : null;
+      setCustodySchedule(
+        scheduleData && typeof scheduleData === "object" && scheduleData.schedule_type
+          ? scheduleData
+          : null
+      );
+
+      const caseData = caseRes.ok
+        ? await caseRes.json().catch(() => ({}))
+        : {};
+      const labels = caseData as { kids_label_user?: string | null; kids_label_coparent?: string | null };
+      if (labels.kids_label_user) setKidsLabelUser(labels.kids_label_user);
+      if (labels.kids_label_coparent) setKidsLabelCoparent(labels.kids_label_coparent);
+    } catch {
+      setError("Could not load calendar.");
+      setEvents([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [router]);
+
   useEffect(() => {
     let cancelled = false;
-    async function load() {
-      try {
-        const res = await fetch("/api/kids/calendar/events");
-        const data = (await res.json().catch(() => ({}))) as {
-          events?: KidCalendarEvent[];
-          message?: string;
-        };
-        if (cancelled) return;
-        if (!res.ok) {
-          if (res.status === 401) {
-            router.push("/kids/login");
-            return;
-          }
-          setError(data.message ?? "Could not load calendar.");
-          return;
-        }
-        setEvents(data.events ?? []);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    }
-    void load();
+    loadData().then(() => {
+      if (cancelled) return;
+    });
     return () => {
       cancelled = true;
     };
-  }, [router]);
+  }, [loadData]);
+
+  const todayCustody =
+    custodySchedule &&
+    (() => {
+      const d = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+      return getCustodyFromRotation(d, custodySchedule);
+    })();
+
+  const todayBanner =
+    todayCustody === "user"
+      ? { text: `Today you're with ${kidsLabelUser}`, className: "bg-[#7B9E87] text-white" }
+      : todayCustody === "coparent"
+        ? { text: `Today you're with ${kidsLabelCoparent}`, className: "bg-stone-200 text-stone-800" }
+        : { text: "Check with your parents about today", className: "bg-stone-100 text-stone-600" };
 
   return (
-    <div className="w-full max-w-xl space-y-4">
+    <div className="w-full max-w-2xl mx-auto space-y-4">
       <div className="flex items-center justify-between gap-2">
         <Button
           type="button"
@@ -87,59 +111,32 @@ export default function KidsCalendarPage() {
         <div className="w-16" />
       </div>
 
-      <Card className="border border-[#E8E4DC] bg-white/80 shadow-sm rounded-2xl">
-        <div className="px-4 py-3 border-b border-[#E8E4DC]">
-          <p className="text-sm font-medium text-[#3D3D3D]">
-            Family events
-          </p>
-          <p className="text-[11px] text-[#6B6B6B]">
-            These are events your whole family can see.
-          </p>
-        </div>
-        <div className="px-4 py-3 space-y-2 max-h-[420px] overflow-y-auto">
-          {loading ? (
-            <p className="text-sm text-foreground-secondary">Loading…</p>
-          ) : error ? (
-            <p className="text-sm text-alert">{error}</p>
-          ) : events.length === 0 ? (
-            <p className="text-sm text-foreground-secondary">
-              No family events yet.
-            </p>
-          ) : (
-            events.map((event) => {
-              const color = getCalendarEventColors(event.event_type);
-              return (
-                <div
-                  key={event.id}
-                  className="flex items-center gap-3 rounded-xl border border-[#E8E4DC] bg-[#FDFBF7] px-3 py-2"
-                >
-                  <div className="flex flex-col items-center justify-center w-16 shrink-0">
-                    <span className="text-[11px] font-medium text-[#6B6B6B]">
-                      {formatDate(event.start_time)}
-                    </span>
-                    {formatTime(event.start_time) && (
-                      <span className="text-[11px] text-[#8A8A8A]">
-                        {formatTime(event.start_time)}
-                      </span>
-                    )}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span
-                        className={`inline-block h-2.5 w-2.5 rounded-full ${color.dot}`}
-                      />
-                      <p className="truncate text-sm font-semibold text-[#3D3D3D]">
-                        {event.title}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              );
-            })
-          )}
-        </div>
-      </Card>
+      <div
+        className={todayBanner.className + " rounded-2xl px-4 py-3 text-center text-sm font-medium"}
+        role="status"
+      >
+        {todayBanner.text}
+      </div>
+
+      {loading ? (
+        <p className="text-sm text-foreground-secondary">Loading calendar…</p>
+      ) : error ? (
+        <p className="text-sm text-alert">{error}</p>
+      ) : (
+        <CalendarMonthKids
+          year={year}
+          month={month}
+          events={events}
+          custodySchedule={custodySchedule ?? null}
+          custodyOverrides={{}}
+          kidsLabelUser={kidsLabelUser}
+          kidsLabelCoparent={kidsLabelCoparent}
+          onMonthChange={(y, m) => {
+            setYear(y);
+            setMonth(m);
+          }}
+        />
+      )}
     </div>
   );
 }
-

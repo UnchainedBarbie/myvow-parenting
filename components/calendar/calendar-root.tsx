@@ -22,6 +22,7 @@ export type CustodyScheduleForOverlay = {
   schedule_type: string;
   rotation_start_date: string | null;
   user_starts_first: boolean | null;
+  manual_pattern?: (string | null)[] | null;
 } | null;
 
 interface CalendarRootProps {

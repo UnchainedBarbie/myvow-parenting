@@ -42,7 +42,7 @@ export default function KidsDocumentsPage() {
         if (cancelled) return;
         if (!res.ok) {
           if (res.status === 401) {
-            router.push("/kids/login");
+            router.push("/kids-login");
             return;
           }
           setError(data.message ?? "Could not load documents.");

@@ -63,7 +63,7 @@ export default function KidsSagePage() {
         };
         if (cancelled) return;
         if (!res.ok) {
-          router.push("/kids/login");
+          router.push("/kids-login");
           return;
         }
         setMe({

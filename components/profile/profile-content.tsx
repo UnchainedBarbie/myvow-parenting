@@ -6,7 +6,7 @@ import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { ChevronRight, ChevronDown, FileText, Image, Trash2, Pencil, X, Download, UserPlus, Copy } from "lucide-react";
+import { ChevronRight, ChevronDown, FileText, Image, Trash2, Pencil, X, Download, UserPlus, Copy, Info } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { showErrorToast } from "@/components/ui/toaster";
@@ -268,6 +268,11 @@ export function ProfileContent({
   // My Ingest Email
   const [ingestEmail, setIngestEmail] = useState<string | null>(null);
   const [ingestEmailLoading, setIngestEmailLoading] = useState(true);
+  // Kids calendar labels (for kids view)
+  const [kidsLabelUser, setKidsLabelUser] = useState("Mom");
+  const [kidsLabelCoparent, setKidsLabelCoparent] = useState("Dad");
+  const [kidsLabelsLoading, setKidsLabelsLoading] = useState(false);
+  const [kidsLabelsSaving, setKidsLabelsSaving] = useState(false);
   // Kids Access modal (Set up access: PIN or Email invite)
   const [kidsAccessModalChild, setKidsAccessModalChild] = useState<ChildRow | null>(null);
   const [kidsAccessPin, setKidsAccessPin] = useState("");
@@ -309,6 +314,37 @@ export function ProfileContent({
       .finally(() => { if (!cancelled) setFamilyCodeLoading(false); });
     return () => { cancelled = true; };
   }, []);
+
+  useEffect(() => {
+    if (!caseId) return;
+    let cancelled = false;
+    setKidsLabelsLoading(true);
+    fetch("/api/case-details")
+      .then((res) => res.json().catch(() => ({})))
+      .then((data: { kids_label_user?: string | null; kids_label_coparent?: string | null }) => {
+        if (cancelled) return;
+        if (data.kids_label_user != null && data.kids_label_user !== "") setKidsLabelUser(data.kids_label_user);
+        if (data.kids_label_coparent != null && data.kids_label_coparent !== "") setKidsLabelCoparent(data.kids_label_coparent);
+      })
+      .finally(() => { if (!cancelled) setKidsLabelsLoading(false); });
+    return () => { cancelled = true; };
+  }, [caseId]);
+
+  async function saveKidsLabels() {
+    if (!caseId) return;
+    setKidsLabelsSaving(true);
+    try {
+      const res = await fetch("/api/case-details", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kids_label_user: kidsLabelUser.trim() || null, kids_label_coparent: kidsLabelCoparent.trim() || null }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) showErrorToast((data as { error?: string }).error ?? "Failed to save");
+    } finally {
+      setKidsLabelsSaving(false);
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -1153,6 +1189,55 @@ export function ProfileContent({
             )}
           </div>
 
+          {/* Kids calendar labels — how parents are shown in kids view */}
+          {caseId && (
+            <div className="rounded-card border border-border bg-muted/20 p-3 space-y-3">
+              {kidsLabelsLoading ? (
+                <p className="text-sm text-foreground-secondary">Loading…</p>
+              ) : (
+                <>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="kids-label-user" className="text-xs font-medium text-foreground">What do your kids call you?</Label>
+                      <div className="flex gap-2 items-center">
+                        <Input
+                          id="kids-label-user"
+                          type="text"
+                          value={kidsLabelUser}
+                          onChange={(e) => setKidsLabelUser(e.target.value)}
+                          onBlur={() => saveKidsLabels()}
+                          placeholder="e.g. Mom, Dad, Mama, Papa, Mum..."
+                          className="h-9 text-sm flex-1"
+                        />
+                        <Button type="button" size="sm" variant="outline" className="rounded-full h-9 text-xs shrink-0" onClick={saveKidsLabels} disabled={kidsLabelsSaving}>
+                          {kidsLabelsSaving ? "…" : "Save"}
+                        </Button>
+                      </div>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="kids-label-coparent" className="text-xs font-medium text-foreground">What do your kids call their other parent?</Label>
+                      <div className="flex gap-2 items-center">
+                        <Input
+                          id="kids-label-coparent"
+                          type="text"
+                          value={kidsLabelCoparent}
+                          onChange={(e) => setKidsLabelCoparent(e.target.value)}
+                          onBlur={() => saveKidsLabels()}
+                          placeholder="e.g. Mom, Dad, Mama, Papa, Mum..."
+                          className="h-9 text-sm flex-1"
+                        />
+                        <Button type="button" size="sm" variant="outline" className="rounded-full h-9 text-xs shrink-0" onClick={saveKidsLabels} disabled={kidsLabelsSaving}>
+                          {kidsLabelsSaving ? "…" : "Save"}
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                  <p className="text-xs text-foreground-secondary">This is how your children will see parents labeled in their calendar view.</p>
+                </>
+              )}
+            </div>
+          )}
+
           <div className="flex flex-wrap items-center gap-2">
             {!showAddCoparentForm && !showAddChildForm && (
               <>
@@ -1390,174 +1475,145 @@ export function ProfileContent({
           )}
 
           {(coparent != null || children.length > 0) ? (
-            <div className="max-w-2xl rounded-card border border-border bg-background overflow-hidden">
-              <div className="flex items-center py-2 px-2 border-b border-border text-xs font-medium text-foreground-secondary bg-muted/40 gap-2">
-                <span className="w-28 shrink-0">Name</span>
-                <span className="w-20 shrink-0">Role</span>
-                <span className="w-16 shrink-0">Age</span>
-                <span className="w-32 shrink-0">Date of birth</span>
-                <span className="w-20 shrink-0">Status</span>
-                <span className="w-28 shrink-0">Kids Access</span>
-                <span className="w-24 shrink-0">Sage tone</span>
-                <span className="flex-1 text-right">Actions</span>
-              </div>
-              <ul>
-                {coparent != null && (
-                  <li className="border-b border-border">
-                    <div className="flex items-center py-2 px-2 gap-2">
-                      <span className="w-28 shrink-0 text-sm font-medium truncate" title={coparent.name || "Co-Parent"}>
-                        {coparent.status === "not_invited" ? "—" : coparent.name || "—"}
+            <div className="overflow-x-auto w-full rounded-card border border-border bg-background">
+              <table className="table-fixed w-full text-xs">
+                <colgroup>
+                  <col className="w-32" />
+                  <col className="w-24" />
+                  <col className="w-16" />
+                  <col className="w-28" />
+                  <col className="w-24" />
+                  <col className="w-28" />
+                  <col className="w-28" />
+                  <col className="w-20" />
+                </colgroup>
+                <thead>
+                  <tr className="border-b border-stone-100 bg-muted/40">
+                    <th className="py-2 px-2 text-left font-medium text-foreground-secondary whitespace-nowrap">Name</th>
+                    <th className="py-2 px-2 text-left font-medium text-foreground-secondary whitespace-nowrap">Role</th>
+                    <th className="py-2 px-2 text-left font-medium text-foreground-secondary whitespace-nowrap">Age</th>
+                    <th className="py-2 px-2 text-left font-medium text-foreground-secondary whitespace-nowrap">DOB</th>
+                    <th className="py-2 px-2 text-left font-medium text-foreground-secondary whitespace-nowrap">Status</th>
+                    <th className="py-2 px-2 text-left font-medium text-foreground-secondary whitespace-nowrap">Kids Access</th>
+                    <th className="py-2 px-2 text-left font-medium text-foreground-secondary whitespace-nowrap">
+                      <span className="inline-flex items-center gap-1">
+                        Sage Tone
+                        <span
+                          title="Controls how Sage AI communicates with this child — simpler language for younger children, more direct for older ones"
+                          className="inline-flex text-stone-400 hover:text-stone-600"
+                        >
+                          <Info className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                        </span>
                       </span>
-                      <span className="w-20 shrink-0 text-xs text-foreground-secondary">Co-Parent</span>
-                      <span className="w-16 shrink-0 text-xs text-foreground-secondary">—</span>
-                      <span className="w-32 shrink-0 text-xs text-foreground-secondary">—</span>
-                      <span className="w-20 shrink-0">
+                    </th>
+                    <th className="py-2 px-2 text-right font-medium text-foreground-secondary whitespace-nowrap">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {coparent != null && (
+                    <tr className="border-b border-stone-100">
+                      <td className="py-2 px-2 whitespace-nowrap truncate font-medium text-foreground" title={coparent.name || "Co-Parent"}>
+                        {coparent.status === "not_invited" ? "—" : coparent.name || "—"}
+                      </td>
+                      <td className="py-2 px-2 whitespace-nowrap text-stone-500">Co-Parent</td>
+                      <td className="py-2 px-2 whitespace-nowrap text-stone-500">—</td>
+                      <td className="py-2 px-2 whitespace-nowrap text-stone-500">—</td>
+                      <td className="py-2 px-2 whitespace-nowrap">
                         {coparent.status === "not_invited" && (
-                          <button
-                            type="button"
-                            className="text-xs text-primary hover:underline"
-                            onClick={() => setShowAddCoparentForm(true)}
-                          >
-                            Invite
-                          </button>
+                          <button type="button" className="text-primary hover:underline" onClick={() => setShowAddCoparentForm(true)}>Invite</button>
                         )}
                         {coparent.status === "invited" && (
-                          <span className="text-xs rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200 px-2 py-0.5 font-medium">Pending</span>
+                          <span className="rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200 px-2 py-0.5 font-medium">Pending</span>
                         )}
                         {coparent.status === "connected" && (
-                          <span className="text-xs rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200 px-2 py-0.5 font-medium">Active</span>
+                          <span className="rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200 px-2 py-0.5 font-medium">Active</span>
                         )}
-                      </span>
-                      <span className="w-28 shrink-0" />
-                      <span className="w-24 shrink-0" />
-                      <div className="flex-1 min-w-0" />
-                    </div>
-                  </li>
-                )}
-                {[...children].sort((a, b) => a.first_name.localeCompare(b.first_name)).map((c) => (
-                  <li key={c.id} className="border-b border-border last:border-b-0">
-                    {editingChildId === c.id ? (
-                      <form onSubmit={(e) => handleEditChildSave(e, c.id)} className="flex flex-wrap items-end gap-2 py-2 px-2 min-w-0">
-                        <div className="flex-1 min-w-[100px]">
-                          <Label className="text-xs font-medium">First name *</Label>
-                          <Input className="mt-1 h-8 text-sm" value={editChildFirstName} onChange={(e) => setEditChildFirstName(e.target.value)} required />
-                        </div>
-                        <div className="w-[120px]">
-                          <Label className="text-xs font-medium">Date of birth</Label>
-                          <Input type="date" className="mt-1 h-8 text-sm" value={editChildDob} onChange={(e) => setEditChildDob(e.target.value)} />
-                        </div>
-                        {editChildError && <p className="text-xs text-destructive w-full">{editChildError}</p>}
-                        <div className="flex gap-1">
-                          <Button type="submit" size="sm" className="rounded-full h-8 text-xs bg-[#7B9E87] hover:bg-[#6A8A78] text-white" disabled={editChildSaving}>Save</Button>
-                          <Button type="button" size="sm" variant="outline" className="rounded-full h-8 text-xs" onClick={cancelEditChild} disabled={editChildSaving}>Cancel</Button>
-                        </div>
-                      </form>
-                    ) : (
-                      <div className="flex items-center py-2 px-2 gap-2">
-                        <button
-                          type="button"
-                          className="flex items-center gap-2 w-32 shrink-0 text-left"
-                          onClick={() => {
-                            setAvatarTargetChildId(c.id);
-                            avatarFileRef.current?.click();
-                          }}
-                        >
-                          {c.profile_image ? (
-                            <img
-                              src={c.profile_image}
-                              alt={c.first_name}
-                              className="h-7 w-7 rounded-full object-cover border border-border/60 bg-emerald-50"
-                            />
-                          ) : (
-                            <div className="h-7 w-7 rounded-full bg-emerald-50 text-emerald-800 flex items-center justify-center text-xs font-medium">
-                              {c.first_name?.charAt(0).toUpperCase() ?? ""}
+                      </td>
+                      <td className="py-2 px-2 whitespace-nowrap text-stone-500">—</td>
+                      <td className="py-2 px-2 whitespace-nowrap text-stone-500">—</td>
+                      <td className="py-2 px-2 whitespace-nowrap text-right" />
+                    </tr>
+                  )}
+                  {[...children].sort((a, b) => a.first_name.localeCompare(b.first_name)).map((c) => (
+                    <tr key={c.id} className="border-b border-stone-100 last:border-b-0">
+                      {editingChildId === c.id ? (
+                        <td colSpan={8} className="py-2 px-2 align-top">
+                          <form onSubmit={(e) => handleEditChildSave(e, c.id)} className="flex flex-wrap items-end gap-2 min-w-0">
+                            <div className="min-w-[100px]">
+                              <Label className="text-xs font-medium">First name *</Label>
+                              <Input className="mt-1 h-8 text-xs" value={editChildFirstName} onChange={(e) => setEditChildFirstName(e.target.value)} required />
                             </div>
-                          )}
-                          <span
-                            className="text-sm font-medium truncate text-foreground"
-                            title={c.first_name}
-                          >
-                            {c.first_name}
-                          </span>
-                        </button>
-                        <span className="w-20 shrink-0 text-xs text-foreground-secondary">Child</span>
-                        <span className="w-16 shrink-0 text-xs text-foreground-secondary">{formatAge(c.date_of_birth)}</span>
-                        <span className="w-32 shrink-0 text-xs text-foreground-secondary">{formatDate(c.date_of_birth)}</span>
-                        <span className="w-20 shrink-0 text-xs text-foreground-secondary">—</span>
-                        <div className="w-28 shrink-0">
-                          {c.pin_set_at ? (
-                            <div className="flex flex-col gap-0.5">
-                              <span className="text-xs text-foreground-secondary">PIN set ✓</span>
+                            <div className="w-[120px]">
+                              <Label className="text-xs font-medium">Date of birth</Label>
+                              <Input type="date" className="mt-1 h-8 text-xs" value={editChildDob} onChange={(e) => setEditChildDob(e.target.value)} />
+                            </div>
+                            {editChildError && <p className="text-xs text-destructive w-full">{editChildError}</p>}
+                            <div className="flex gap-1">
+                              <Button type="submit" size="sm" className="rounded-full h-8 text-xs bg-[#7B9E87] hover:bg-[#6A8A78] text-white" disabled={editChildSaving}>Save</Button>
+                              <Button type="button" size="sm" variant="outline" className="rounded-full h-8 text-xs" onClick={cancelEditChild} disabled={editChildSaving}>Cancel</Button>
+                            </div>
+                          </form>
+                        </td>
+                      ) : (
+                        <>
+                          <td className="py-2 px-2 whitespace-nowrap">
+                            <div className="flex items-center gap-1.5 min-w-0 max-w-full">
                               <button
                                 type="button"
-                                className="text-xs text-primary hover:underline w-fit"
-                                onClick={() => openKidsAccessModal(c)}
+                                className="shrink-0 text-left"
+                                onClick={() => { setAvatarTargetChildId(c.id); avatarFileRef.current?.click(); }}
                               >
-                                Reset PIN
+                                {c.profile_image ? (
+                                  <img src={c.profile_image} alt={c.first_name} className="h-6 w-6 rounded-full object-cover border border-border/60 bg-emerald-50" />
+                                ) : (
+                                  <div className="h-6 w-6 rounded-full bg-emerald-50 text-emerald-800 flex items-center justify-center font-medium">{c.first_name?.charAt(0).toUpperCase() ?? ""}</div>
+                                )}
                               </button>
+                              <span className="font-medium text-foreground truncate min-w-0" title={c.first_name}>{c.first_name}</span>
                             </div>
-                          ) : (
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="outline"
-                              className="rounded-full h-7 text-xs"
-                              onClick={() => openKidsAccessModal(c)}
+                          </td>
+                          <td className="py-2 px-2 whitespace-nowrap text-stone-500">Child</td>
+                          <td className="py-2 px-2 whitespace-nowrap text-stone-500">{formatAge(c.date_of_birth)}</td>
+                          <td className="py-2 px-2 whitespace-nowrap text-stone-500 truncate" title={formatDate(c.date_of_birth)}>{formatDate(c.date_of_birth)}</td>
+                          <td className="py-2 px-2 whitespace-nowrap text-stone-500">—</td>
+                          <td className="py-2 px-2 whitespace-nowrap">
+                            {c.pin_set_at ? (
+                              <div>
+                                <span className="text-stone-500">PIN set</span>
+                                <button type="button" className="text-primary hover:underline block text-left" onClick={() => openKidsAccessModal(c)}>Reset PIN</button>
+                              </div>
+                            ) : (
+                              <Button type="button" size="sm" variant="outline" className="rounded-full text-xs px-2 py-1 h-auto" onClick={() => openKidsAccessModal(c)}>Set up access</Button>
+                            )}
+                          </td>
+                          <td className="py-2 px-2 whitespace-nowrap">
+                            <select
+                              title="How Sage communicates with this child"
+                              value={c.kid_sage_tone ?? "default"}
+                              onChange={(e) => handleSageToneChange(c.id, e.target.value)}
+                              disabled={sageToneSavingId === c.id}
+                              className="h-6 w-full max-w-full rounded-md border border-input bg-background px-1 py-0.5 text-xs text-foreground"
                             >
-                              Set up access
-                            </Button>
-                          )}
-                        </div>
-                        <div className="w-24 shrink-0">
-                          <select
-                            value={c.kid_sage_tone ?? "default"}
-                            onChange={(e) => handleSageToneChange(c.id, e.target.value)}
-                            disabled={sageToneSavingId === c.id}
-                            className="flex h-7 w-full max-w-full rounded-md border border-input bg-background px-1.5 py-0.5 text-xs text-foreground"
-                          >
-                            <option value="younger">Younger</option>
-                            <option value="default">Default</option>
-                            <option value="older">Older</option>
-                          </select>
-                        </div>
-                        <div className="flex-1 min-w-0" />
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          <button
-                            type="button"
-                            className="text-xs text-primary hover:underline"
-                            onClick={() => {
-                              setChildInviteTarget(c);
-                              setChildInviteEmail(c.invited_email ?? "");
-                              setChildInvitePhone(c.invited_phone ?? "");
-                              setChildInviteError(null);
-                            }}
-                            disabled={childInviteSaving}
-                          >
-                            {c.invited_email || c.invited_phone ? "Resend invite" : "Invite"}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => startEditChild(c)}
-                            className="p-1 rounded text-gray-400 hover:text-gray-600"
-                            aria-label="Edit child"
-                          >
-                            <Pencil className="h-3.5 w-3.5" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => openDeleteChildConfirm(c.id, c.first_name)}
-                            disabled={deletingChildId === c.id}
-                            className="p-1 rounded text-gray-400 hover:text-gray-600"
-                            aria-label="Remove child"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </li>
-                ))}
-              </ul>
+                              <option value="younger">Younger</option>
+                              <option value="default">Default</option>
+                              <option value="older">Older</option>
+                            </select>
+                          </td>
+                          <td className="py-2 px-2 whitespace-nowrap text-right">
+                            <div className="flex items-center justify-end gap-0.5">
+                              <button type="button" className="text-primary hover:underline text-xs" onClick={() => { setChildInviteTarget(c); setChildInviteEmail(c.invited_email ?? ""); setChildInvitePhone(c.invited_phone ?? ""); setChildInviteError(null); }} disabled={childInviteSaving}>
+                                {c.invited_email || c.invited_phone ? "Resend" : "Invite"}
+                              </button>
+                              <button type="button" onClick={() => startEditChild(c)} className="p-0.5 rounded text-stone-400 hover:text-stone-600" aria-label="Edit child"><Pencil className="h-3.5 w-3.5" /></button>
+                              <button type="button" onClick={() => openDeleteChildConfirm(c.id, c.first_name)} disabled={deletingChildId === c.id} className="p-0.5 rounded text-stone-400 hover:text-stone-600" aria-label="Remove child"><Trash2 className="h-3.5 w-3.5" /></button>
+                            </div>
+                          </td>
+                        </>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           ) : !showAddCoparentForm && !showAddChildForm ? (
             <div className="rounded-card border border-border bg-background overflow-hidden">

@@ -118,10 +118,13 @@ export function CalendarWithCustody({
   year,
   month,
   appMode = null,
+  kidsLabelUser = null,
+  kidsLabelCoparent = null,
 }: CalendarWithCustodyProps) {
   const [custodySchedule, setCustodySchedule] = useState<CustodyScheduleFromApi>(null);
   const [custodyOverrides, setCustodyOverrides] = useState<CustodyOverridesMap>({});
   const [custodyOverlayOn, setCustodyOverlayOn] = useState(getDefaultOverlayOn);
+  const [holidays, setHolidays] = useState<HolidayCustodyRow[]>([]);
 
   const refetchCustodyOverrides = useCallback(() => {
     fetch("/api/custody-day-overrides", { cache: "no-store" })
@@ -216,6 +219,14 @@ export function CalendarWithCustody({
     window.addEventListener("myvowCustodyDayOverridesSaved", onSaved);
     return () => window.removeEventListener("myvowCustodyDayOverridesSaved", onSaved);
   }, [refetchCustodyOverrides]);
+
+  const currentYear = year ?? new Date().getFullYear();
+  useEffect(() => {
+    fetch(`/api/holiday-custody?year=${currentYear}`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data) => setHolidays(Array.isArray(data) ? data : []))
+      .catch(() => setHolidays([]));
+  }, [currentYear]);
 
   function handleCustodyOverlayChange(next: boolean) {
     setCustodyOverlayOn(next);

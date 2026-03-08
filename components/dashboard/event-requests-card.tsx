@@ -67,7 +67,10 @@ function mergeInitialValues(
   const merged = { ...ai };
   (Object.keys(kid) as (keyof AddEventFormInitialValues)[]).forEach((k) => {
     const v = kid[k];
-    if (v !== undefined && v !== null && String(v).trim() !== "") merged[k] = v;
+    if (v !== undefined && v !== null && String(v).trim() !== "") {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (merged as any)[k] = v;
+    }
   });
   return merged;
 }

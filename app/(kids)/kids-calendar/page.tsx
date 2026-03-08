@@ -294,6 +294,7 @@ export default function KidsCalendarPage() {
               setEditingRequest(null);
               loadData(year);
             }}
+            holidays={holidays}
           />
 
           <section className="rounded-2xl border border-[#E8E4DC] bg-[#FDFBF7] p-4">

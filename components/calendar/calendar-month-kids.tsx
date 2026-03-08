@@ -60,7 +60,7 @@ interface CalendarMonthKidsProps {
     photo_url?: string | null;
   } | null;
   onEditDone?: () => void;
-  holidays?: { id: string; holiday_name: string; start_date: string; end_date: string; custodial_parent: string; year: number }[];
+  holidays?: { id: string; holiday_name: string; start_date: string; end_date: string; custodial_parent: string }[];
 }
 
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -87,6 +87,7 @@ export function CalendarMonthKids({
   onRequestModalOpened,
   editingRequest = null,
   onEditDone,
+  holidays = [],
 }: CalendarMonthKidsProps) {
   const [requestModalOpen, setRequestModalOpen] = useState(false);
   const [requestDateKey, setRequestDateKey] = useState<string | null>(null);

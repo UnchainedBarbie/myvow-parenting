@@ -107,13 +107,15 @@ export default function KidsCalendarPage() {
 
   const custodySwitchText = custodySwitchInfo && custodySwitchInfo.nextOwner
     ? custodySwitchInfo.daysUntilSwitch === 0
-      ? `Switching to ${custodySwitchInfo.nextOwner === "user" ? kidsLabelUser : kidsLabelCoparent} today`
+      ? `Today you switch to ${custodySwitchInfo.nextOwner === "user" ? kidsLabelUser : kidsLabelCoparent}`
       : custodySwitchInfo.daysUntilSwitch === 1
         ? `Switching to ${custodySwitchInfo.nextOwner === "user" ? kidsLabelUser : kidsLabelCoparent} tomorrow`
         : `${custodySwitchInfo.daysUntilSwitch} more days with ${todayCustody === "user" ? kidsLabelUser : kidsLabelCoparent}`
     : null;
 
   const firstDayOfNextBlockKey = custodySwitchInfo?.firstDayOfNextBlockKey ?? null;
+
+  const [openRequestWithNoDate, setOpenRequestWithNoDate] = useState(false);
 
   const next7DaysEvents = useMemo(() => {
     const start = new Date(today.getFullYear(), today.getMonth(), today.getDate());
@@ -131,27 +133,20 @@ export default function KidsCalendarPage() {
 
   return (
     <div className="w-full max-w-2xl mx-auto space-y-4">
-      <div className="flex items-center justify-between gap-2">
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="h-8 rounded-full text-xs"
-          onClick={() => router.push("/kids")}
-        >
-          ← Back
-        </Button>
+      <div className="flex items-center justify-center">
         <h1 className="font-heading text-lg text-[#3D3D3D]">
           Your calendar
         </h1>
-        <div className="w-16" />
       </div>
 
       <div
-        className={todayBanner.className + " rounded-2xl px-4 py-3 text-center text-sm font-medium"}
+        className={todayBanner.className + " rounded-2xl px-4 py-3 text-center"}
         role="status"
       >
-        {todayBanner.text}
+        <p className="text-sm font-medium">{todayBanner.text}</p>
+        {custodySwitchText && (
+          <p className="text-sm opacity-80 mt-1">{custodySwitchText}</p>
+        )}
       </div>
 
       {loading ? (
@@ -173,6 +168,8 @@ export default function KidsCalendarPage() {
               setYear(y);
               setMonth(m);
             }}
+            openRequestWithNoDate={openRequestWithNoDate}
+            onRequestModalOpened={() => setOpenRequestWithNoDate(false)}
           />
 
           <section className="rounded-2xl border border-[#E8E4DC] bg-[#FDFBF7] p-4">
@@ -208,6 +205,14 @@ export default function KidsCalendarPage() {
               </ul>
             )}
           </section>
+
+          <button
+            type="button"
+            className="fixed bottom-6 right-6 bg-[#7B9E87] text-white rounded-full px-4 py-3 shadow-lg flex items-center gap-2 text-sm hover:bg-[#6A8A78]"
+            onClick={() => setOpenRequestWithNoDate(true)}
+          >
+            + Ask to add something
+          </button>
         </>
       )}
     </div>

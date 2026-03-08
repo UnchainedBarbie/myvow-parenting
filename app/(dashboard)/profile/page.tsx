@@ -20,14 +20,16 @@ export default async function ProfilePage() {
   const caseId = membership?.case_id ?? null;
 
   let appMode: string | null = null;
+  let familyCode: string | null = null;
   if (caseId) {
     const { data: caseRow } = await admin
       .from("cases")
-      .select("mode, app_mode")
+      .select("mode, app_mode, family_code")
       .eq("id", caseId)
       .single();
-    const row = caseRow as { mode?: string | null; app_mode?: string | null } | null;
+    const row = caseRow as { mode?: string | null; app_mode?: string | null; family_code?: string | null } | null;
     appMode = (row?.mode ?? row?.app_mode) ?? null;
+    familyCode = row?.family_code ?? null;
   }
 
   const { data: profile } = await supabase
@@ -122,6 +124,7 @@ export default async function ProfilePage() {
         coparent={caseId ? coparent : null}
         caseId={caseId}
         appMode={appMode}
+        familyCode={familyCode}
       />
     </div>
   );

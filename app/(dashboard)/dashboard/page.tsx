@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 import { DashboardStatusCards } from "@/components/dashboard/dashboard-status-cards";
 import { ReviewCard } from "@/components/dashboard/review-card";
 import { DashboardOnboardingGate } from "@/components/dashboard/dashboard-onboarding-gate";
+import { EventRequestsCard } from "@/components/dashboard/event-requests-card";
 type TodayEvent = {
   id: string;
   title: string;
@@ -311,6 +312,31 @@ export default async function DashboardPage() {
         new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
     )
     .slice(0, 5);
+
+  // Pending event requests (from kids)
+  const { data: eventRequestsRaw } = await admin
+    .from("event_requests")
+    .select("id, requested_by_child_id, requested_date, requested_time, title, notes, photo_url, created_at")
+    .eq("case_id", caseId)
+    .eq("status", "pending")
+    .is("deleted_at", null)
+    .order("created_at", { ascending: false });
+  const childIds = [...new Set((eventRequestsRaw ?? []).map((r) => r.requested_by_child_id).filter(Boolean))] as string[];
+  const { data: childrenRows } = childIds.length > 0
+    ? await admin.from("children").select("id, first_name").in("id", childIds)
+    : { data: [] as { id: string; first_name: string }[] };
+  const childNameById = new Map((childrenRows ?? []).map((c) => [c.id, c.first_name]));
+  const eventRequests = (eventRequestsRaw ?? []).map((r) => ({
+    id: r.id as string,
+    requested_by_child_id: r.requested_by_child_id as string | null,
+    requested_date: r.requested_date as string,
+    requested_time: r.requested_time as string | null,
+    title: r.title as string,
+    notes: r.notes as string | null,
+    photo_url: (r as { photo_url?: string | null }).photo_url ?? null,
+    created_at: r.created_at as string,
+    child_name: (r.requested_by_child_id && childNameById.get(r.requested_by_child_id as string)) ?? null,
+  }));
 
   // Expenses: net balance + open items
   const { data: expensesRaw } = await admin
@@ -640,6 +666,10 @@ export default async function DashboardPage() {
                 </div>
               </CardContent>
             </Card>
+
+            {eventRequests.length > 0 && (
+              <EventRequestsCard requests={eventRequests} />
+            )}
 
             <ReviewCard />
 

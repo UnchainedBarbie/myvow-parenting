@@ -120,6 +120,7 @@ export type ProfileContentProps = {
   coparent?: CoparentRow | null;
   caseId?: string | null;
   appMode?: string | null;
+  familyCode?: string | null;
 };
 
 function formatAge(dateOfBirth: string | null): string {
@@ -279,6 +280,10 @@ export function ProfileContent({
   const [kidsAccessPinSaving, setKidsAccessPinSaving] = useState(false);
   const [kidsAccessPinError, setKidsAccessPinError] = useState<string | null>(null);
   const [kidsAccessPinSuccess, setKidsAccessPinSuccess] = useState(false);
+  const [kidsAccessEmail, setKidsAccessEmail] = useState("");
+  const [kidsAccessEmailSending, setKidsAccessEmailSending] = useState(false);
+  const [kidsAccessEmailSent, setKidsAccessEmailSent] = useState<string | null>(null);
+  const [kidsAccessEmailError, setKidsAccessEmailError] = useState<string | null>(null);
   const [sageToneSavingId, setSageToneSavingId] = useState<string | null>(null);
 
   type AppMode = "solo" | "partner" | "coparenting" | "solo_coparenting";
@@ -694,6 +699,9 @@ export function ProfileContent({
     setKidsAccessPin("");
     setKidsAccessPinError(null);
     setKidsAccessPinSuccess(false);
+    setKidsAccessEmail("");
+    setKidsAccessEmailSent(null);
+    setKidsAccessEmailError(null);
   }
 
   async function handleKidsAccessPinSubmit(e: React.FormEvent) {
@@ -718,10 +726,40 @@ export function ProfileContent({
         return;
       }
       router.refresh();
-      setKidsAccessModalChild(null);
-      setKidsAccessPin("");
+      setKidsAccessPinSuccess(true);
     } finally {
       setKidsAccessPinSaving(false);
+    }
+  }
+
+  async function handleKidsAccessEmailSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!kidsAccessModalChild) return;
+    const email = kidsAccessEmail.trim().toLowerCase();
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setKidsAccessEmailError("Enter a valid email address");
+      return;
+    }
+    setKidsAccessEmailError(null);
+    setKidsAccessEmailSending(true);
+    try {
+      const res = await fetch("/api/kids-invites", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          child_id: kidsAccessModalChild.id,
+          email,
+          kids_label_user: kidsLabelUser,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setKidsAccessEmailError((data as { message?: string }).message ?? "Failed to send invite");
+        return;
+      }
+      setKidsAccessEmailSent(email);
+    } finally {
+      setKidsAccessEmailSending(false);
     }
   }
 
@@ -1196,43 +1234,27 @@ export function ProfileContent({
                 <p className="text-sm text-foreground-secondary">Loading…</p>
               ) : (
                 <>
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <div className="space-y-1.5">
-                      <Label htmlFor="kids-label-user" className="text-xs font-medium text-foreground">What do your kids call you?</Label>
-                      <div className="flex gap-2 items-center">
-                        <Input
-                          id="kids-label-user"
-                          type="text"
-                          value={kidsLabelUser}
-                          onChange={(e) => setKidsLabelUser(e.target.value)}
-                          onBlur={() => saveKidsLabels()}
-                          placeholder="e.g. Mom, Dad, Mama, Papa, Mum..."
-                          className="h-9 text-sm flex-1"
-                        />
-                        <Button type="button" size="sm" variant="outline" className="rounded-full h-9 text-xs shrink-0" onClick={saveKidsLabels} disabled={kidsLabelsSaving}>
-                          {kidsLabelsSaving ? "…" : "Save"}
-                        </Button>
-                      </div>
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label htmlFor="kids-label-coparent" className="text-xs font-medium text-foreground">What do your kids call their other parent?</Label>
-                      <div className="flex gap-2 items-center">
-                        <Input
-                          id="kids-label-coparent"
-                          type="text"
-                          value={kidsLabelCoparent}
-                          onChange={(e) => setKidsLabelCoparent(e.target.value)}
-                          onBlur={() => saveKidsLabels()}
-                          placeholder="e.g. Mom, Dad, Mama, Papa, Mum..."
-                          className="h-9 text-sm flex-1"
-                        />
-                        <Button type="button" size="sm" variant="outline" className="rounded-full h-9 text-xs shrink-0" onClick={saveKidsLabels} disabled={kidsLabelsSaving}>
-                          {kidsLabelsSaving ? "…" : "Save"}
-                        </Button>
-                      </div>
-                    </div>
+                  <div className="flex items-center gap-3 mb-4 text-sm flex-wrap">
+                    <span className="text-stone-500 whitespace-nowrap">Kids call you</span>
+                    <Input
+                      id="kids-label-user"
+                      type="text"
+                      value={kidsLabelUser}
+                      onChange={(e) => setKidsLabelUser(e.target.value)}
+                      className="border rounded px-2 py-1 text-sm w-24 h-8"
+                    />
+                    <span className="text-stone-500 whitespace-nowrap">and the other parent</span>
+                    <Input
+                      id="kids-label-coparent"
+                      type="text"
+                      value={kidsLabelCoparent}
+                      onChange={(e) => setKidsLabelCoparent(e.target.value)}
+                      className="border rounded px-2 py-1 text-sm w-24 h-8"
+                    />
+                    <Button type="button" size="sm" variant="outline" className="rounded-full h-8 text-xs shrink-0" onClick={saveKidsLabels} disabled={kidsLabelsSaving}>
+                      {kidsLabelsSaving ? "…" : "Save"}
+                    </Button>
                   </div>
-                  <p className="text-xs text-foreground-secondary">This is how your children will see parents labeled in their calendar view.</p>
                 </>
               )}
             </div>
@@ -1439,35 +1461,87 @@ export function ProfileContent({
                     <X className="h-5 w-5" />
                   </button>
                 </div>
-                <div className="space-y-4">
+                <div className="space-y-5">
+                  {/* Section 1: For young kids — PIN */}
                   <div>
+                    <p className="text-xs font-semibold text-foreground uppercase tracking-wide mb-2">For young kids</p>
                     <p className="text-xs font-medium text-foreground-secondary mb-1.5">PIN access</p>
-                    <form onSubmit={handleKidsAccessPinSubmit} className="flex flex-col gap-2">
-                      <Input
-                        type="password"
-                        inputMode="numeric"
-                        pattern="[0-9]*"
-                        maxLength={6}
-                        className="h-9 font-mono"
-                        placeholder="4–6 digit PIN"
-                        value={kidsAccessPin}
-                        onChange={(e) => setKidsAccessPin(e.target.value.replace(/\D/g, "").slice(0, 6))}
-                        disabled={kidsAccessPinSaving}
-                      />
-                      {kidsAccessPinError && <p className="text-xs text-destructive">{kidsAccessPinError}</p>}
-                      <Button
-                        type="submit"
-                        size="sm"
-                        className="rounded-full h-8 text-xs bg-[#7B9E87] hover:bg-[#6A8A78] text-white w-fit"
-                        disabled={kidsAccessPinSaving}
-                      >
-                        {kidsAccessPinSaving ? "Setting…" : "Set PIN"}
-                      </Button>
-                    </form>
+                    {kidsAccessPinSuccess ? (
+                      <div className="rounded-lg border border-border bg-muted/40 p-3 text-xs space-y-2">
+                        <p className="font-medium text-foreground">
+                          {kidsAccessModalChild.first_name} can sign in at{" "}
+                          <span className="font-mono">{typeof window !== "undefined" ? `${window.location.origin}/kids-login` : "/kids-login"}</span>
+                        </p>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-foreground-secondary">Family code:</span>
+                          <span className="font-mono font-medium text-foreground">{familyCode ?? "—"}</span>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 w-6 p-0 shrink-0"
+                            onClick={() => { void navigator.clipboard.writeText(familyCode ?? ""); }}
+                            aria-label="Copy family code"
+                          >
+                            <Copy className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
+                        <p className="text-foreground-secondary">Name: <span className="font-medium text-foreground">{kidsAccessModalChild.first_name}</span></p>
+                        <p className="text-foreground-secondary">PIN: the one you set above</p>
+                      </div>
+                    ) : (
+                      <form onSubmit={handleKidsAccessPinSubmit} className="flex flex-col gap-2">
+                        <Input
+                          type="password"
+                          inputMode="numeric"
+                          pattern="[0-9]*"
+                          maxLength={6}
+                          className="h-9 font-mono"
+                          placeholder="4–6 digit PIN"
+                          value={kidsAccessPin}
+                          onChange={(e) => setKidsAccessPin(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                          disabled={kidsAccessPinSaving}
+                        />
+                        {kidsAccessPinError && <p className="text-xs text-destructive">{kidsAccessPinError}</p>}
+                        <Button
+                          type="submit"
+                          size="sm"
+                          className="rounded-full h-8 text-xs bg-[#7B9E87] hover:bg-[#6A8A78] text-white w-fit"
+                          disabled={kidsAccessPinSaving}
+                        >
+                          {kidsAccessPinSaving ? "Setting…" : "Set PIN"}
+                        </Button>
+                      </form>
+                    )}
                   </div>
+
+                  {/* Section 2: For older kids — Email invite */}
                   <div>
+                    <p className="text-xs font-semibold text-foreground uppercase tracking-wide mb-2">For older kids with email</p>
                     <p className="text-xs font-medium text-foreground-secondary mb-1.5">Email invite</p>
-                    <p className="text-xs text-foreground-secondary">Coming soon</p>
+                    {kidsAccessEmailSent ? (
+                      <p className="text-xs text-foreground">Invite sent to {kidsAccessEmailSent} ✓</p>
+                    ) : (
+                      <form onSubmit={handleKidsAccessEmailSubmit} className="flex flex-col gap-2">
+                        <Input
+                          type="email"
+                          placeholder="child@example.com"
+                          value={kidsAccessEmail}
+                          onChange={(e) => { setKidsAccessEmail(e.target.value); setKidsAccessEmailError(null); }}
+                          disabled={kidsAccessEmailSending}
+                          className="h-9 text-sm"
+                        />
+                        {kidsAccessEmailError && <p className="text-xs text-destructive">{kidsAccessEmailError}</p>}
+                        <Button
+                          type="submit"
+                          size="sm"
+                          className="rounded-full h-8 text-xs bg-[#7B9E87] hover:bg-[#6A8A78] text-white w-fit"
+                          disabled={kidsAccessEmailSending || !kidsAccessEmail.trim()}
+                        >
+                          {kidsAccessEmailSending ? "Sending…" : "Send Invite"}
+                        </Button>
+                      </form>
+                    )}
                   </div>
                 </div>
               </div>

@@ -70,14 +70,15 @@ export default function KidsCalendarPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async (calendarYear: number) => {
     try {
-      const [eventsRes, scheduleRes, caseRes, requestsRes, notificationsRes] = await Promise.all([
+      const [eventsRes, scheduleRes, caseRes, requestsRes, notificationsRes, holidaysRes] = await Promise.all([
         fetch("/api/kids/calendar/events"),
         fetch("/api/kids/custody-schedule"),
         fetch("/api/kids/case-details"),
         fetch("/api/kids/event-requests"),
         fetch("/api/kids/notifications"),
+        fetch(`/api/kids/holiday-custody?year=${calendarYear}`),
       ]);
 
       if (eventsRes.status === 401 || scheduleRes.status === 401 || requestsRes.status === 401 || notificationsRes.status === 401 || holidaysRes.status === 401) {
@@ -291,7 +292,7 @@ export default function KidsCalendarPage() {
             editingRequest={editingRequest}
             onEditDone={() => {
               setEditingRequest(null);
-              loadData();
+              loadData(year);
             }}
           />
 

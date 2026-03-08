@@ -129,7 +129,7 @@ export async function POST(req: NextRequest) {
     } else {
       const mediaType = contentType.includes("png") ? "image/png" : "image/jpeg";
       userContent.push(
-        { type: "image", source: { type: "base64", media_type, data: base64 } },
+        { type: "image", source: { type: "base64", media_type: mediaType, data: base64 } },
         { type: "text", text: EXTRACTION_PROMPT }
       );
     }

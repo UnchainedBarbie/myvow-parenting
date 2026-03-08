@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { createServerClient } from "@supabase/ssr";
 import { getKidSession } from "@/lib/kids-session";
 
 export async function middleware(request: NextRequest) {
@@ -9,9 +10,13 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // Redirect legacy /kids to /kids-calendar
+  // No standalone /kids route — redirect to the correct app
   if (pathname === "/kids") {
-    return NextResponse.redirect(new URL("/kids-calendar", request.url));
+    const kidSession = await getKidSession(request);
+    const url = kidSession
+      ? new URL("/kids-calendar", request.url)
+      : new URL("/dashboard", request.url);
+    return NextResponse.redirect(url);
   }
 
   const isKidsRoute = pathname === "/kids-calendar" || pathname.startsWith("/kids/");
@@ -49,6 +54,29 @@ export async function middleware(request: NextRequest) {
       kidSession = await getKidSession(request);
     }
     if (kidSession) {
+      // Parent route but request has kid cookie — might be stale (e.g. after parent login).
+      // If user has a Supabase (parent) session, clear kid cookie and allow through to dashboard.
+      const res = NextResponse.next();
+      const supabase = createServerClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+        {
+          cookies: {
+            get(name: string) {
+              return request.cookies.get(name)?.value;
+            },
+            set() {},
+            remove() {},
+          },
+        }
+      );
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (user) {
+        res.cookies.set("kid_session_token", "", { maxAge: 0, path: "/" });
+        return res;
+      }
       const kidsUrl = new URL("/kids-calendar", request.url);
       return NextResponse.redirect(kidsUrl);
     }
@@ -59,7 +87,11 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
+    "/kids",
     "/kids/:path*",
+    "/kids-calendar",
+    "/kids-login",
+    "/kids-invite",
     "/dashboard/:path*",
     "/messages/:path*",
     "/sage/:path*",

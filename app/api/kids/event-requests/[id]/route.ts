@@ -51,6 +51,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       requested_time?: string;
       notes?: string;
       photo_url?: string;
+      requested_parent?: string;
     };
 
     const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
@@ -71,6 +72,9 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     }
     if (body.photo_url !== undefined) {
       updates.photo_url = body.photo_url != null && String(body.photo_url).trim() !== "" ? String(body.photo_url).trim() : null;
+    }
+    if (body.requested_parent === "user" || body.requested_parent === "coparent" || body.requested_parent === "either") {
+      updates.requested_parent = body.requested_parent;
     }
 
     const { error: updateError } = await admin

@@ -42,7 +42,7 @@ export async function POST(request: NextRequest) {
       is_private?: boolean;
       recurring_rule?: string;
       kid_title?: string;
-      visibility?: "family" | "parents_only" | "private";
+      visibility?: "family" | "parents_only" | "just_me_and_kids" | "private";
       source?: "manual" | "email" | "photo";
       source_message_id?: string;
     };
@@ -53,7 +53,7 @@ export async function POST(request: NextRequest) {
       );
     }
     const admin = getServiceRoleClient();
-    const visibilityValue: "family" | "parents_only" | "private" =
+    const visibilityValue: "family" | "parents_only" | "just_me_and_kids" | "private" =
       visibility ?? "family";
     const privateFlag =
       visibilityValue === "private" || (!!is_private && !visibility);

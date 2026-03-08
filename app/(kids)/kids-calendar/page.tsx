@@ -16,6 +16,28 @@ function formatTime(iso: string) {
   return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
 }
 
+function relativeTime(iso: string): string {
+  const d = new Date(iso);
+  const now = new Date();
+  const sec = Math.floor((now.getTime() - d.getTime()) / 1000);
+  if (sec < 60) return "Just now";
+  const min = Math.floor(sec / 60);
+  if (min < 60) return min === 1 ? "1 min ago" : `${min} mins ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return hr === 1 ? "1 hour ago" : `${hr} hours ago`;
+  const day = Math.floor(hr / 24);
+  if (day === 1) return "Yesterday";
+  if (day < 7) return `${day} days ago`;
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+type NotificationRow = {
+  id: string;
+  title: string;
+  status: string;
+  updated_at: string;
+};
+
 export default function KidsCalendarPage() {
   const router = useRouter();
   const today = new Date();
@@ -34,6 +56,8 @@ export default function KidsCalendarPage() {
     photo_url?: string | null;
     status: string;
   }[]>([]);
+  const [notifications, setNotifications] = useState<NotificationRow[]>([]);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [editingRequest, setEditingRequest] = useState<{
     id: string;
     title: string;
@@ -47,14 +71,15 @@ export default function KidsCalendarPage() {
 
   const loadData = useCallback(async () => {
     try {
-      const [eventsRes, scheduleRes, caseRes, requestsRes] = await Promise.all([
+      const [eventsRes, scheduleRes, caseRes, requestsRes, notificationsRes] = await Promise.all([
         fetch("/api/kids/calendar/events"),
         fetch("/api/kids/custody-schedule"),
         fetch("/api/kids/case-details"),
         fetch("/api/kids/event-requests"),
+        fetch("/api/kids/notifications"),
       ]);
 
-      if (eventsRes.status === 401 || scheduleRes.status === 401 || requestsRes.status === 401) {
+      if (eventsRes.status === 401 || scheduleRes.status === 401 || requestsRes.status === 401 || notificationsRes.status === 401) {
         router.push("/kids-login");
         return;
       }
@@ -88,6 +113,9 @@ export default function KidsCalendarPage() {
 
       const requestsData = requestsRes.ok ? await requestsRes.json().catch(() => []) : [];
       setEventRequests(Array.isArray(requestsData) ? requestsData : []);
+
+      const notificationsData = notificationsRes.ok ? await notificationsRes.json().catch(() => []) : [];
+      setNotifications(Array.isArray(notificationsData) ? notificationsData : []);
     } catch {
       setError("Could not load calendar.");
       setEvents([]);
@@ -152,13 +180,78 @@ export default function KidsCalendarPage() {
       .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
   }, [events, today]);
 
+  async function markNotificationRead(id: string) {
+    const res = await fetch(`/api/kids/notifications/${id}/read`, { method: "PATCH" });
+    if (res.ok) {
+      setNotifications((prev) => prev.filter((n) => n.id !== id));
+    }
+  }
+
   return (
     <div className="w-full max-w-2xl mx-auto space-y-4">
-      <div className="flex items-center justify-center">
+      <div className="flex items-center justify-between">
         <h1 className="font-heading text-lg text-[#3D3D3D]">
           Your calendar
         </h1>
+        <button
+          type="button"
+          className="relative p-2 rounded-full hover:bg-[#E8E4DC] text-[#3D3D3D]"
+          aria-label={notifications.length > 0 ? `${notifications.length} unread notifications` : "Notifications"}
+          onClick={() => setNotificationsOpen((o) => !o)}
+        >
+          <span aria-hidden>🔔</span>
+          {notifications.length > 0 && (
+            <span
+              className="absolute -top-0.5 -right-0.5 min-w-[1.25rem] h-5 px-1 flex items-center justify-center rounded-full bg-[#7B9E87] text-white text-xs font-medium"
+              aria-hidden
+            >
+              {notifications.length > 9 ? "9+" : notifications.length}
+            </span>
+          )}
+        </button>
       </div>
+
+      {notificationsOpen && (
+        <div
+          className="rounded-2xl border border-[#E8E4DC] bg-[#FDFBF7] shadow-lg overflow-hidden"
+          role="dialog"
+          aria-label="Notifications"
+        >
+          <div className="px-4 py-2 border-b border-[#E8E4DC] flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-foreground">Notifications</h2>
+            <button
+              type="button"
+              className="p-1.5 rounded-md hover:bg-[#E8E4DC] text-foreground-secondary"
+              aria-label="Close notifications"
+              onClick={() => setNotificationsOpen(false)}
+            >
+              ✕
+            </button>
+          </div>
+          <ul className="max-h-[60vh] overflow-y-auto">
+            {notifications.length === 0 ? (
+              <li className="px-4 py-4 text-sm text-foreground-secondary">No new notifications</li>
+            ) : (
+              notifications.map((n) => (
+                <li key={n.id} className="border-b border-[#E8E4DC] last:border-b-0">
+                  <button
+                    type="button"
+                    className="w-full text-left px-4 py-3 hover:bg-[#E8E4DC]/50 transition-colors"
+                    onClick={() => markNotificationRead(n.id)}
+                  >
+                    <p className="text-sm text-foreground">
+                      {n.status === "approved"
+                        ? `🎉 ${kidsLabelUser} added ${n.title} to the calendar!`
+                        : `💙 ${kidsLabelUser} said not this time for ${n.title}`}
+                    </p>
+                    <p className="text-xs text-foreground-secondary mt-1">{relativeTime(n.updated_at)}</p>
+                  </button>
+                </li>
+              ))
+            )}
+          </ul>
+        </div>
+      )}
 
       <div
         className={todayBanner.className + " rounded-2xl px-4 py-3 text-center"}

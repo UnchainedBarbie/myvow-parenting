@@ -38,7 +38,7 @@ export async function GET(request: NextRequest) {
         "id, title, kid_title, event_type, start_time, end_time, visibility, deleted_at"
       )
       .eq("case_id", caseId)
-      .eq("visibility", "family")
+      .in("visibility", ["family", "just_me_and_kids"])
       .is("deleted_at", null)
       .order("start_time", { ascending: true });
 

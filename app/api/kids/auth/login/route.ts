@@ -70,11 +70,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    let matchedChild: { id: string; first_name?: string; profile_image?: string | null; pin_hash: string } | null = null;
+    let matchedChild: { id: string; pin_hash?: string | null } | null = null;
     for (const c of children as { id: string; pin_hash?: string | null }[]) {
       const hash = c.pin_hash;
       if (hash && (await bcrypt.compare(pin, hash))) {
-        matchedChild = c as typeof matchedChild;
+        matchedChild = c;
         break;
       }
     }

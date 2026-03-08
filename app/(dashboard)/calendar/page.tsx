@@ -181,6 +181,7 @@ export default async function CalendarPage({
       const visibility = (e as any).visibility as
         | "family"
         | "parents_only"
+        | "just_me_and_kids"
         | "private"
         | "family_read_only"
         | null
@@ -188,6 +189,9 @@ export default async function CalendarPage({
       const legacyPrivate = e.description?.startsWith("[PRIVATE]") ?? false;
 
       if (visibility === "private") {
+        return e.created_by === user.id;
+      }
+      if (visibility === "just_me_and_kids") {
         return e.created_by === user.id;
       }
       if (!visibility && legacyPrivate) {
@@ -199,6 +203,7 @@ export default async function CalendarPage({
       const visibility = (e as any).visibility as
         | "family"
         | "parents_only"
+        | "just_me_and_kids"
         | "private"
         | "family_read_only"
         | null
@@ -258,6 +263,7 @@ export default async function CalendarPage({
     const visibility = (e as any).visibility as
       | "family"
       | "parents_only"
+      | "just_me_and_kids"
       | "private"
       | "family_read_only"
       | null
@@ -294,12 +300,14 @@ export default async function CalendarPage({
       const visibility = (e as any).visibility as
         | "family"
         | "parents_only"
+        | "just_me_and_kids"
         | "private"
         | "family_read_only"
         | null
         | undefined;
       const legacyPrivate = e.description?.startsWith("[PRIVATE]") ?? false;
       if (visibility === "private") return e.created_by === user.id;
+      if (visibility === "just_me_and_kids") return e.created_by === user.id;
       if (!visibility && legacyPrivate) return e.created_by === user.id;
       return true;
     })

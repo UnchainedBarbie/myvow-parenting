@@ -36,7 +36,7 @@ export type CalendarEventRow = {
   created_at: string;
   created_by_name: string | null;
   recurring_rule?: string | null;
-  visibility?: "family" | "parents_only" | "private" | "family_read_only" | null;
+  visibility?: "family" | "parents_only" | "just_me_and_kids" | "private" | "family_read_only" | null;
   kid_title?: string | null;
 };
 
@@ -680,6 +680,9 @@ export function CalendarMonth({
                               </td>
                               <td className={cn("px-3 py-1.5 align-middle font-medium", isCanceled && "line-through")}>
                                 {ev.title}
+                                {ev.visibility === "just_me_and_kids" && (
+                                  <span className="ml-1 align-middle" aria-label="Kids can see this">🧒</span>
+                                )}
                               </td>
                               <td className="px-3 py-1.5 align-middle text-foreground-secondary">{dateStrEv}</td>
                               <td className="px-3 py-1.5 align-middle text-foreground-secondary">{timeStr}</td>

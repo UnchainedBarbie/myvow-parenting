@@ -37,7 +37,7 @@ export async function POST(
     const endIso = endTime ? new Date(`${dateStr}T${endTime}:00`).toISOString() : null;
     const eventType = (body.event_type as string) ?? m.parsed_category ?? "other";
     const childId = (body.child_id as string) ?? m.parsed_child_id ?? null;
-    const visibility = (body.visibility as "family" | "parents_only" | "private") ?? m.parsed_visibility ?? "family";
+    const visibility = (body.visibility as "family" | "parents_only" | "just_me_and_kids" | "private") ?? m.parsed_visibility ?? "family";
     const description = (body.description as string) ?? m.parsed_notes ?? m.body_text?.slice(0, 2000) ?? null;
     const caption = `Captured via ${m.source} from ${m.from_email ?? ""} on ${new Date(m.received_at).toISOString().slice(0, 19)}Z`;
     const finalDescription = [caption, description].filter(Boolean).join("\n\n");

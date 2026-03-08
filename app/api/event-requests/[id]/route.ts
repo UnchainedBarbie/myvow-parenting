@@ -5,7 +5,7 @@ import { getServiceRoleClient } from "@/lib/supabase/server";
 /**
  * PATCH /api/event-requests/[id] — approve or decline an event request. Parent auth.
  * Body: { status: 'approved' | 'declined' }
- * If approved: creates a calendar_event with visibility='family' and sets approved_event_id.
+ * If approved: creates a calendar_event with visibility='just_me_and_kids' (visible to approving parent + kids, not co-parent) and sets approved_event_id.
  */
 export async function PATCH(
   request: NextRequest,
@@ -19,7 +19,7 @@ export async function PATCH(
     const { id } = await params;
     if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });
 
-    const body = await request.json().catch(() => ({})) as { status?: string };
+    const body = await request.json().catch(() => ({})) as { status?: string; approved_event_id?: string };
     const status = body.status === "approved" ? "approved" : body.status === "declined" ? "declined" : null;
     if (!status) return NextResponse.json({ error: "status must be 'approved' or 'declined'" }, { status: 400 });
 
@@ -52,6 +52,21 @@ export async function PATCH(
       return NextResponse.json({ ok: true });
     }
 
+    const approvedEventId = typeof body.approved_event_id === "string" ? body.approved_event_id.trim() || null : null;
+
+    if (approvedEventId) {
+      const { error: updateErr } = await admin
+        .from("event_requests")
+        .update({
+          status: "approved",
+          approved_event_id: approvedEventId,
+          updated_at: now,
+        })
+        .eq("id", id);
+      if (updateErr) return NextResponse.json({ error: updateErr.message }, { status: 500 });
+      return NextResponse.json({ success: true, event_id: approvedEventId });
+    }
+
     const requested_date = reqRow.requested_date as string;
     const requested_time = (reqRow.requested_time as string | null) ?? null;
     const title = (reqRow.title as string) ?? "";
@@ -74,7 +89,7 @@ export async function PATCH(
         start_time,
         end_time: null,
         all_day: !requested_time,
-        visibility: "family",
+        visibility: "just_me_and_kids",
         kid_title: title,
       })
       .select("id")

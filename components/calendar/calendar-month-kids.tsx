@@ -229,9 +229,15 @@ export function CalendarMonthKids({
     }
     setRequestSending(true);
     setRequestError(null);
-    const body: { requested_date: string; title: string; requested_time?: string; notes?: string; photo_url?: string } = {
+    const [y, m, d] = dateToUse.split("-").map(Number);
+    const selectedDate = new Date(y, m - 1, d);
+    const owner = custodySchedule ? getCustodyFromRotation(selectedDate, custodySchedule) : null;
+    const requested_parent: "user" | "coparent" | "either" =
+      owner === "user" ? "user" : owner === "coparent" ? "coparent" : "either";
+    const body: { requested_date: string; title: string; requested_time?: string; notes?: string; photo_url?: string; requested_parent: "user" | "coparent" | "either" } = {
       requested_date: dateToUse,
       title: requestTitle.trim(),
+      requested_parent,
     };
     if (requestTime.trim()) body.requested_time = requestTime.trim();
     if (requestNotes.trim()) body.notes = requestNotes.trim();

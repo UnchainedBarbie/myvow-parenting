@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -76,11 +76,23 @@ const EVENT_TYPES = [
 
 type Child = { id: string; first_name: string };
 
+export type AddEventFormInitialValues = {
+  title?: string;
+  date?: string;
+  startTime?: string;
+  endTime?: string;
+  description?: string;
+  visibility?: "family" | "parents_only" | "just_me_and_kids" | "private";
+  eventType?: string;
+};
+
 interface AddEventFormProps {
   caseId: string;
   children: Child[];
   initialYear: number;
   initialMonth: number;
+  initialValues?: AddEventFormInitialValues | null;
+  onSuccess?: (eventId: string) => void | Promise<void>;
 }
 
 export function AddEventForm({
@@ -88,6 +100,8 @@ export function AddEventForm({
   children,
   initialYear,
   initialMonth,
+  initialValues,
+  onSuccess,
 }: AddEventFormProps) {
   const router = useRouter();
   const [title, setTitle] = useState("");
@@ -101,7 +115,7 @@ export function AddEventForm({
   const [startTime, setStartTime] = useState("09:00");
   const [endTime, setEndTime] = useState("10:00");
   const [visibility, setVisibility] = useState<
-    "family" | "family_read_only" | "parents_only" | "private"
+    "family" | "family_read_only" | "parents_only" | "just_me_and_kids" | "private"
   >("family");
   const [isRepeating, setIsRepeating] = useState(false);
   const [repeat, setRepeat] = useState<string>("weekly");
@@ -124,6 +138,17 @@ export function AddEventForm({
   const [descriptionSuggested, setDescriptionSuggested] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!initialValues) return;
+    if (initialValues.title != null) setTitle(initialValues.title);
+    if (initialValues.date != null) setDate(initialValues.date);
+    if (initialValues.startTime != null) setStartTime(initialValues.startTime);
+    if (initialValues.endTime != null) setEndTime(initialValues.endTime);
+    if (initialValues.description != null) setDescription(initialValues.description);
+    if (initialValues.visibility != null) setVisibility(initialValues.visibility);
+    if (initialValues.eventType != null) setEventType(initialValues.eventType);
+  }, [initialValues]);
 
   function timeToHHmm(s: string | null): string {
     if (!s || !s.trim()) return "09:00";
@@ -224,7 +249,7 @@ export function AddEventForm({
 
   function getDefaultVisibilityForType(
     type: string
-  ): "family" | "parents_only" | "private" {
+  ): "family" | "parents_only" | "just_me_and_kids" | "private" {
     if (type === "therapy") return "parents_only";
     if (
       type === "school" ||
@@ -242,10 +267,6 @@ export function AddEventForm({
     setError(null);
     if (!title.trim()) {
       setError("Please enter a title.");
-      return;
-    }
-    if (!description.trim()) {
-      setError("Please enter a description.");
       return;
     }
     const startTimeValue = startTime || "00:00";
@@ -275,19 +296,24 @@ export function AddEventForm({
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || "Create failed");
-      setTitle("");
-      setDescription("");
-      setKidTitle("");
-      setSourceMessageId(null);
-      setSelectedFile(null);
-      setTitleTouched(false);
-      setCategoryTouched(false);
-      setDescriptionTouched(false);
-      setTitleSuggested(false);
-      setCategorySuggested(false);
-      setDescriptionSuggested(false);
-      if (fileInputRef.current) fileInputRef.current.value = "";
-      router.refresh();
+      const eventId = data.event_id as string | undefined;
+      if (onSuccess && eventId) {
+        await onSuccess(eventId);
+      } else {
+        setTitle("");
+        setDescription("");
+        setKidTitle("");
+        setSourceMessageId(null);
+        setSelectedFile(null);
+        setTitleTouched(false);
+        setCategoryTouched(false);
+        setDescriptionTouched(false);
+        setTitleSuggested(false);
+        setCategorySuggested(false);
+        setDescriptionSuggested(false);
+        if (fileInputRef.current) fileInputRef.current.value = "";
+        router.refresh();
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
     } finally {
@@ -515,6 +541,7 @@ export function AddEventForm({
                   | "family"
                   | "family_read_only"
                   | "parents_only"
+                  | "just_me_and_kids"
                   | "private";
                 setVisibility(value);
                 setVisibilityTouched(true);
@@ -527,15 +554,17 @@ export function AddEventForm({
             >
               <option value="family">👨‍👩‍👧 Family</option>
               <option value="parents_only">👩‍⚖️ Parents only</option>
+              <option value="just_me_and_kids">👤🧒 Just me and kids</option>
               <option value="private">🔒 Just me</option>
             </select>
             <p className="text-[11px] text-foreground-secondary">
               {visibility === "family" && "Kids can view this."}
               {visibility === "parents_only" && "Kids won't see this."}
+              {visibility === "just_me_and_kids" && "Kids can view this. Co-parent won't see it."}
               {visibility === "private" && "Only you can see this."}
             </p>
           </div>
-          {(visibility === "family" || visibility === "family_read_only") && (
+          {(visibility === "family" || visibility === "family_read_only" || visibility === "just_me_and_kids") && (
             <div className="space-y-2">
               <Label
                 htmlFor="kid_title"

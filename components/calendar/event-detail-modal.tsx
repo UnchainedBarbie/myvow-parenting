@@ -95,7 +95,7 @@ export function EventDetailModal({
   const [childId, setChildId] = useState<string>("");
   const [description, setDescription] = useState("");
   const [visibility, setVisibility] = useState<
-    "family" | "parents_only" | "private"
+    "family" | "parents_only" | "just_me_and_kids" | "private"
   >("family");
   const [date, setDate] = useState("");
   const [startTime, setStartTime] = useState("");
@@ -132,7 +132,7 @@ export function EventDetailModal({
     setChildId(original.child_id ?? "");
     setDescription(original.description ?? "");
     const initialVisibility =
-      (original.visibility as "family" | "parents_only" | "private" | null | undefined) ??
+      (original.visibility as "family" | "parents_only" | "just_me_and_kids" | "private" | null | undefined) ??
       (original.isPrivate ? "private" : "family");
     setVisibility(initialVisibility);
 
@@ -213,7 +213,7 @@ export function EventDetailModal({
     if (!original) return false;
 
     const originalVisibility =
-      (original.visibility as "family" | "parents_only" | "private" | null | undefined) ??
+      (original.visibility as "family" | "parents_only" | "just_me_and_kids" | "private" | null | undefined) ??
       (original.isPrivate ? "private" : "family");
     const originalStatusRaw = (original.status ?? "") as string;
     const originalStatusKey: StatusKey =
@@ -446,7 +446,7 @@ export function EventDetailModal({
       const originalTitle = original.title ?? "";
       const originalDescription = original.description ?? "";
       const originalVisibility =
-        (original.visibility as "family" | "parents_only" | "private" | null | undefined) ??
+        (original.visibility as "family" | "parents_only" | "just_me_and_kids" | "private" | null | undefined) ??
         (original.isPrivate ? "private" : "family");
       const originalStatusRaw = (original.status ?? "") as string;
       const originalStatusKey: StatusKey =
@@ -925,7 +925,7 @@ export function EventDetailModal({
                       value={visibility}
                       onChange={(e) =>
                         setVisibility(
-                          e.target.value as "family" | "parents_only" | "private"
+                          e.target.value as "family" | "parents_only" | "just_me_and_kids" | "private"
                         )
                       }
                       className={cn(
@@ -935,6 +935,7 @@ export function EventDetailModal({
                     >
                       <option value="family">👨‍👩‍👧 Family</option>
                       <option value="parents_only">👩‍⚖️ Parents only</option>
+                      <option value="just_me_and_kids">👤🧒 Just me and kids</option>
                       <option value="private">🔒 Visible only to me</option>
                     </select>
                     <p className="text-[11px] text-foreground-secondary/75">

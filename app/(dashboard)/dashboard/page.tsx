@@ -96,7 +96,7 @@ export default async function DashboardPage() {
   const admin = getServiceRoleClient();
   const { data: membership } = await admin
     .from("case_members")
-    .select("case_id")
+    .select("case_id, is_primary")
     .eq("user_id", user.id)
     .limit(1)
     .maybeSingle();
@@ -313,20 +313,28 @@ export default async function DashboardPage() {
     )
     .slice(0, 5);
 
-  // Pending event requests (from kids)
+  // Pending event requests (from kids) — only those directed to this parent
+  const isPrimary = membership?.is_primary === true;
   const { data: eventRequestsRaw } = await admin
     .from("event_requests")
-    .select("id, requested_by_child_id, requested_date, requested_time, title, notes, photo_url, created_at")
+    .select("id, requested_by_child_id, requested_date, requested_time, title, notes, photo_url, created_at, requested_parent")
     .eq("case_id", caseId)
     .eq("status", "pending")
     .is("deleted_at", null)
     .order("created_at", { ascending: false });
-  const childIds = [...new Set((eventRequestsRaw ?? []).map((r) => r.requested_by_child_id).filter(Boolean))] as string[];
+  const eventRequestsFiltered = (eventRequestsRaw ?? []).filter((r) => {
+    const rp = (r as { requested_parent?: string | null }).requested_parent ?? "either";
+    if (rp === "either") return true;
+    if (rp === "user") return isPrimary;
+    if (rp === "coparent") return !isPrimary;
+    return true;
+  });
+  const childIds = [...new Set(eventRequestsFiltered.map((r) => r.requested_by_child_id).filter(Boolean))] as string[];
   const { data: childrenRows } = childIds.length > 0
     ? await admin.from("children").select("id, first_name").in("id", childIds)
     : { data: [] as { id: string; first_name: string }[] };
   const childNameById = new Map((childrenRows ?? []).map((c) => [c.id, c.first_name]));
-  const eventRequests = (eventRequestsRaw ?? []).map((r) => ({
+  const eventRequests = eventRequestsFiltered.map((r) => ({
     id: r.id as string,
     requested_by_child_id: r.requested_by_child_id as string | null,
     requested_date: r.requested_date as string,
@@ -668,7 +676,11 @@ export default async function DashboardPage() {
             </Card>
 
             {eventRequests.length > 0 && (
-              <EventRequestsCard requests={eventRequests} />
+              <EventRequestsCard
+                requests={eventRequests}
+                caseId={caseId}
+                children={(childrenRaw ?? []).map((c) => ({ id: c.id, first_name: c.first_name as string }))}
+              />
             )}
 
             <ReviewCard />

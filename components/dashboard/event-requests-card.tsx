@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import Link from "next/link";
 import { X } from "lucide-react";
+import { AddEventForm, type AddEventFormInitialValues } from "@/components/calendar/add-event-form";
 
 export type EventRequestRow = {
   id: string;
@@ -19,22 +20,85 @@ export type EventRequestRow = {
   child_name?: string | null;
 };
 
-export function EventRequestsCard({ requests }: { requests: EventRequestRow[] }) {
+type Child = { id: string; first_name: string };
+
+function requestToInitialValues(r: EventRequestRow): AddEventFormInitialValues {
+  const date = r.requested_date.slice(0, 10);
+  const startTime =
+    r.requested_time != null && r.requested_time.trim() !== ""
+      ? r.requested_time.trim().slice(0, 5)
+      : "09:00";
+  return {
+    title: r.title,
+    date,
+    startTime,
+    endTime: "",
+    description: r.notes ?? "",
+    visibility: "just_me_and_kids",
+    eventType: "extracurricular",
+  };
+}
+
+type ExtractedEvent = { title?: string; date?: string; time?: string; notes?: string; category?: string };
+
+function aiToInitialValues(ai: ExtractedEvent): AddEventFormInitialValues {
+  const eventType =
+    ai.category === "medical" ||
+    ai.category === "school" ||
+    ai.category === "extracurricular" ||
+    ai.category === "other"
+      ? ai.category
+      : "other";
+  return {
+    title: ai.title ?? "",
+    date: ai.date ?? "",
+    startTime: ai.time ?? "09:00",
+    endTime: "",
+    description: ai.notes ?? "",
+    visibility: "just_me_and_kids",
+    eventType,
+  };
+}
+
+function mergeInitialValues(
+  kid: AddEventFormInitialValues,
+  ai: AddEventFormInitialValues
+): AddEventFormInitialValues {
+  const merged = { ...ai };
+  (Object.keys(kid) as (keyof AddEventFormInitialValues)[]).forEach((k) => {
+    const v = kid[k];
+    if (v !== undefined && v !== null && String(v).trim() !== "") merged[k] = v;
+  });
+  return merged;
+}
+
+export function EventRequestsCard({
+  requests,
+  caseId,
+  children: childrenList,
+}: {
+  requests: EventRequestRow[];
+  caseId: string;
+  children: Child[];
+}) {
   const router = useRouter();
   const [actingId, setActingId] = useState<string | null>(null);
   const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
+  const [loadingAddId, setLoadingAddId] = useState<string | null>(null);
   const [expandedPhotoId, setExpandedPhotoId] = useState<string | null>(null);
+  const [addModalRequest, setAddModalRequest] = useState<EventRequestRow | null>(null);
+  const [addModalInitialValues, setAddModalInitialValues] = useState<AddEventFormInitialValues | null>(null);
 
   const visible = requests.filter((r) => !removedIds.has(r.id));
   if (visible.length === 0) return null;
 
-  async function handleStatus(id: string, status: "approved" | "declined") {
+  async function handleDecline(id: string) {
     setActingId(id);
     try {
       const res = await fetch(`/api/event-requests/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status }),
+        body: JSON.stringify({ status: "declined" }),
       });
       if (res.ok) {
         setRemovedIds((prev) => new Set(prev).add(id));
@@ -43,6 +107,55 @@ export function EventRequestsCard({ requests }: { requests: EventRequestRow[] })
       }
     } finally {
       setActingId(null);
+    }
+  }
+
+  async function handleAddSuccess(requestId: string, eventId: string) {
+    const res = await fetch(`/api/event-requests/${requestId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "approved", approved_event_id: eventId }),
+    });
+    if (res.ok) {
+      setRemovedIds((prev) => new Set(prev).add(requestId));
+      setAddModalRequest(null);
+      setAddModalInitialValues(null);
+      router.refresh();
+    }
+  }
+
+  async function handleStatus(id: string, status: "declined" | "approved") {
+    if (status === "declined") {
+      handleDecline(id);
+      return;
+    }
+    const r = visible.find((x) => x.id === id);
+    if (!r) return;
+    if (r.photo_url) {
+      setLoadingAddId(id);
+      try {
+        const res = await fetch("/api/ai/extract-event-from-photo", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ photo_url: r.photo_url }),
+        });
+        const data = (await res.json()) as ExtractedEvent | { error?: string };
+        const kidValues = requestToInitialValues(r);
+        const merged =
+          res.ok && !("error" in data && data.error)
+            ? mergeInitialValues(kidValues, aiToInitialValues(data as ExtractedEvent))
+            : kidValues;
+        setAddModalRequest(r);
+        setAddModalInitialValues(merged);
+      } catch {
+        setAddModalRequest(r);
+        setAddModalInitialValues(null);
+      } finally {
+        setLoadingAddId(null);
+      }
+    } else {
+      setAddModalRequest(r);
+      setAddModalInitialValues(null);
     }
   }
 
@@ -67,6 +180,7 @@ export function EventRequestsCard({ requests }: { requests: EventRequestRow[] })
                 })
               : null;
             const isActing = actingId === r.id;
+            const isReadingPhoto = loadingAddId === r.id;
             return (
               <li
                 key={r.id}
@@ -114,10 +228,10 @@ export function EventRequestsCard({ requests }: { requests: EventRequestRow[] })
                   <Button
                     size="sm"
                     className="rounded-full h-8 text-xs bg-[#7B9E87] hover:bg-[#6A8A78] text-white"
-                    disabled={isActing}
+                    disabled={isActing || isReadingPhoto}
                     onClick={() => handleStatus(r.id, "approved")}
                   >
-                    {isActing ? "…" : "Add to Calendar ✓"}
+                    {isReadingPhoto ? "Reading photo... ✨" : isActing ? "…" : "Add to Calendar ✓"}
                   </Button>
                 </div>
               </li>
@@ -152,6 +266,52 @@ export function EventRequestsCard({ requests }: { requests: EventRequestRow[] })
             </div>
           );
         })()}
+
+        {addModalRequest && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 overflow-y-auto"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="add-event-from-request-title"
+            onClick={() => {
+              setAddModalRequest(null);
+              setAddModalInitialValues(null);
+            }}
+          >
+            <div
+              className="relative w-full max-w-md my-4 rounded-2xl border border-border bg-background shadow-card p-4"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between mb-3">
+                <h2 id="add-event-from-request-title" className="text-lg font-semibold text-foreground">
+                  Add to calendar
+                </h2>
+                <button
+                  type="button"
+                  className="p-1.5 rounded-md hover:bg-muted text-foreground-secondary"
+                  aria-label="Close"
+                  onClick={() => {
+                    setAddModalRequest(null);
+                    setAddModalInitialValues(null);
+                  }}
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+              <p className="text-xs text-foreground-secondary mb-3">
+                Edit details if you like, then click Add Event. This will add the event and mark the request as approved.
+              </p>
+              <AddEventForm
+                caseId={caseId}
+                children={childrenList}
+                initialYear={new Date().getFullYear()}
+                initialMonth={new Date().getMonth() + 1}
+                initialValues={addModalInitialValues ?? requestToInitialValues(addModalRequest)}
+                onSuccess={(eventId) => handleAddSuccess(addModalRequest.id, eventId)}
+              />
+            </div>
+          </div>
+        )}
 
         <Button asChild size="sm" variant="outline" className="rounded-full h-8 text-xs mt-3">
           <Link href="/calendar">Open calendar</Link>

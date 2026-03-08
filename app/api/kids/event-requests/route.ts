@@ -35,6 +35,7 @@ export async function GET(request: NextRequest) {
       .from("event_requests")
       .select("id, title, requested_date, requested_time, notes, photo_url, status, created_at")
       .eq("requested_by_child_id", childId)
+      .eq("status", "pending")
       .is("deleted_at", null)
       .order("created_at", { ascending: false });
 
@@ -87,6 +88,7 @@ export async function POST(request: NextRequest) {
       requested_time?: string;
       notes?: string;
       photo_url?: string;
+      requested_parent?: string;
     };
     const requested_date = typeof body.requested_date === "string" ? body.requested_date.trim().slice(0, 10) : null;
     const title = typeof body.title === "string" ? body.title.trim() : null;
@@ -100,6 +102,10 @@ export async function POST(request: NextRequest) {
         : null;
     const notes = body.notes != null && body.notes !== "" ? String(body.notes).trim() : null;
     const photo_url = body.photo_url != null && body.photo_url !== "" ? String(body.photo_url).trim() : null;
+    const requested_parent =
+      body.requested_parent === "user" || body.requested_parent === "coparent" || body.requested_parent === "either"
+        ? body.requested_parent
+        : "either";
 
     const admin = getServiceRoleClient();
     const { error } = await admin.from("event_requests").insert({
@@ -110,6 +116,8 @@ export async function POST(request: NextRequest) {
       title,
       notes,
       photo_url,
+      requested_parent,
+      visibility: "just_me_and_kids",
       status: "pending",
     });
     if (error) {

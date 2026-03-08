@@ -310,7 +310,7 @@ export default function KidsSagePage() {
             variant="outline"
             size="sm"
             className="h-8 rounded-full text-xs"
-            onClick={() => router.push("/kids")}
+            onClick={() => router.push("/kids-calendar")}
           >
             ← Back to Home
           </Button>

@@ -36,6 +36,8 @@ export default function LoginPage() {
       setError(signInError.message);
       return;
     }
+    // Clear kid session cookie so parent is not redirected to kids app
+    document.cookie = "kid_session_token=; path=/; max-age=0";
     router.push("/dashboard");
     router.refresh();
   }

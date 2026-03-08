@@ -9,7 +9,12 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  const isKidsRoute = pathname === "/kids" || pathname.startsWith("/kids/");
+  // Redirect legacy /kids to /kids-calendar
+  if (pathname === "/kids") {
+    return NextResponse.redirect(new URL("/kids-calendar", request.url));
+  }
+
+  const isKidsRoute = pathname === "/kids-calendar" || pathname.startsWith("/kids/");
   const isKidsLogin =
     pathname === "/kids-login" || pathname.startsWith("/kids-login");
 
@@ -44,7 +49,7 @@ export async function middleware(request: NextRequest) {
       kidSession = await getKidSession(request);
     }
     if (kidSession) {
-      const kidsUrl = new URL("/kids", request.url);
+      const kidsUrl = new URL("/kids-calendar", request.url);
       return NextResponse.redirect(kidsUrl);
     }
   }

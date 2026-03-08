@@ -180,7 +180,7 @@ export async function POST(req: NextRequest) {
         type: "text",
         text: `Document ${i + 1} of ${total}: ${d.title} (dated ${d.date})`,
       });
-      if (d.isPdf) {
+      if (d.mediaType === "application/pdf") {
         userContent.push({
           type: "document",
           source: { type: "base64", media_type: "application/pdf", data: d.base64 },

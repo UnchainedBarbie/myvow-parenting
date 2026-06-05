@@ -54,7 +54,7 @@ export default function LoginPage() {
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
             {error && (
-              <p className="text-sm text-alert" role="alert">
+              <p className="text-sm text-amber-600 dark:text-amber-500" role="alert">
                 {error}
               </p>
             )}
@@ -80,6 +80,14 @@ export default function LoginPage() {
                 required
                 autoComplete="current-password"
               />
+              <p className="text-right">
+                <Link
+                  href="/auth/forgot-password"
+                  className="text-xs text-primary hover:underline"
+                >
+                  Forgot password?
+                </Link>
+              </p>
             </div>
             <Button type="submit" className="w-full" disabled={loading}>
               {loading ? "Signing in…" : "Log in"}

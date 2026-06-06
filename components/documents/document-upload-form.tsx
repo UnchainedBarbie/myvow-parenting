@@ -301,10 +301,22 @@ export function DocumentUploadForm({ caseId, children, logEntries = [] }: Docume
                   <p className="text-xs text-foreground-secondary">Drop file or click to browse</p>
                   <p className="text-[11px] text-foreground-secondary mt-1">{ACCEPT_LABEL}, max 25MB</p>
                   <div className="mt-2 flex items-center gap-2">
-                    <Button type="button" variant="ghost" size="sm" className="h-7 text-xs" onClick={() => inputRef.current?.click()}>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-xs rounded-full"
+                      onClick={() => inputRef.current?.click()}
+                    >
                       Choose file
                     </Button>
-                    <Button type="button" variant="ghost" size="sm" className="h-7 text-xs gap-1.5" onClick={() => cameraInputRef.current?.click()}>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-xs rounded-full gap-1.5"
+                      onClick={() => cameraInputRef.current?.click()}
+                    >
                       <Camera className="h-3.5 w-3.5" aria-hidden />
                       Take photo
                     </Button>

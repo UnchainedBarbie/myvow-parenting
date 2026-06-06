@@ -193,7 +193,7 @@ function VowSection() {
         <div className="grid gap-8 md:grid-cols-2 items-start">
           <div className="max-w-3xl space-y-6">
             <h2 className="font-heading text-xl md:text-2xl font-semibold text-foreground">
-              The MyVow
+              Our Vow
             </h2>
             <p className="text-sm md:text-base text-foreground-secondary max-w-xl">
               Every parent using MyVow begins with a simple commitment:

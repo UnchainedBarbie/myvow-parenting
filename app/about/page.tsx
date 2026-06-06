@@ -49,24 +49,11 @@ export default function AboutPage() {
           <h1 className="font-heading text-3xl font-semibold text-foreground mb-8">
             Why I built this
           </h1>
-          <div className="font-body text-foreground space-y-6 text-left">
+          <div className="font-body text-foreground text-left">
             <p>
-              I&apos;m Allison, a mom who needed to be free from my ex. I built MyVow
-              because I needed to stop communicating with him directly, document
-              everything cleanly for court, and create a structure that made it easier
-              for both of us to just behave. Not because we wanted to. Because the app
-              made cooperation easier than conflict.
-            </p>
-            <p>
-              I couldn&apos;t find a tool that did all of that. So I built it.
-            </p>
-            <p>
-              Every feature in MyVow exists because I needed it.
+              I built MyVow because I needed to stop communicating with my coparent directly, document everything cleanly for court, and create a structure that made it easier for both of us to just behave. Not because we wanted to. Because the app made cooperation easier than conflict. I couldn&apos;t find a tool that did all of that. So I built it. <strong>Every feature in MyVow exists because I needed it.</strong>
             </p>
           </div>
-          <p className="mt-12 text-sm text-foreground-secondary">
-            MyVow Parenting — built from experience, designed for your children.
-          </p>
         </section>
       </main>
     </div>

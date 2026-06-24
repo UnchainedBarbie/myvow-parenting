@@ -30,7 +30,7 @@ export async function POST(request: NextRequest) {
     const token = extractTokenFromTo(to);
     if (!token) {
       return NextResponse.json(
-        { error: "Invalid or missing 'to' address; expected uploads+{token}@in.myvow.app" },
+        { error: "Invalid or missing 'to' address; expected uploads+{token}@in.myvowparenting.com" },
         { status: 400 }
       );
     }

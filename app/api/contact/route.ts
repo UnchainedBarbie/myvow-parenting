@@ -3,7 +3,7 @@ import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
 import { Resend } from "resend";
 
 const RESEND_FROM = process.env.RESEND_FROM ?? "MyVow <onboarding@resend.dev>";
-const CONTACT_TO = "allison@myvow.app";
+const CONTACT_TO = "allison@myvowparenting.com";
 
 function buildEmailBody(payload: Record<string, unknown>): string {
   const lines: string[] = [];

@@ -42,7 +42,7 @@ export async function GET(_req: NextRequest) {
       .from("inbox_items")
       .select("*")
       .eq("case_id", caseId)
-      .eq("status", "pending")
+      .eq("status", "pending_review")
       .order("created_at", { ascending: false })
       .limit(20);
 

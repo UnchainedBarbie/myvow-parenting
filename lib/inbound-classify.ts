@@ -168,8 +168,8 @@ export function classifyInboundUpload(input: ClassifyInput): InboundSuggestion &
 }
 
 /**
- * Extract token from "to" address: uploads+{token}@in.myvow.app
- * Handles "Name <uploads+token@in.myvow.app>" or "uploads+token@in.myvow.app"
+ * Extract token from "to" address: uploads+{token}@in.myvowparenting.com
+ * Handles "Name <uploads+token@in.myvowparenting.com>" or "uploads+token@in.myvowparenting.com"
  */
 export function extractTokenFromTo(to: string): string | null {
   if (!to || typeof to !== "string") return null;

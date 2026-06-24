@@ -2,9 +2,9 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getServiceRoleClient } from "@/lib/supabase/server";
 
-const INBOUND_DOMAIN = "in.myvow.app";
+const INBOUND_DOMAIN = "in.myvowparenting.com";
 
-/** Generate a URL-safe random token (e.g. for uploads+TOKEN@in.myvow.app). */
+/** Generate a URL-safe random token (e.g. for uploads+TOKEN@in.myvowparenting.com). */
 function generateToken(): string {
   const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
   let s = "";

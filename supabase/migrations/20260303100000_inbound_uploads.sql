@@ -1,7 +1,7 @@
 -- Email-to-MyVow Inbox: user tokens, pending uploads, attachments; documents.source + inbound_upload_id
 -- Run once.
 
--- User inbound email tokens: uploads+{token}@in.myvow.app -> user_id
+-- User inbound email tokens: uploads+{token}@in.myvowparenting.com -> user_id
 CREATE TABLE IF NOT EXISTS user_inbound_tokens (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -85,6 +85,6 @@ CREATE POLICY inbound_upload_files_select_via_upload ON inbound_upload_files
 -- Service role / API will insert; no INSERT policy for end users on inbound_uploads/upload_files
 -- Tokens: only user can read; creation can be via API with auth
 
-COMMENT ON TABLE user_inbound_tokens IS 'Maps email token (uploads+token@in.myvow.app) to user for inbound email webhook';
+COMMENT ON TABLE user_inbound_tokens IS 'Maps email token (uploads+token@in.myvowparenting.com) to user for inbound email webhook';
 COMMENT ON TABLE inbound_uploads IS 'Pending email uploads awaiting user review before posting to documents';
 COMMENT ON TABLE inbound_upload_files IS 'Attachment files for each inbound_upload stored in Storage bucket inbound';

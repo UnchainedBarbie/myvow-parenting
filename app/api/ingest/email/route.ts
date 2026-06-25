@@ -329,39 +329,64 @@ async function classifyFileWithAnthropic(buf: Buffer, fileName: string, contentT
       });
       text = response.content[0].type === "text" ? response.content[0].text : "";
     } else if (contentType === PDF_TYPE) {
-      const extracted = await extractPdfText(buf);
-      if (extracted && extracted.length > 100) {
-        const truncated = extracted.slice(0, 8000);
-        const textPrompt = `PDF Content:\n${truncated}\n\n${CLASSIFY_PROMPT}`;
-        const response = await anthropic.messages.create({
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 4096,
-          messages: [{ role: "user", content: textPrompt }],
-        });
-        text = response.content[0].type === "text" ? response.content[0].text : "";
-      } else {
-        const base64FileData = buf.toString("base64");
-        const response = await anthropic.messages.create({
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 4096,
-          messages: [
-            {
-              role: "user",
-              content: [
-                {
-                  type: "document",
-                  source: {
-                    type: "base64",
-                    media_type: "application/pdf",
-                    data: base64FileData,
+      let extracted = "";
+      try {
+        extracted = await extractPdfText(buf);
+      } catch (pdfExtractErr) {
+        console.error(
+          "[ingest/email] PDF text extraction failed, using base64 fallback:",
+          pdfExtractErr
+        );
+      }
+
+      if (extracted.length > 100) {
+        try {
+          const truncated = extracted.slice(0, 8000);
+          const textPrompt = `PDF Content:\n${truncated}\n\n${CLASSIFY_PROMPT}`;
+          const response = await anthropic.messages.create({
+            model: "claude-sonnet-4-20250514",
+            max_tokens: 4096,
+            messages: [{ role: "user", content: textPrompt }],
+          });
+          text = response.content[0].type === "text" ? response.content[0].text : "";
+        } catch (textClassifyErr) {
+          console.error(
+            "[ingest/email] Anthropic PDF text classification failed, using base64 fallback:",
+            textClassifyErr
+          );
+        }
+      }
+
+      if (!text) {
+        try {
+          const base64FileData = buf.toString("base64");
+          const response = await anthropic.messages.create({
+            model: "claude-sonnet-4-20250514",
+            max_tokens: 4096,
+            messages: [
+              {
+                role: "user",
+                content: [
+                  {
+                    type: "document",
+                    source: {
+                      type: "base64",
+                      media_type: "application/pdf",
+                      data: base64FileData,
+                    },
                   },
-                },
-                { type: "text", text: CLASSIFY_PROMPT },
-              ],
-            },
-          ],
-        });
-        text = response.content[0].type === "text" ? response.content[0].text : "";
+                  { type: "text", text: CLASSIFY_PROMPT },
+                ],
+              },
+            ],
+          });
+          text = response.content[0].type === "text" ? response.content[0].text : "";
+        } catch (base64ClassifyErr) {
+          console.error(
+            "[ingest/email] Anthropic PDF base64 classification failed:",
+            base64ClassifyErr
+          );
+        }
       }
     } else {
       const textPrompt = `Filename: ${fileName}. File type: ${contentType}. Infer classification and suggested fields from the filename. ${CLASSIFY_PROMPT}`;

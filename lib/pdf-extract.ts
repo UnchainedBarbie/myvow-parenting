@@ -1,6 +1,15 @@
+import { createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
+
 type PdfJsModule = typeof import("pdfjs-dist/legacy/build/pdf.mjs");
 
 let pdfJsPromise: Promise<PdfJsModule> | null = null;
+
+function resolvePdfWorkerSrc(): string {
+  const require = createRequire(import.meta.url);
+  const workerPath = require.resolve("pdfjs-dist/legacy/build/pdf.worker.mjs");
+  return pathToFileURL(workerPath).href;
+}
 
 function installCanvasPolyfills(): void {
   try {
@@ -31,7 +40,9 @@ async function loadPdfJs(): Promise<PdfJsModule> {
     pdfJsPromise = (async () => {
       installCanvasPolyfills();
       const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-      pdfjs.GlobalWorkerOptions.workerSrc = "";
+      // Node runs the worker inline (no Worker thread); workerSrc must still
+      // point at the legacy worker module for dynamic import.
+      pdfjs.GlobalWorkerOptions.workerSrc = resolvePdfWorkerSrc();
       return pdfjs;
     })();
   }

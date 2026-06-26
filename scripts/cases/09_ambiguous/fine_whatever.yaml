@@ -1,0 +1,12 @@
+input: |
+  Fine. Whatever. Do what you want.
+expected:
+  item_type: needs_review
+  domain: general
+  tool_name: null
+assertions:
+  action_required: false
+  children: []
+notes: |
+  Hall of Pain — dismissive/non-actionable; intent unclear, not a clean category.
+difficulty: 5

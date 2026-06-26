@@ -1,0 +1,12 @@
+input: |
+  Ashley's allergist called in a refill for her EpiPen. Pickup is ready at CVS on Main.
+expected:
+  item_type: medical_update
+  domain: medical
+  tool_name: null
+assertions:
+  action_required: false
+  children: [Ashley]
+notes: |
+  Medical awareness; may optionally warrant calendar but no explicit request.
+difficulty: 2

@@ -1,0 +1,8 @@
+input: "Here's the orthodontic receipt for $612."
+expected:
+  item_type: expense
+  domain: medical
+  tool_name: expense
+assertions:
+  action_required: true
+difficulty: 2

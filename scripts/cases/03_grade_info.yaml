@@ -1,5 +1,4 @@
-input: |
-  Avery got a B on her math test today.
+input: "Avery got a B on her math test today."
 expected:
   item_type: information_only
   domain: school
@@ -7,6 +6,4 @@ expected:
 assertions:
   action_required: false
   children: [Avery]
-notes: |
-  FYI school update — no tool should act.
 difficulty: 1

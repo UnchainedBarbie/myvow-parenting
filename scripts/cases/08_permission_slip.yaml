@@ -1,0 +1,10 @@
+input: "I signed Child B's permission slip to go to Falcon Creek. She is returning it today."
+expected:
+  item_type: information_only
+  domain: school
+  tool_name: null
+assertions:
+  action_required: false
+  children: [Child B]
+notes: "Pure FYI — co-parent already handled it. Must NOT invent an action."
+difficulty: 2

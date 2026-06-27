@@ -1,0 +1,10 @@
+input: |
+  On Thu, Jun 25, 2026 at 5:37 PM Allison Spink wrote:
+  >
+  >
+expected:
+  item_type: needs_review
+assertions:
+  action_required: false
+notes: "Pure quote cruft, no real content. Must NOT hallucinate."
+difficulty: 5

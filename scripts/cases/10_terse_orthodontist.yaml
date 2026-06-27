@@ -1,0 +1,7 @@
+input: "The orthodontist."
+expected:
+  item_type: needs_review
+assertions:
+  action_required: false
+notes: "Standalone fragment answering an unseen question. Correct behavior = needs_review, do not guess."
+difficulty: 5

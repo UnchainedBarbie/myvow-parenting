@@ -1,0 +1,8 @@
+input: "Child C got invited to this party (invite attached) and it is during her time at your house. I did not RSVP."
+expected:
+  domain: calendar
+assertions:
+  action_required: true
+  children: [Child C]
+notes: "Implicitly hands a decision to the recipient (it's their parenting time, they must RSVP). Tests whether Sage sees the handoff. Assert domain+action only — item_type could be needs_response or calendar_update."
+difficulty: 3

@@ -1,0 +1,7 @@
+input: "Confirmed."
+expected:
+  item_type: needs_review
+assertions:
+  action_required: false
+notes: "Bare confirmation, no referent. Must refuse to guess what was confirmed."
+difficulty: 5

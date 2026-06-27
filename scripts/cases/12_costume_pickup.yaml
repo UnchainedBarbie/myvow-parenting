@@ -1,0 +1,7 @@
+input: "It is my understanding that you got Child C a costume for her Bugz musical. If so, please let me know when I can pick it up or if you can drop it off so that she has it for the performance."
+expected: {}
+assertions:
+  action_required: true
+  children: [Child C]
+notes: "A coordination request (arrange handoff of an item). action_required true; domain arguably general/calendar — intentionally not asserted."
+difficulty: 3

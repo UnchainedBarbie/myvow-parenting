@@ -1,0 +1,8 @@
+input: "It is my understanding mediation must take place within 49 days of 10/20/23 which is on or about 12/8/23. Please provide a few dates/times that work for you, and confirm fees are acceptable."
+expected:
+  domain: legal
+assertions:
+  action_required: true
+  urgency: high
+notes: "Legal deadline must raise urgency."
+difficulty: 3

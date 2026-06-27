@@ -6,7 +6,7 @@
 
 import { config } from "dotenv";
 import { readFileSync, readdirSync, statSync } from "fs";
-import { basename, join, relative, resolve } from "path";
+import { relative, resolve } from "path";
 import yaml from "js-yaml";
 import { interpret, type NormalizedEvent, type SageInterpretation } from "../lib/sage/understanding";
 
@@ -17,12 +17,13 @@ const CASES_ROOT = resolve(process.cwd(), "scripts/cases");
 type CaseFile = {
   input: string;
   expected: {
-    item_type: string;
-    domain: string;
-    tool_name: string | null;
+    item_type?: string;
+    domain?: string;
+    tool_name?: string | null;
   };
   assertions?: {
     action_required?: boolean;
+    urgency?: string;
     children?: string[];
   };
   notes?: string;
@@ -31,18 +32,15 @@ type CaseFile = {
 
 type CaseRun = {
   id: string;
-  category: string;
   difficulty: number;
   pass: boolean;
-  hardFailures: string[];
-  softWarnings: string[];
-  got: SageInterpretation;
+  failures: string[];
 };
 
 function walkYamlFiles(dir: string): string[] {
   const out: string[] = [];
   for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry);
+    const full = resolve(dir, entry);
     if (statSync(full).isDirectory()) {
       out.push(...walkYamlFiles(full));
     } else if (entry.endsWith(".yaml") || entry.endsWith(".yml")) {
@@ -58,19 +56,13 @@ function loadCase(filePath: string): CaseFile {
   if (!parsed?.input?.trim()) {
     throw new Error(`Missing input in ${filePath}`);
   }
-  if (!parsed.expected?.item_type || !parsed.expected?.domain) {
-    throw new Error(`Missing expected.item_type or expected.domain in ${filePath}`);
+  if (!parsed.expected || typeof parsed.expected !== "object") {
+    throw new Error(`Missing expected in ${filePath}`);
   }
   if (typeof parsed.difficulty !== "number") {
     throw new Error(`Missing difficulty in ${filePath}`);
   }
   return parsed;
-}
-
-function categoryFromPath(filePath: string): string {
-  const rel = relative(CASES_ROOT, filePath);
-  const parts = rel.split(/[/\\]/);
-  return parts.length > 1 ? parts[0] : "uncategorized";
 }
 
 function caseIdFromPath(filePath: string): string {
@@ -83,145 +75,82 @@ function normalizeToolName(v: string | null | undefined): string | null {
   return s.length > 0 ? s : null;
 }
 
-function evaluateCase(
-  caseDef: CaseFile,
-  result: SageInterpretation
-): { hardFailures: string[]; softWarnings: string[] } {
-  const hardFailures: string[] = [];
-  const softWarnings: string[] = [];
+/** Expected "Child C" also matches extracted "C"; real names like "Ashley" stay exact. */
+function childNameMatches(expected: string, got: string): boolean {
+  const e = expected.trim().toLowerCase();
+  const g = got.trim().toLowerCase();
+  if (e === g) return true;
+  const withoutChildPrefix = e.replace(/^child\s+/, "");
+  return withoutChildPrefix !== e && g === withoutChildPrefix;
+}
 
-  if (result.intent.item_type !== caseDef.expected.item_type) {
-    hardFailures.push(
-      `item_type: expected "${caseDef.expected.item_type}", got "${result.intent.item_type}"`
-    );
-  }
-  if (result.intent.domain !== caseDef.expected.domain) {
-    hardFailures.push(
-      `domain: expected "${caseDef.expected.domain}", got "${result.intent.domain}"`
-    );
-  }
+function evaluateCase(caseDef: CaseFile, result: SageInterpretation): string[] {
+  const failures: string[] = [];
+  const { expected, assertions } = caseDef;
 
-  const expectedTool = normalizeToolName(caseDef.expected.tool_name);
-  const gotTool = normalizeToolName(result.intent.tool_name);
-  if (expectedTool !== gotTool) {
-    hardFailures.push(
-      `tool_name: expected ${expectedTool === null ? "null" : `"${expectedTool}"`}, got ${gotTool === null ? "null" : `"${gotTool}"`}`
+  if (expected.item_type !== undefined && result.intent.item_type !== expected.item_type) {
+    failures.push(
+      `item_type: expected "${expected.item_type}", got "${result.intent.item_type}"`
     );
   }
 
-  if (caseDef.assertions?.action_required !== undefined) {
-    if (result.intent.action_required !== caseDef.assertions.action_required) {
-      hardFailures.push(
-        `action_required: expected ${caseDef.assertions.action_required}, got ${result.intent.action_required}`
+  if (expected.domain !== undefined && result.intent.domain !== expected.domain) {
+    failures.push(`domain: expected "${expected.domain}", got "${result.intent.domain}"`);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(expected, "tool_name")) {
+    const expectedTool = normalizeToolName(expected.tool_name);
+    const gotTool = normalizeToolName(result.intent.tool_name);
+    if (expectedTool !== gotTool) {
+      failures.push(
+        `tool_name: expected ${expectedTool === null ? "null" : `"${expectedTool}"`}, got ${gotTool === null ? "null" : `"${gotTool}"`}`
       );
     }
   }
 
-  const expectedChildren = caseDef.assertions?.children ?? [];
+  if (assertions?.action_required !== undefined) {
+    if (result.intent.action_required !== assertions.action_required) {
+      failures.push(
+        `action_required: expected ${assertions.action_required}, got ${result.intent.action_required}`
+      );
+    }
+  }
+
+  if (assertions?.urgency !== undefined) {
+    if (result.intent.urgency !== assertions.urgency) {
+      failures.push(`urgency: expected "${assertions.urgency}", got "${result.intent.urgency}"`);
+    }
+  }
+
+  const expectedChildren = assertions?.children ?? [];
   const gotChildNames = result.entities.children.map((c) => c.name);
   for (const name of expectedChildren) {
-    const found = gotChildNames.some(
-      (n) => n.trim().toLowerCase() === name.trim().toLowerCase()
-    );
+    const found = gotChildNames.some((n) => childNameMatches(name, n));
     if (!found) {
-      hardFailures.push(
+      failures.push(
         `children: expected "${name}" in [${gotChildNames.join(", ") || "(none)"}]`
       );
     }
   }
 
-  const confidence = result.intent.confidence;
-  if (caseDef.difficulty <= 2 && confidence < 0.7) {
-    softWarnings.push(
-      `confidence ${confidence.toFixed(2)} below 0.7 for difficulty ${caseDef.difficulty} (expected confident read)`
-    );
-  }
-  if (
-    caseDef.expected.item_type === "needs_review" &&
-    caseDef.difficulty >= 4 &&
-    confidence > 0.7
-  ) {
-    softWarnings.push(
-      `confidence ${confidence.toFixed(2)} above 0.7 for needs_review case at difficulty ${caseDef.difficulty} (expected uncertain)`
-    );
-  }
-
-  return { hardFailures, softWarnings };
+  return failures;
 }
 
-function pad(str: string, width: number): string {
-  return str.length >= width ? str.slice(0, width - 1) + "…" : str.padEnd(width);
-}
-
-function printResultsTable(runs: CaseRun[]) {
-  const idW = Math.max(28, ...runs.map((r) => r.id.length));
-  const catW = Math.max(14, ...runs.map((r) => r.category.length));
-
-  console.log("");
-  console.log(
-    `${pad("CASE", idW)}  ${pad("CATEGORY", catW)}  DIFF  RESULT  DETAIL`
-  );
-  console.log(`${"-".repeat(idW)}  ${"-".repeat(catW)}  ----  ------  ------`);
-
+function printDifficultySummary(runs: CaseRun[]) {
+  const byDifficulty = new Map<number, CaseRun[]>();
   for (const run of runs) {
-    const status = run.pass ? "PASS" : "FAIL";
-    const detail = run.pass
-      ? run.softWarnings.length > 0
-        ? `${run.softWarnings.length} soft warning(s)`
-        : ""
-      : run.hardFailures[0] ?? "failed";
-    console.log(
-      `${pad(run.id, idW)}  ${pad(run.category, catW)}  ${String(run.difficulty).padStart(4)}  ${status.padEnd(6)}  ${detail}`
-    );
-  }
-}
-
-function printBreakdown(
-  label: string,
-  runs: CaseRun[],
-  keyFn: (r: CaseRun) => string
-) {
-  const groups = new Map<string, CaseRun[]>();
-  for (const run of runs) {
-    const key = keyFn(run);
-    const list = groups.get(key) ?? [];
-    list.push(run);
-    groups.set(key, list);
+    const group = byDifficulty.get(run.difficulty) ?? [];
+    group.push(run);
+    byDifficulty.set(run.difficulty, group);
   }
 
   console.log("");
-  console.log(`=== Accuracy by ${label} ===`);
-  for (const [key, group] of [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+  console.log("=== Summary by difficulty ===");
+  for (const level of [...byDifficulty.keys()].sort((a, b) => a - b)) {
+    const group = byDifficulty.get(level)!;
     const passed = group.filter((r) => r.pass).length;
     const pct = group.length > 0 ? Math.round((passed / group.length) * 100) : 0;
-    console.log(`  ${key}: ${passed}/${group.length} (${pct}%)`);
-  }
-}
-
-function printSoftWarnings(runs: CaseRun[]) {
-  const withWarnings = runs.filter((r) => r.softWarnings.length > 0);
-  if (withWarnings.length === 0) return;
-
-  console.log("");
-  console.log("=== Soft-check warnings (non-failing) ===");
-  for (const run of withWarnings) {
-    for (const w of run.softWarnings) {
-      console.log(`  ${run.id}: ${w}`);
-    }
-  }
-}
-
-function printHardFailures(runs: CaseRun[]) {
-  const failed = runs.filter((r) => !r.pass);
-  if (failed.length === 0) return;
-
-  console.log("");
-  console.log("=== Hard assertion failures ===");
-  for (const run of failed) {
-    console.log(`  ${run.id}:`);
-    for (const f of run.hardFailures) {
-      console.log(`    - ${f}`);
-    }
+    console.log(`  Level ${level}: ${passed}/${group.length} passed (${pct}%)`);
   }
 }
 
@@ -243,6 +172,8 @@ async function main() {
 
   for (const filePath of files) {
     const caseDef = loadCase(filePath);
+    const id = caseIdFromPath(filePath);
+
     const event: NormalizedEvent = {
       source_type: "email",
       source_id: null,
@@ -251,32 +182,28 @@ async function main() {
       text: caseDef.input.trim(),
     };
 
-    const got = await interpret(event);
-    const { hardFailures, softWarnings } = evaluateCase(caseDef, got);
+    const result = await interpret(event);
+    const failures = evaluateCase(caseDef, result);
+    const pass = failures.length === 0;
 
-    runs.push({
-      id: caseIdFromPath(filePath),
-      category: categoryFromPath(filePath),
-      difficulty: caseDef.difficulty,
-      pass: hardFailures.length === 0,
-      hardFailures,
-      softWarnings,
-      got,
-    });
+    runs.push({ id, difficulty: caseDef.difficulty, pass, failures });
+
+    const status = pass ? "PASS" : "FAIL";
+    console.log(`  ${status}  ${id}  (difficulty ${caseDef.difficulty})`);
+    if (!pass) {
+      for (const f of failures) {
+        console.log(`         - ${f}`);
+      }
+    }
   }
 
-  printResultsTable(runs);
-  printBreakdown("CATEGORY", runs, (r) => r.category);
-  printBreakdown("DIFFICULTY", runs, (r) => `level ${r.difficulty}`);
-  printSoftWarnings(runs);
-  printHardFailures(runs);
+  printDifficultySummary(runs);
 
   const passed = runs.filter((r) => r.pass).length;
   console.log("");
-  console.log(`Overall: ${passed}/${runs.length} passed (hard assertions)`);
+  console.log(`Overall: ${passed}/${runs.length} passed`);
 
-  const anyFail = runs.some((r) => !r.pass);
-  process.exit(anyFail ? 1 : 0);
+  process.exit(runs.some((r) => !r.pass) ? 1 : 0);
 }
 
 main().catch((e) => {

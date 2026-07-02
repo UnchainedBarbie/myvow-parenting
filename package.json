@@ -11,7 +11,8 @@
     "prepare": "husky install",
     "test:ingest": "tsx scripts/test-ingest.ts",
     "test:categories": "tsx lib/categoryColors.test.ts",
-    "test:documents": "tsx lib/documents/validation.test.ts"
+    "test:documents": "tsx lib/documents/validation.test.ts",
+    "test:sage": "npx tsx scripts/run-cases.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.78.0",

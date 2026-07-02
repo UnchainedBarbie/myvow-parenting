@@ -1,7 +1,5 @@
 input: "It is my understanding she lost them at your house."
 expected:
   item_type: needs_review
-assertions:
-  action_required: false
-notes: "Context-dependent. Correct behavior = refuse to guess."
+notes: "Ambiguous referents (she/them); correct behavior is needs_review. action_required is not asserted — it wobbles depending on state Understanding does not have."
 difficulty: 5

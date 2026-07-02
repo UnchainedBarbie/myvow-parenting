@@ -22,8 +22,8 @@ type CaseFile = {
     tool_name?: string | null;
   };
   assertions?: {
-    action_required?: boolean;
-    urgency?: string;
+    action_required?: boolean | boolean[];
+    urgency?: string | string[];
     children?: string[];
   };
   notes?: string;
@@ -75,6 +75,21 @@ function normalizeToolName(v: string | null | undefined): string | null {
   return s.length > 0 ? s : null;
 }
 
+/** Scalar assertion: exact match, or any value in an acceptable set. */
+function assertScalar<T>(field: string, expected: T | T[], actual: T, failures: string[]): void {
+  if (Array.isArray(expected)) {
+    if (!expected.some((v) => v === actual)) {
+      failures.push(
+        `${field}: expected one of [${expected.join(", ")}], got ${String(actual)}`
+      );
+    }
+    return;
+  }
+  if (actual !== expected) {
+    failures.push(`${field}: expected ${String(expected)}, got ${String(actual)}`);
+  }
+}
+
 /** Expected "Child C" also matches extracted "C"; real names like "Ashley" stay exact. */
 function childNameMatches(expected: string, got: string): boolean {
   const e = expected.trim().toLowerCase();
@@ -109,17 +124,16 @@ function evaluateCase(caseDef: CaseFile, result: SageInterpretation): string[] {
   }
 
   if (assertions?.action_required !== undefined) {
-    if (result.intent.action_required !== assertions.action_required) {
-      failures.push(
-        `action_required: expected ${assertions.action_required}, got ${result.intent.action_required}`
-      );
-    }
+    assertScalar(
+      "action_required",
+      assertions.action_required,
+      result.intent.action_required,
+      failures
+    );
   }
 
   if (assertions?.urgency !== undefined) {
-    if (result.intent.urgency !== assertions.urgency) {
-      failures.push(`urgency: expected "${assertions.urgency}", got "${result.intent.urgency}"`);
-    }
+    assertScalar("urgency", assertions.urgency, result.intent.urgency, failures);
   }
 
   const expectedChildren = assertions?.children ?? [];

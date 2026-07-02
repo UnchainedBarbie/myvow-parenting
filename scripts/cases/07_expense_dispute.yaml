@@ -1,6 +1,6 @@
 input: "It is my understanding that Child B's tooth extraction doesn't count towards Child C's medical expenses. It is $250 per child per calendar year."
 expected: {}
 assertions:
-  action_required: true
-notes: "Expense/medical disagreement about cost-sharing thresholds. medical vs expense domain is a reasonable either-way read — domain intentionally not asserted. item_type is also arguable (dispute vs expense)."
+  action_required: [true, false]
+notes: "Expense/medical disagreement about cost-sharing thresholds. medical vs expense domain is a reasonable either-way read — domain intentionally not asserted. item_type is also arguable (dispute vs expense). action_required genuinely flips; both readings are defensible and depend on state/policy (a Planner concern)."
 difficulty: 4

@@ -48,8 +48,9 @@ Your job is to read incoming language (messages, emails, document excerpts) and 
 You are NOT making decisions. You are NOT changing family state. You are NOT communicating with either parent. You ONLY produce a structured understanding of the input for downstream systems.
 
 Tone and framing rules:
-- Write summaries in calm, neutral, non-adversarial language. Never shame, alarm, or escalate.
+- Write summaries as a warm, trusted assistant — not a corporate document summarizer. Prefer phrasing like "It looks like your co-parent is asking whether…" over stiff lines like "Co-Parent is noting that…". Keep it calm and helpful.
 - Refer to the other parent as "Co-Parent" — never use their name or email, even if provided.
+- Never shame, alarm, or escalate; no red-flag or adversarial framing.
 - Be suggestive and helpful, never authoritarian or commanding.
 - Do not use words like "conflict"; prefer "communication" when relevant.
 - evidence_excerpt must be a tiny verbatim snippet from the input (10 words or fewer) that anchors your read — NOT the full message.
@@ -57,9 +58,9 @@ Tone and framing rules:
 Classification:
 - item_type: one of schedule_change | needs_response | information_only | calendar_update | expense | document_summary | medical_update | school_update | concern | agreement | dispute | emergency | needs_review
 - domain: one of calendar | school | medical | expense | legal | general
-- tool_name: calendar | expense | document | court | messaging | null — the downstream tool that genuinely needs to run, or null when none does. Set null whenever action_required is false (e.g. information_only awareness updates). Use "messaging" ONLY when an item actually requires sending a message — not for FYI items that need no tool action.
+- tool_name: calendar | expense | document | court | messaging | null — the downstream tool that genuinely needs to run, or null when none does. Set null whenever action_required is false (e.g. information_only awareness updates). Do NOT set tool_name to "messaging" just because the item is a reply or answers a question. tool_name should only name a tool that genuinely acts (calendar, expense, document, court). If no tool needs to run, tool_name is null. "messaging" is not a default — use it only when sending a message through the platform is the required next step.
 - action_required: true if the parent likely needs to do something
-- action_type: approve | acknowledge | review | respond | pay | archive | null
+- action_type: approve | acknowledge | review | respond | pay | archive | null — MUST be null whenever action_required is false. If nothing needs the parent to act, there is no action_type.
 - urgency: low | normal | high | emergency
 - confidence: 0.0–1.0 how sure you are of item_type and domain
 
@@ -365,6 +366,7 @@ async function callAnthropic(userPrompt: string): Promise<string | null> {
       body: JSON.stringify({
         model: SAGE_MODEL,
         max_tokens: 1500,
+        temperature: 0,
         system: SYSTEM_PROMPT,
         messages: [{ role: "user", content: userPrompt }],
       }),
@@ -392,14 +394,12 @@ async function callAnthropic(userPrompt: string): Promise<string | null> {
 export async function interpret(event: NormalizedEvent): Promise<SageInterpretation> {
   const userPrompt = buildUserPrompt(event);
   const raw = await callAnthropic(userPrompt);
-  if (!raw) {
-    return createNeedsReviewFallback();
-  }
-
-  const interpretation = parseInterpretation(raw);
+  let interpretation = raw ? parseInterpretation(raw) : null;
   if (!interpretation) {
-    return createNeedsReviewFallback();
+    // one retry — at temperature 0 a re-call usually returns clean JSON
+    const raw2 = await callAnthropic(userPrompt);
+    interpretation = raw2 ? parseInterpretation(raw2) : null;
   }
-
+  if (!interpretation) return createNeedsReviewFallback();
   return interpretation;
 }

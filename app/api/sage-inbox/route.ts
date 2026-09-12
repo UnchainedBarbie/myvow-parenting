@@ -26,11 +26,12 @@ type SagePlan = {
 };
 
 /**
- * GET /api/sage-inbox
+ * GET /api/sage-inbox?status=open|archived|all
  * Authenticated parent user.
- * Returns sage_items for the user's case that are visible to them and not dismissed.
+ * Returns sage_items for the user's case that are visible to them.
+ * Default status=open (status ≠ archived).
  */
-export async function GET(_req: NextRequest) {
+export async function GET(req: NextRequest) {
   try {
     const supabase = await createClient();
     const {
@@ -59,16 +60,27 @@ export async function GET(_req: NextRequest) {
     }
 
     const caseId = membership.case_id as string;
+    const statusParam = (req.nextUrl.searchParams.get("status") ?? "open").toLowerCase();
+    const statusFilter =
+      statusParam === "archived" || statusParam === "all" ? statusParam : "open";
 
-    const { data: items, error: itemsError } = await admin
+    let query = admin
       .from("sage_items")
       .select(
         "id, item_type, domain, summary, evidence_excerpt, urgency, action_required, child_ids, tool_input, plan, status, created_at"
       )
       .eq("case_id", caseId)
       .eq("visible_to", user.id)
-      .neq("status", "dismissed")
       .order("created_at", { ascending: false });
+
+    if (statusFilter === "archived") {
+      query = query.eq("status", "archived");
+    } else if (statusFilter === "open") {
+      query = query.neq("status", "archived");
+    }
+    // "all" — no status filter
+
+    const { data: items, error: itemsError } = await query;
 
     if (itemsError) {
       console.error("[sage-inbox/GET] Error loading sage_items:", itemsError);
@@ -326,7 +338,7 @@ export async function POST(req: NextRequest) {
 
 /**
  * PATCH /api/sage-inbox
- * Body: { id, status: 'dismissed' }
+ * Body: { id, status: 'archived' | 'pending' | 'dismissed' }
  * Updates sage_items.status for an item visible to the current user.
  */
 export async function PATCH(req: NextRequest) {
@@ -336,7 +348,12 @@ export async function PATCH(req: NextRequest) {
       | null;
 
     const id = body?.id ? String(body.id) : "";
-    const status = body?.status === "dismissed" ? body.status : null;
+    const status =
+      body?.status === "archived" ||
+      body?.status === "pending" ||
+      body?.status === "dismissed"
+        ? body.status
+        : null;
 
     if (!id || !status) {
       return NextResponse.json(

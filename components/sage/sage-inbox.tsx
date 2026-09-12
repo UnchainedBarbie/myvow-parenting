@@ -1,8 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { Archive, ArchiveRestore, MoreVertical, Search } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { cn } from "@/lib/utils";
 import { ReviseProposalModal } from "@/components/sage/revise-proposal-modal";
 
@@ -201,7 +203,10 @@ function dateKey(itemId: string, index: number): string {
 export function SageInbox() {
   const [items, setItems] = useState<SageItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [dismissingId, setDismissingId] = useState<string | null>(null);
+  const [statusFilter, setStatusFilter] = useState<"open" | "archived" | "all">("open");
+  const [search, setSearch] = useState("");
+  const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
+  const [confirmArchiveItem, setConfirmArchiveItem] = useState<SageItem | null>(null);
   const [multiSelect, setMultiSelect] = useState<Record<string, boolean>>({});
   const [selected, setSelected] = useState<Record<string, number[]>>({});
   const [dates, setDates] = useState<Record<string, string>>({});
@@ -214,10 +219,10 @@ export function SageInbox() {
     initialText: string;
   } | null>(null);
 
-  async function fetchInbox() {
+  async function fetchInbox(status: "open" | "archived" | "all" = statusFilter) {
     setLoading(true);
     try {
-      const res = await fetch("/api/sage-inbox");
+      const res = await fetch(`/api/sage-inbox?status=${encodeURIComponent(status)}`);
       if (!res.ok) return;
       const data = (await res.json()) as SageItem[];
       setItems(Array.isArray(data) ? data : []);
@@ -229,33 +234,38 @@ export function SageInbox() {
   }
 
   useEffect(() => {
-    fetchInbox();
-  }, []);
+    fetchInbox(statusFilter);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- refetch when status filter changes
+  }, [statusFilter]);
 
-  async function handleDismissItem(item: SageItem) {
-    setDismissingId(item.id);
-    const res = await fetch("/api/sage-inbox", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: item.id, status: "dismissed" }),
+  // Close item overflow menu on click outside (Messages pattern)
+  useEffect(() => {
+    if (!menuOpenId) return;
+    const handle = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (
+        target.closest("[data-sage-item-card]")?.getAttribute("data-sage-item-card") !==
+          menuOpenId &&
+        !target.closest("[data-sage-item-menu]")
+      ) {
+        setMenuOpenId(null);
+      }
+    };
+    document.addEventListener("mousedown", handle);
+    return () => document.removeEventListener("mousedown", handle);
+  }, [menuOpenId]);
+
+  const visibleItems = useMemo(() => {
+    if (!search.trim()) return items;
+    const q = search.trim().toLowerCase();
+    return items.filter((item) => {
+      const children = childNamesFromItem(item).join(" ");
+      const text = [item.summary ?? "", item.domain ?? "", children]
+        .join(" ")
+        .toLowerCase();
+      return text.includes(q);
     });
-    if (!res.ok) {
-      setDismissingId(null);
-      return;
-    }
-    setItems((prev) => prev.filter((i) => i.id !== item.id));
-    setSelected((prev) => {
-      const next = { ...prev };
-      delete next[item.id];
-      return next;
-    });
-    setMultiSelect((prev) => {
-      const next = { ...prev };
-      delete next[item.id];
-      return next;
-    });
-    setDismissingId(null);
-  }
+  }, [items, search]);
 
   function toggleProposal(itemId: string, index: number) {
     setSelected((prev) => {
@@ -327,26 +337,59 @@ export function SageInbox() {
     }
   }
 
-  const sections = groupItems(items);
-  const totalCount = items.length;
+  const sections = groupItems(visibleItems);
+  const totalCount = visibleItems.length;
+  const emptyMessage =
+    statusFilter === "archived"
+      ? "No archived items."
+      : search.trim()
+        ? "No items match your search."
+        : "Sage hasn't flagged anything yet.";
 
   return (
     <Card className="shadow-card border-border rounded-card">
-      <CardHeader className="pb-2 px-4 pt-4 flex items-center justify-between gap-2">
+      <CardHeader className="pb-2 px-4 pt-4 space-y-3">
         <div className="flex items-center gap-2">
           <CardTitle className="font-heading text-lg text-foreground">Sage Inbox</CardTitle>
-          {totalCount > 0 && (
+          {!loading && totalCount > 0 && (
             <span className="inline-flex items-center justify-center rounded-full bg-[#F2F5EF] px-2 py-0.5 text-[11px] font-medium text-[#5B7A52]">
               {totalCount}
             </span>
           )}
+        </div>
+        <div className="flex items-center gap-2 min-w-0">
+          <div className="relative flex-1 min-w-0">
+            <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#B0A899]" />
+            <input
+              type="search"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search..."
+              className="h-8 w-full min-w-0 rounded-full border border-[#E8E4DC] bg-[#FDFBF7] pl-7 pr-2 text-xs text-[#3D3D3D] placeholder:text-[#B0A899] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E]"
+            />
+          </div>
+          <select
+            value={statusFilter}
+            onChange={(e) =>
+              setStatusFilter(e.target.value as "open" | "archived" | "all")
+            }
+            className={cn(
+              "h-8 w-[90px] shrink-0 rounded-full border px-2 py-1 text-[11px] text-[#3D3D3D] bg-[#FDFBF7] border-[#E8E4DC] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E]",
+              statusFilter !== "open" && "bg-[#F2F5EF] border-[#7C8B6E]"
+            )}
+            aria-label="Filter by status"
+          >
+            <option value="open">Open</option>
+            <option value="archived">Archived</option>
+            <option value="all">All</option>
+          </select>
         </div>
       </CardHeader>
       <CardContent className="px-4 pb-4 space-y-5">
         {loading ? (
           <p className="text-sm text-foreground-secondary">Loading…</p>
         ) : totalCount === 0 ? (
-          <p className="text-sm text-foreground-secondary">Sage hasn&apos;t flagged anything yet.</p>
+          <p className="text-sm text-foreground-secondary">{emptyMessage}</p>
         ) : (
           sections.map((section) => (
             <div key={section.key} className="space-y-2">
@@ -365,7 +408,7 @@ export function SageInbox() {
                   const urgency = (item.urgency ?? "").toLowerCase();
                   const showUrgency = urgency === "high" || urgency === "emergency";
                   const children = childNamesFromItem(item);
-                  const isDismissing = dismissingId === item.id;
+                  const isArchived = item.status === "archived";
                   const summary = (item.summary ?? "").trim() || "(no summary)";
                   const proposals = Array.isArray(item.plan?.proposals)
                     ? item.plan!.proposals!
@@ -379,53 +422,99 @@ export function SageInbox() {
                   return (
                     <li
                       key={item.id}
-                      className={cn(
-                        "rounded-lg border border-[#E8E4DC] bg-white px-3 py-2 transition-opacity duration-300",
-                        isDismissing && "opacity-0"
-                      )}
+                      data-sage-item-card={item.id}
+                      onMouseLeave={() => {
+                        if (menuOpenId === item.id) setMenuOpenId(null);
+                      }}
+                      className="group relative rounded-lg border border-[#E8E4DC] bg-white px-3 py-2"
                     >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="flex items-start gap-2 min-w-0">
-                          <span className="mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#F2F5EF] text-[#5B7A52] text-[11px]">
-                            {icon}
-                          </span>
-                          <div className="min-w-0 space-y-1">
-                            <p className="text-sm text-foreground line-clamp-2">{summary}</p>
-                            <div className="flex flex-wrap items-center gap-2">
-                              {domain && (
-                                <span className="inline-flex items-center rounded-full bg-[#EEF2E9] px-2 py-0.5 text-[10px] font-medium text-[#5B7A52]">
-                                  {domain}
+                      <div className="flex items-start gap-2 min-w-0">
+                        <span className="mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#F2F5EF] text-[#5B7A52] text-[11px]">
+                          {icon}
+                        </span>
+                        <div className="min-w-0 flex-1 space-y-1">
+                          <div className="flex items-start justify-between gap-2">
+                            <p className="text-sm text-foreground line-clamp-2 min-w-0">
+                              {summary}
+                            </p>
+                            <div className="flex shrink-0 items-center gap-1.5">
+                              {isArchived && (
+                                <span className="inline-flex items-center rounded-full border border-[#E2C877] bg-[#FDF6E3] px-2 py-0.5 text-[9px] font-medium text-[#B8960F]">
+                                  Archived
                                 </span>
                               )}
-                              {showUrgency && (
-                                <span className="inline-flex items-center rounded-full bg-[#FBF3E0] px-2 py-0.5 text-[10px] font-medium text-[#B8860B]">
-                                  {urgency === "emergency" ? "emergency" : "high"}
-                                </span>
-                              )}
-                              {children.length > 0 && (
-                                <span className="text-[11px] text-foreground-secondary">
-                                  {children.join(", ")}
-                                </span>
-                              )}
-                              <span className="text-[11px] text-foreground-secondary">
-                                {formatRelativeTime(item.created_at)}
-                              </span>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  setMenuOpenId(menuOpenId === item.id ? null : item.id);
+                                }}
+                                className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded hover:bg-[#E8E4DC] text-[#B0A899] hover:text-[#6A7A6E]"
+                                aria-label="Item options"
+                                aria-expanded={menuOpenId === item.id}
+                              >
+                                <MoreVertical className="h-4 w-4" />
+                              </button>
                             </div>
                           </div>
-                        </div>
-                        <div className="flex shrink-0 flex-col items-stretch gap-1 sm:flex-row sm:items-center">
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            className="h-7 rounded-full px-3 text-[11px]"
-                            onClick={() => handleDismissItem(item)}
-                            disabled={isDismissing}
-                          >
-                            Dismiss ✗
-                          </Button>
+                          <div className="flex flex-wrap items-center gap-2">
+                            {domain && (
+                              <span className="inline-flex items-center rounded-full bg-[#EEF2E9] px-2 py-0.5 text-[10px] font-medium text-[#5B7A52]">
+                                {domain}
+                              </span>
+                            )}
+                            {showUrgency && (
+                              <span className="inline-flex items-center rounded-full bg-[#FBF3E0] px-2 py-0.5 text-[10px] font-medium text-[#B8860B]">
+                                {urgency === "emergency" ? "emergency" : "high"}
+                              </span>
+                            )}
+                            {children.length > 0 && (
+                              <span className="text-[11px] text-foreground-secondary">
+                                {children.join(", ")}
+                              </span>
+                            )}
+                            <span className="text-[11px] text-foreground-secondary">
+                              {formatRelativeTime(item.created_at)}
+                            </span>
+                          </div>
                         </div>
                       </div>
+
+                      {menuOpenId === item.id && (
+                        <div
+                          data-sage-item-menu
+                          className="absolute right-2 top-9 z-20 min-w-[180px] rounded-lg border border-[#E8E4DC] bg-white py-1 shadow-lg"
+                        >
+                          {!isArchived ? (
+                            <button
+                              type="button"
+                              className="flex w-full items-center gap-2 px-3 py-2 text-[13px] text-[#3D3D3D] hover:bg-[#F2F5EF] text-left"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                setConfirmArchiveItem(item);
+                                setMenuOpenId(null);
+                              }}
+                            >
+                              <Archive className="h-3.5 w-3.5" /> Archive
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              className="flex w-full items-center gap-2 px-3 py-2 text-[13px] text-[#3D3D3D] hover:bg-[#F2F5EF] text-left"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                setConfirmArchiveItem(item);
+                                setMenuOpenId(null);
+                              }}
+                            >
+                              <ArchiveRestore className="h-3.5 w-3.5" /> Unarchive
+                            </button>
+                          )}
+                        </div>
+                      )}
 
                       {proposals.length > 0 && (
                         <div className="mt-3 ml-9 space-y-2 border-t border-[#E8E4DC] pt-2">
@@ -697,6 +786,40 @@ export function SageInbox() {
         onSaved={() => {
           setReviseTarget(null);
           void fetchInbox();
+        }}
+      />
+
+      <ConfirmModal
+        open={!!confirmArchiveItem}
+        title={
+          confirmArchiveItem?.status === "archived"
+            ? "Unarchive item?"
+            : "Archive item?"
+        }
+        description={
+          confirmArchiveItem?.status === "archived"
+            ? "This item will return to your inbox."
+            : "You can find this later under Archived."
+        }
+        confirmLabel={
+          confirmArchiveItem?.status === "archived" ? "Unarchive" : "Archive"
+        }
+        onCancel={() => setConfirmArchiveItem(null)}
+        onConfirm={async () => {
+          if (!confirmArchiveItem) return;
+          const isArchived = confirmArchiveItem.status === "archived";
+          const nextStatus = isArchived ? "pending" : "archived";
+          const res = await fetch("/api/sage-inbox", {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: confirmArchiveItem.id, status: nextStatus }),
+          });
+          if (!res.ok) {
+            setConfirmArchiveItem(null);
+            return;
+          }
+          setConfirmArchiveItem(null);
+          await fetchInbox();
         }}
       />
     </Card>

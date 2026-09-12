@@ -3,6 +3,22 @@ import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
 
+type PlanProposal = {
+  type?: string;
+  draft?: string;
+  depends_on?: string | null;
+  requires_approval?: boolean;
+  approved?: boolean;
+  approved_at?: string;
+};
+
+type SagePlan = {
+  status?: string;
+  proposals?: PlanProposal[];
+  reasoning?: string;
+  [key: string]: unknown;
+};
+
 /**
  * GET /api/sage-inbox
  * Authenticated parent user.
@@ -41,7 +57,7 @@ export async function GET(_req: NextRequest) {
     const { data: items, error: itemsError } = await admin
       .from("sage_items")
       .select(
-        "id, item_type, domain, summary, evidence_excerpt, urgency, action_required, child_ids, tool_input, status, created_at"
+        "id, item_type, domain, summary, evidence_excerpt, urgency, action_required, child_ids, tool_input, plan, status, created_at"
       )
       .eq("case_id", caseId)
       .eq("visible_to", user.id)
@@ -57,6 +73,102 @@ export async function GET(_req: NextRequest) {
   } catch (e) {
     console.error("[sage-inbox/GET] Unhandled error:", e);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  }
+}
+
+/**
+ * POST /api/sage-inbox
+ * Body: { id, approved_proposal_indexes: number[] }
+ * Records approval flags on plan.proposals — does NOT execute actions.
+ */
+export async function POST(req: NextRequest) {
+  try {
+    const body = (await req.json().catch(() => null)) as
+      | { id?: string | null; approved_proposal_indexes?: unknown }
+      | null;
+
+    const id = body?.id ? String(body.id) : "";
+    const indexes = Array.isArray(body?.approved_proposal_indexes)
+      ? body!.approved_proposal_indexes.filter(
+          (n): n is number => typeof n === "number" && Number.isInteger(n) && n >= 0
+        )
+      : [];
+
+    if (!id || indexes.length === 0) {
+      return NextResponse.json(
+        { success: false, error: "Invalid id or approved_proposal_indexes" },
+        { status: 400 }
+      );
+    }
+
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+    }
+
+    const admin = getServiceRoleClient();
+    const { data: row, error: fetchError } = await admin
+      .from("sage_items")
+      .select("id, plan")
+      .eq("id", id)
+      .eq("visible_to", user.id)
+      .maybeSingle();
+
+    if (fetchError) {
+      console.error("[sage-inbox/POST] Failed to load sage_item:", fetchError);
+      return NextResponse.json({ success: false, error: "Internal server error" }, { status: 500 });
+    }
+
+    if (!row) {
+      return NextResponse.json({ success: false, error: "Item not found" }, { status: 404 });
+    }
+
+    const plan = (
+      row.plan && typeof row.plan === "object" ? { ...(row.plan as SagePlan) } : { proposals: [] }
+    ) as SagePlan;
+
+    const proposals = Array.isArray(plan.proposals)
+      ? plan.proposals.map((p) => ({ ...p }))
+      : [];
+
+    const approvedAt = new Date().toISOString();
+    for (const idx of indexes) {
+      if (idx >= proposals.length) continue;
+      const p = proposals[idx];
+      if (!p || p.type === "note_only") continue;
+      if (p.depends_on != null && String(p.depends_on).trim() !== "") continue;
+      if (p.approved === true) continue;
+      proposals[idx] = {
+        ...p,
+        approved: true,
+        approved_at: approvedAt,
+      };
+    }
+
+    const updatedPlan: SagePlan = { ...plan, proposals };
+
+    const { error: updateError } = await admin
+      .from("sage_items")
+      .update({ plan: updatedPlan, status: "in_progress" })
+      .eq("id", id)
+      .eq("visible_to", user.id);
+
+    if (updateError) {
+      console.error("[sage-inbox/POST] Failed to update plan:", updateError);
+      return NextResponse.json(
+        { success: false, error: updateError.message ?? "Failed to record approval" },
+        { status: 500 }
+      );
+    }
+
+    return NextResponse.json({ success: true, plan: updatedPlan });
+  } catch (e) {
+    console.error("[sage-inbox/POST] Unhandled error:", e);
+    return NextResponse.json({ success: false, error: "Internal server error" }, { status: 500 });
   }
 }
 

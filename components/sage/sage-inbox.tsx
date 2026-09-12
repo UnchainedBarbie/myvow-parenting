@@ -5,6 +5,21 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
+type SageProposal = {
+  type: string;
+  draft: string;
+  depends_on: string | null;
+  requires_approval?: boolean;
+  approved?: boolean;
+  approved_at?: string;
+};
+
+type SagePlan = {
+  status?: string;
+  proposals?: SageProposal[];
+  reasoning?: string;
+};
+
 type SageItem = {
   id: string;
   item_type: string | null;
@@ -15,6 +30,7 @@ type SageItem = {
   action_required: boolean | null;
   child_ids: string[] | null;
   tool_input: unknown;
+  plan: SagePlan | null;
   status: string | null;
   created_at: string;
 };
@@ -49,6 +65,23 @@ function domainIcon(domain: string | null, itemType: string | null): string {
   return "•";
 }
 
+function proposalTypeLabel(type: string): string {
+  switch (type) {
+    case "ask_clarification":
+      return "Ask Co-Parent";
+    case "reply_coparent":
+      return "Reply to Co-Parent";
+    case "calendar_update":
+      return "Update calendar";
+    case "log_expense":
+      return "Log expense";
+    case "note_only":
+      return "Note";
+    default:
+      return type;
+  }
+}
+
 function childNamesFromItem(item: SageItem): string[] {
   const names: string[] = [];
   const input = item.tool_input;
@@ -66,6 +99,14 @@ function childNamesFromItem(item: SageItem): string[] {
   return names;
 }
 
+function isBlocked(p: SageProposal): boolean {
+  return p.depends_on != null && String(p.depends_on).trim() !== "";
+}
+
+function isSelectable(p: SageProposal): boolean {
+  return p.type !== "note_only" && !isBlocked(p) && p.approved !== true;
+}
+
 type Section = {
   key: string;
   title: string;
@@ -76,7 +117,6 @@ function groupItems(items: SageItem[]): Section[] {
   const needsResponse: SageItem[] = [];
   const awareness: SageItem[] = [];
   const needsReview: SageItem[] = [];
-  // Reserved for Planner-driven updates — empty until that layer exists.
   const updatedBySage: SageItem[] = [];
 
   for (const item of items) {
@@ -108,6 +148,8 @@ export function SageInbox() {
   const [items, setItems] = useState<SageItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [dismissingId, setDismissingId] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Record<string, number[]>>({});
+  const [submittingId, setSubmittingId] = useState<string | null>(null);
 
   async function fetchInbox() {
     setLoading(true);
@@ -139,7 +181,49 @@ export function SageInbox() {
       return;
     }
     setItems((prev) => prev.filter((i) => i.id !== item.id));
+    setSelected((prev) => {
+      const next = { ...prev };
+      delete next[item.id];
+      return next;
+    });
     setDismissingId(null);
+  }
+
+  function toggleProposal(itemId: string, index: number) {
+    setSelected((prev) => {
+      const current = prev[itemId] ?? [];
+      const next = current.includes(index)
+        ? current.filter((i) => i !== index)
+        : [...current, index].sort((a, b) => a - b);
+      return { ...prev, [itemId]: next };
+    });
+  }
+
+  async function handleSubmit(item: SageItem) {
+    const indexes = selected[item.id] ?? [];
+    if (indexes.length === 0) return;
+    setSubmittingId(item.id);
+    try {
+      const res = await fetch("/api/sage-inbox", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: item.id,
+          approved_proposal_indexes: indexes,
+        }),
+      });
+      if (!res.ok) return;
+      setSelected((prev) => {
+        const next = { ...prev };
+        delete next[item.id];
+        return next;
+      });
+      await fetchInbox();
+    } catch (e) {
+      console.error("[SageInbox] submit failed:", e);
+    } finally {
+      setSubmittingId(null);
+    }
   }
 
   const sections = groupItems(items);
@@ -182,55 +266,142 @@ export function SageInbox() {
                   const children = childNamesFromItem(item);
                   const isDismissing = dismissingId === item.id;
                   const summary = (item.summary ?? "").trim() || "(no summary)";
+                  const proposals = Array.isArray(item.plan?.proposals)
+                    ? item.plan!.proposals!
+                    : [];
+                  const checked = selected[item.id] ?? [];
+                  const canSubmit = checked.length > 0 && submittingId !== item.id;
 
                   return (
                     <li
                       key={item.id}
                       className={cn(
-                        "flex items-start justify-between gap-3 rounded-lg border border-[#E8E4DC] bg-white px-3 py-2 transition-opacity duration-300",
+                        "rounded-lg border border-[#E8E4DC] bg-white px-3 py-2 transition-opacity duration-300",
                         isDismissing && "opacity-0"
                       )}
                     >
-                      <div className="flex items-start gap-2 min-w-0">
-                        <span className="mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#F2F5EF] text-[#5B7A52] text-[11px]">
-                          {icon}
-                        </span>
-                        <div className="min-w-0 space-y-1">
-                          <p className="text-sm text-foreground line-clamp-2">{summary}</p>
-                          <div className="flex flex-wrap items-center gap-2">
-                            {domain && (
-                              <span className="inline-flex items-center rounded-full bg-[#EEF2E9] px-2 py-0.5 text-[10px] font-medium text-[#5B7A52]">
-                                {domain}
-                              </span>
-                            )}
-                            {showUrgency && (
-                              <span className="inline-flex items-center rounded-full bg-[#FBF3E0] px-2 py-0.5 text-[10px] font-medium text-[#B8860B]">
-                                {urgency === "emergency" ? "emergency" : "high"}
-                              </span>
-                            )}
-                            {children.length > 0 && (
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex items-start gap-2 min-w-0">
+                          <span className="mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#F2F5EF] text-[#5B7A52] text-[11px]">
+                            {icon}
+                          </span>
+                          <div className="min-w-0 space-y-1">
+                            <p className="text-sm text-foreground line-clamp-2">{summary}</p>
+                            <div className="flex flex-wrap items-center gap-2">
+                              {domain && (
+                                <span className="inline-flex items-center rounded-full bg-[#EEF2E9] px-2 py-0.5 text-[10px] font-medium text-[#5B7A52]">
+                                  {domain}
+                                </span>
+                              )}
+                              {showUrgency && (
+                                <span className="inline-flex items-center rounded-full bg-[#FBF3E0] px-2 py-0.5 text-[10px] font-medium text-[#B8860B]">
+                                  {urgency === "emergency" ? "emergency" : "high"}
+                                </span>
+                              )}
+                              {children.length > 0 && (
+                                <span className="text-[11px] text-foreground-secondary">
+                                  {children.join(", ")}
+                                </span>
+                              )}
                               <span className="text-[11px] text-foreground-secondary">
-                                {children.join(", ")}
+                                {formatRelativeTime(item.created_at)}
                               </span>
-                            )}
-                            <span className="text-[11px] text-foreground-secondary">
-                              {formatRelativeTime(item.created_at)}
-                            </span>
+                            </div>
                           </div>
                         </div>
+                        <div className="flex shrink-0 flex-col items-stretch gap-1 sm:flex-row sm:items-center">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-7 rounded-full px-3 text-[11px]"
+                            onClick={() => handleDismiss(item)}
+                            disabled={isDismissing}
+                          >
+                            Dismiss ✗
+                          </Button>
+                        </div>
                       </div>
-                      <div className="flex shrink-0 flex-col items-stretch gap-1 sm:flex-row sm:items-center">
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          className="h-7 rounded-full px-3 text-[11px]"
-                          onClick={() => handleDismiss(item)}
-                          disabled={isDismissing}
-                        >
-                          Dismiss ✗
-                        </Button>
-                      </div>
+
+                      {proposals.length > 0 && (
+                        <div className="mt-3 ml-9 space-y-2 border-t border-[#E8E4DC] pt-2">
+                          <p className="text-[11px] font-medium text-[#5B7A52]">Sage suggests</p>
+                          <ul className="space-y-2">
+                            {proposals.map((p, idx) => {
+                              const blocked = isBlocked(p);
+                              const approved = p.approved === true;
+                              const noteOnly = p.type === "note_only";
+                              const selectable = isSelectable(p);
+                              const isChecked = checked.includes(idx);
+
+                              return (
+                                <li
+                                  key={`${item.id}-p-${idx}`}
+                                  className={cn(
+                                    "flex items-start gap-2 rounded-md px-2 py-1.5",
+                                    blocked && "bg-[#F7F5F0] opacity-80"
+                                  )}
+                                >
+                                  {noteOnly ? (
+                                    <span className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+                                  ) : approved ? (
+                                    <span className="mt-0.5 inline-flex h-4 w-4 shrink-0 items-center justify-center text-[10px] text-[#5B7A52]">
+                                      ✓
+                                    </span>
+                                  ) : (
+                                    <input
+                                      type="checkbox"
+                                      className="mt-0.5 h-4 w-4 shrink-0 rounded border-[#C5D0C0] accent-[#7B9E87] disabled:cursor-not-allowed disabled:opacity-40"
+                                      checked={isChecked}
+                                      disabled={!selectable || submittingId === item.id}
+                                      onChange={() => toggleProposal(item.id, idx)}
+                                      aria-label={`Approve: ${proposalTypeLabel(p.type)}`}
+                                    />
+                                  )}
+                                  <div className="min-w-0 flex-1 space-y-0.5">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <span className="inline-flex items-center rounded-full bg-[#EEF2E9] px-2 py-0.5 text-[10px] font-medium text-[#5B7A52]">
+                                        {proposalTypeLabel(p.type)}
+                                      </span>
+                                      {approved && (
+                                        <span className="text-[10px] font-medium text-[#5B7A52]">
+                                          ✓ approved
+                                        </span>
+                                      )}
+                                      {blocked && !approved && (
+                                        <span className="text-[10px] text-foreground-secondary">
+                                          waiting on: {p.depends_on}
+                                        </span>
+                                      )}
+                                    </div>
+                                    <p
+                                      className={cn(
+                                        "text-[12px] leading-snug text-foreground",
+                                        blocked && "text-foreground-secondary"
+                                      )}
+                                    >
+                                      {p.draft}
+                                    </p>
+                                  </div>
+                                </li>
+                              );
+                            })}
+                          </ul>
+                          {proposals.some(isSelectable) && (
+                            <div className="pt-1">
+                              <Button
+                                type="button"
+                                size="sm"
+                                className="h-7 rounded-full px-3 text-[11px] bg-[#7B9E87] text-white hover:bg-[#6A8A78] disabled:opacity-50"
+                                disabled={!canSubmit}
+                                onClick={() => handleSubmit(item)}
+                              >
+                                {submittingId === item.id ? "Submitting…" : "Submit"}
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </li>
                   );
                 })}

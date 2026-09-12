@@ -84,6 +84,7 @@ export type AddEventFormInitialValues = {
   description?: string;
   visibility?: "family" | "parents_only" | "just_me_and_kids" | "private";
   eventType?: string;
+  childId?: string;
 };
 
 interface AddEventFormProps {
@@ -148,6 +149,7 @@ export function AddEventForm({
     if (initialValues.description != null) setDescription(initialValues.description);
     if (initialValues.visibility != null) setVisibility(initialValues.visibility);
     if (initialValues.eventType != null) setEventType(initialValues.eventType);
+    if (initialValues.childId != null) setChildId(initialValues.childId);
   }, [initialValues]);
 
   function timeToHHmm(s: string | null): string {

@@ -1,12 +1,16 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Archive, ArchiveRestore, Flag, Search } from "lucide-react";
+import { Archive, ArchiveRestore, Flag, Search, X } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { cn } from "@/lib/utils";
 import { ReviseProposalModal } from "@/components/sage/revise-proposal-modal";
+import {
+  AddEventForm,
+  type AddEventFormInitialValues,
+} from "@/components/calendar/add-event-form";
 
 type SageProposal = {
   type: string;
@@ -21,6 +25,8 @@ type SageProposal = {
   waived_at?: string;
   unblocked?: boolean;
   executed?: boolean;
+  executed_at?: string;
+  result_event_id?: string;
 };
 
 type SagePlan = {
@@ -201,7 +207,58 @@ function dateKey(itemId: string, index: number): string {
   return `${itemId}:${index}`;
 }
 
-export function SageInbox() {
+/** Parse a wall-clock time from proposal draft text into HH:MM (24h). */
+function parseTimeFromDraft(draft: string): string | undefined {
+  const m = draft.match(/\b(\d{1,2}):(\d{2})\s*(a\.?m\.?|p\.?m\.?)?\b/i);
+  if (!m) return undefined;
+  let h = parseInt(m[1], 10);
+  const min = m[2];
+  const ampm = (m[3] ?? "").toLowerCase().replace(/\./g, "");
+  if (ampm.startsWith("p") && h < 12) h += 12;
+  if (ampm.startsWith("a") && h === 12) h = 0;
+  if (h > 23) return undefined;
+  return `${String(h).padStart(2, "0")}:${min}`;
+}
+
+function buildCalendarInitialValues(
+  item: SageItem,
+  proposal: SageProposal,
+  chosenDate?: string
+): AddEventFormInitialValues {
+  const childId =
+    Array.isArray(item.child_ids) && item.child_ids[0]
+      ? item.child_ids[0]
+      : undefined;
+  const draftSource =
+    (typeof proposal.revised_text === "string" && proposal.revised_text.trim()
+      ? proposal.revised_text
+      : proposal.draft) ?? "";
+  const summary = (item.summary ?? "").trim();
+  const title = (summary || "Pickup change").slice(0, 80);
+  return {
+    childId,
+    date: (chosenDate ?? proposal.chosen_date ?? "").trim() || undefined,
+    startTime: parseTimeFromDraft(draftSource) ?? "09:00",
+    title,
+    eventType: "custody_exchange",
+    description: summary || undefined,
+  };
+}
+
+type CalendarAgreeTarget = {
+  item: SageItem;
+  proposalIndex: number;
+  initialValues: AddEventFormInitialValues;
+  queue: number[];
+};
+
+export function SageInbox({
+  caseId,
+  children: childrenList,
+}: {
+  caseId: string;
+  children: { id: string; first_name: string }[];
+}) {
   const [items, setItems] = useState<SageItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState<
@@ -217,6 +274,9 @@ export function SageInbox() {
   const [selected, setSelected] = useState<Record<string, number[]>>({});
   const [dates, setDates] = useState<Record<string, string>>({});
   const [busyKey, setBusyKey] = useState<string | null>(null);
+  const [calendarAgree, setCalendarAgree] = useState<CalendarAgreeTarget | null>(
+    null
+  );
   const [reviseTarget, setReviseTarget] = useState<{
     itemId: string;
     proposalIndex: number;
@@ -404,6 +464,85 @@ export function SageInbox() {
     }
   }
 
+  function openCalendarAgree(
+    item: SageItem,
+    proposalIndex: number,
+    queue: number[] = []
+  ) {
+    const proposals = item.plan?.proposals ?? [];
+    const p = proposals[proposalIndex];
+    if (!p || p.type !== "calendar_update") return;
+    const chosen =
+      (dates[dateKey(item.id, proposalIndex)] ?? "").trim() ||
+      p.chosen_date ||
+      "";
+    setCalendarAgree({
+      item,
+      proposalIndex,
+      initialValues: buildCalendarInitialValues(item, p, chosen || undefined),
+      queue,
+    });
+  }
+
+  /** Agree: calendar_update opens AddEventForm; other types record approval only. */
+  async function handleAgree(
+    item: SageItem,
+    proposal_indexes: number[],
+    busyId: string
+  ) {
+    if (proposal_indexes.length === 0) return;
+    if (missingRequiredDates(item, proposal_indexes)) return;
+
+    const proposals = item.plan?.proposals ?? [];
+    const calendarIdxs = proposal_indexes.filter(
+      (i) => proposals[i]?.type === "calendar_update"
+    );
+    const otherIdxs = proposal_indexes.filter(
+      (i) => proposals[i]?.type !== "calendar_update"
+    );
+
+    if (otherIdxs.length > 0) {
+      await postProposalAction(item, "agree", otherIdxs, busyId);
+    } else {
+      setSelected((prev) => {
+        const next = { ...prev };
+        delete next[item.id];
+        return next;
+      });
+    }
+
+    if (calendarIdxs.length > 0) {
+      const [first, ...rest] = calendarIdxs;
+      openCalendarAgree(item, first, rest);
+    }
+  }
+
+  async function handleCalendarEventCreated(eventId: string) {
+    if (!calendarAgree) return;
+    const { item, proposalIndex, queue } = calendarAgree;
+    const res = await fetch("/api/sage-inbox", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: item.id,
+        action: "execute",
+        proposal_index: proposalIndex,
+        event_id: eventId,
+      }),
+    });
+    if (!res.ok) return;
+
+    if (queue.length > 0) {
+      const [nextIdx, ...rest] = queue;
+      openCalendarAgree(item, nextIdx, rest);
+      void fetchInbox();
+      return;
+    }
+
+    setCalendarAgree(null);
+    await fetchInbox();
+  }
+
   const sections = groupItems(visibleItems);
   const totalCount = visibleItems.length;
   const emptyMessage =
@@ -464,11 +603,6 @@ export function SageInbox() {
           >
             {itemSelectMode ? "Cancel" : "Select"}
           </button>
-          {!loading && (
-            <span className="text-[11px] text-[#8A8A8A] tabular-nums">
-              {totalCount} {totalCount === 1 ? "item" : "items"}
-            </span>
-          )}
         </div>
         {itemSelectMode && (
           <div className="flex flex-wrap items-center gap-2 rounded-xl border border-[#E8E4DC] bg-[#FDFBF7] px-3 py-2">
@@ -675,6 +809,7 @@ export function SageInbox() {
                               const blocked = isBlocked(p);
                               const approved = p.approved === true;
                               const waived = isWaived(p);
+                              const executed = p.executed === true;
                               const noteOnly = p.type === "note_only";
                               const actionable = isActionable(p);
                               const showDate = actionable && needsDateField(p);
@@ -741,9 +876,8 @@ export function SageInbox() {
                                           "disabled:opacity-40 disabled:cursor-not-allowed"
                                         )}
                                         onClick={() =>
-                                          postProposalAction(
+                                          handleAgree(
                                             item,
-                                            "agree",
                                             [idx],
                                             `${item.id}:${idx}`
                                           )
@@ -809,11 +943,15 @@ export function SageInbox() {
                                       <span className="inline-flex items-center rounded-full bg-[#EEF2E9] px-2 py-0.5 text-[10px] font-medium text-[#5B7A52]">
                                         {proposalTypeLabel(p.type)}
                                       </span>
-                                      {approved && (
+                                      {executed ? (
+                                        <span className="text-[10px] font-medium text-[#5B7A52]">
+                                          ✓ done · added to calendar
+                                        </span>
+                                      ) : approved ? (
                                         <span className="text-[10px] font-medium text-[#5B7A52]">
                                           ✓ approved
                                         </span>
-                                      )}
+                                      ) : null}
                                       {typeof p.revised_text === "string" &&
                                         p.revised_text.trim() &&
                                         !approved &&
@@ -881,9 +1019,8 @@ export function SageInbox() {
                                     missingRequiredDates(item, checked)
                                   }
                                   onClick={() =>
-                                    postProposalAction(
+                                    handleAgree(
                                       item,
-                                      "agree",
                                       checked,
                                       `${item.id}:multi`
                                     )
@@ -935,6 +1072,50 @@ export function SageInbox() {
           void fetchInbox();
         }}
       />
+
+      {calendarAgree && caseId && (
+        <div
+          className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 px-3 py-6"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="sage-add-calendar-title"
+          onClick={() => setCalendarAgree(null)}
+        >
+          <div
+            className="relative my-4 w-full max-w-md rounded-2xl border border-[#E8E4DC] bg-[#FDFBF7] p-4 shadow-card"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <h2
+                id="sage-add-calendar-title"
+                className="font-heading text-base font-semibold text-[#3D3D3D]"
+              >
+                Add to calendar
+              </h2>
+              <button
+                type="button"
+                className="rounded-md p-1.5 text-[#8A8A8A] hover:bg-[#E8E4DC] hover:text-[#3D3D3D]"
+                aria-label="Close"
+                onClick={() => setCalendarAgree(null)}
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <p className="mb-3 text-[11px] text-[#8A8A8A]">
+              Review the event details, then click Add Event to put it on your
+              calendar.
+            </p>
+            <AddEventForm
+              caseId={caseId}
+              children={childrenList}
+              initialYear={new Date().getFullYear()}
+              initialMonth={new Date().getMonth() + 1}
+              initialValues={calendarAgree.initialValues}
+              onSuccess={(eventId) => void handleCalendarEventCreated(eventId)}
+            />
+          </div>
+        </div>
+      )}
 
       <ConfirmModal
         open={!!confirmArchiveItem}

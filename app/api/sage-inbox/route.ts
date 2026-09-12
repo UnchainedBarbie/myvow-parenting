@@ -16,6 +16,8 @@ type PlanProposal = {
   waived_at?: string;
   unblocked?: boolean;
   executed?: boolean;
+  executed_at?: string;
+  result_event_id?: string;
 };
 
 type SagePlan = {
@@ -106,7 +108,9 @@ export async function GET(req: NextRequest) {
  * Body variants:
  *  - { id, action: "agree"|"dismiss"|"undo", proposal_indexes, dates? }
  *  - { id, action: "revise", proposal_index, revised_text }
- * Records approval/waiver/undo/revise on plan.proposals — does NOT execute actions.
+ *  - { id, action: "execute", proposal_index, event_id }
+ * Records approval/waiver/undo/revise/execute on plan.proposals — does NOT execute calendar/email itself
+ * (calendar create happens client-side via AddEventForm; execute only marks the proposal done).
  */
 export async function POST(req: NextRequest) {
   try {
@@ -116,6 +120,7 @@ export async function POST(req: NextRequest) {
       proposal_indexes?: unknown;
       proposal_index?: unknown;
       revised_text?: unknown;
+      event_id?: unknown;
       dates?: Record<string, string> | null;
     } | null;
 
@@ -124,7 +129,8 @@ export async function POST(req: NextRequest) {
       body?.action === "agree" ||
       body?.action === "dismiss" ||
       body?.action === "undo" ||
-      body?.action === "revise"
+      body?.action === "revise" ||
+      body?.action === "execute"
         ? body.action
         : null;
 
@@ -206,6 +212,59 @@ export async function POST(req: NextRequest) {
         console.error("[sage-inbox/POST] Failed to save revise:", updateError);
         return NextResponse.json(
           { success: false, error: updateError.message ?? "Failed to save revise" },
+          { status: 500 }
+        );
+      }
+      return NextResponse.json({ success: true, plan: updatedPlan });
+    }
+
+    if (action === "execute") {
+      const idx =
+        typeof body?.proposal_index === "number" && Number.isInteger(body.proposal_index)
+          ? body.proposal_index
+          : -1;
+      const eventId =
+        typeof body?.event_id === "string" && body.event_id.trim()
+          ? body.event_id.trim()
+          : "";
+      if (idx < 0 || idx >= proposals.length || !eventId) {
+        return NextResponse.json(
+          { success: false, error: "Invalid proposal_index or event_id" },
+          { status: 400 }
+        );
+      }
+      const p = proposals[idx];
+      if (!p || p.type !== "calendar_update") {
+        return NextResponse.json(
+          { success: false, error: "Proposal is not a calendar_update" },
+          { status: 400 }
+        );
+      }
+      if (p.executed === true) {
+        return NextResponse.json(
+          { success: false, error: "already executed" },
+          { status: 400 }
+        );
+      }
+      const nowIso = new Date().toISOString();
+      proposals[idx] = {
+        ...p,
+        approved: true,
+        approved_at: p.approved_at ?? nowIso,
+        executed: true,
+        executed_at: nowIso,
+        result_event_id: eventId,
+      };
+      const updatedPlan: SagePlan = { ...plan, proposals };
+      const { error: updateError } = await admin
+        .from("sage_items")
+        .update({ plan: updatedPlan, status: "in_progress" })
+        .eq("id", id)
+        .eq("visible_to", user.id);
+      if (updateError) {
+        console.error("[sage-inbox/POST] Failed to save execute:", updateError);
+        return NextResponse.json(
+          { success: false, error: updateError.message ?? "Failed to mark executed" },
           { status: 500 }
         );
       }

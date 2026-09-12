@@ -2,5 +2,7 @@ input: "It is my understanding that Child B's tooth extraction doesn't count tow
 expected: {}
 assertions:
   action_required: [true, false]
-notes: "Expense/medical disagreement about cost-sharing thresholds. medical vs expense domain is a reasonable either-way read — domain intentionally not asserted. item_type is also arguable (dispute vs expense). action_required genuinely flips; both readings are defensible and depend on state/policy (a Planner concern)."
+notes: |
+  Expense/medical disagreement about cost-sharing thresholds. medical vs expense domain is a reasonable either-way read — domain intentionally not asserted. item_type is also arguable (dispute vs expense). action_required genuinely flips; both readings are defensible and depend on state/policy (a Planner concern).
+  UNDERSTANDING/PLANNER BOUNDARY — action_required depends on state/policy the Understanding layer cannot see; move to Planner later.
 difficulty: 4

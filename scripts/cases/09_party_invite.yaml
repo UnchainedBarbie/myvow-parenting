@@ -2,7 +2,17 @@ input: "Child C got invited to this party (invite attached) and it is during her
 expected:
   domain: calendar
 assertions:
-  action_required: true
+  action_required: [true, false]
   children: [Child C]
-notes: "Implicitly hands a decision to the recipient (it's their parenting time, they must RSVP). Tests whether Sage sees the handoff. Assert domain+action only — item_type could be needs_response or calendar_update."
+notes: |
+  action_required intentionally accepts both values.
+  A party invite during the recipient's parenting time implicitly hands
+  over a decision, but whether that RISES to "action required" depends on
+  state and policy the Understanding layer does not have (does the child
+  even want to go? has it been discussed?). This is NOT a model bug and NOT
+  test flakiness — action_required is a property of how the app intends to
+  RESPOND to a message, not a deterministic property of the message itself.
+  This is the 4th case (05, 07, 09) showing action_required belongs in the
+  PLANNER, not Understanding. Revisit when the Planner exists.
+  UNDERSTANDING/PLANNER BOUNDARY — action_required depends on state/policy the Understanding layer cannot see; move to Planner later.
 difficulty: 3

@@ -47,10 +47,12 @@ Your job is to read incoming language (messages, emails, document excerpts) and 
 
 You are NOT making decisions. You are NOT changing family state. You are NOT communicating with either parent. You ONLY produce a structured understanding of the input for downstream systems.
 
-Tone and framing rules:
-- Write summaries as a warm, trusted assistant — not a corporate document summarizer. Prefer phrasing like "It looks like your co-parent is asking whether…" over stiff lines like "Co-Parent is noting that…". Keep it calm and helpful.
+Summary voice (intent.summary ONLY — voice must not change item_type, domain, tool_name, or action fields):
+- Write as a warm, trusted assistant speaking directly to the parent — not a corporate document summarizer or court stenographer.
+- Prefer natural phrasing: "It looks like your co-parent is asking whether…", "Your co-parent shared that…", "It sounds like a coordination question about…"
+- Avoid stiff phrasing: "Co-Parent is noting that…", "Co-Parent has indicated…", "The sender requests…"
 - Refer to the other parent as "Co-Parent" — never use their name or email, even if provided.
-- Never shame, alarm, or escalate; no red-flag or adversarial framing.
+- Calm, helpful, suggestive — never shame, alarm, escalate, or use red-flag framing.
 - Be suggestive and helpful, never authoritarian or commanding.
 - Do not use words like "conflict"; prefer "communication" when relevant.
 - evidence_excerpt must be a tiny verbatim snippet from the input (10 words or fewer) that anchors your read — NOT the full message.
@@ -58,9 +60,9 @@ Tone and framing rules:
 Classification:
 - item_type: one of schedule_change | needs_response | information_only | calendar_update | expense | document_summary | medical_update | school_update | concern | agreement | dispute | emergency | needs_review
 - domain: one of calendar | school | medical | expense | legal | general
-- tool_name: calendar | expense | document | court | messaging | null — the downstream tool that genuinely needs to run, or null when none does. Set null whenever action_required is false (e.g. information_only awareness updates). Do NOT set tool_name to "messaging" just because the item is a reply or answers a question. tool_name should only name a tool that genuinely acts (calendar, expense, document, court). If no tool needs to run, tool_name is null. "messaging" is not a default — use it only when sending a message through the platform is the required next step.
+- tool_name: calendar | expense | document | court | messaging | null — names a downstream tool that genuinely must ACT, or null when none does. Valid acting tools: calendar, expense, document, court. Set null whenever action_required is false. "messaging" is NOT a default for replies, answers-to-questions, FYI items, or conversational text — use "messaging" ONLY when sending a message through the platform is the actual required next step. If no tool needs to run, tool_name is null.
 - action_required: true if the parent likely needs to do something
-- action_type: approve | acknowledge | review | respond | pay | archive | null — MUST be null whenever action_required is false. If nothing needs the parent to act, there is no action_type.
+- action_type: approve | acknowledge | review | respond | pay | archive | null — HARD RULE: when action_required is false, action_type MUST be null. Never output "acknowledge", "review", "respond", or any other action_type when nothing needs the parent to act. action_type applies only when action_required is true; otherwise set it to null.
 - urgency: low | normal | high | emergency
 - confidence: 0.0–1.0 how sure you are of item_type and domain
 
@@ -307,7 +309,10 @@ function parseInterpretation(raw: string): SageInterpretation | null {
   if (actionType && !ACTION_TYPES.has(actionType)) actionType = null;
 
   const actionRequired = asBool(intentRaw.action_required);
-  if (!actionRequired) toolName = null;
+  if (!actionRequired) {
+    toolName = null;
+    actionType = null;
+  }
 
   let urgency = asString(intentRaw.urgency, "normal");
   if (!URGENCIES.has(urgency)) urgency = "normal";

@@ -10,7 +10,7 @@ import {
   formatObservationForUnderstanding,
   type RawItem,
 } from "@/lib/sage/observation-builder";
-import { resolveChildren } from "@/lib/sage/resolver";
+import { resolveChildren, resolveDates } from "@/lib/sage/resolver";
 import { interpret } from "@/lib/sage/understanding";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -283,6 +283,12 @@ export async function processInboxItem(
       .filter((n) => typeof n === "string" && n.trim().length > 0);
     const { child_ids } = await resolveChildren(inboxRow.case_id, childNames);
 
+    const resolved_dates = resolveDates(
+      entities.dates.map((d) => ({ raw: d.raw })),
+      new Date(),
+      "America/Denver"
+    );
+
     const { data: sageRow, error: insertError } = await admin
       .from("sage_items")
       .insert({
@@ -299,7 +305,7 @@ export async function processInboxItem(
         action_type: intent.action_type,
         urgency: intent.urgency,
         confidence: intent.confidence,
-        tool_input: entities,
+        tool_input: { ...entities, resolved_dates },
         child_ids,
         status: "pending",
       })

@@ -16,6 +16,7 @@ type SageProposal = {
   status?: string;
   waived_at?: string;
   unblocked?: boolean;
+  executed?: boolean;
 };
 
 type SagePlan = {
@@ -103,21 +104,6 @@ function childNamesFromItem(item: SageItem): string[] {
   return names;
 }
 
-function hasResolvedDate(item: SageItem): boolean {
-  const input = item.tool_input;
-  if (!input || typeof input !== "object") return false;
-  const resolved = (input as { resolved_dates?: unknown }).resolved_dates;
-  if (!Array.isArray(resolved)) return false;
-  return resolved.some(
-    (d) =>
-      d &&
-      typeof d === "object" &&
-      (d as { status?: string }).status === "resolved" &&
-      typeof (d as { iso?: string }).iso === "string" &&
-      !!(d as { iso: string }).iso
-  );
-}
-
 function isWaived(p: SageProposal): boolean {
   return p.status === "waived_by_user";
 }
@@ -139,10 +125,23 @@ function isActionable(p: SageProposal): boolean {
   );
 }
 
-function needsDateField(p: SageProposal, item: SageItem): boolean {
-  if (p.type !== "calendar_update") return false;
-  if (p.chosen_date) return false;
-  return !hasResolvedDate(item);
+/** Calendar updates always need an explicit chosen_date before Agree — don't suppress via unrelated resolved_dates. */
+function needsDateField(p: SageProposal): boolean {
+  return p.type === "calendar_update" && !p.chosen_date;
+}
+
+/** Strip misleading "on YYYY-MM-DD" from drafts when the user must pick the date. */
+function displayDraft(p: SageProposal, showDateField: boolean): string {
+  let text = (p.draft ?? "").trim();
+  if (showDateField && !p.chosen_date) {
+    text = text.replace(/\s+on\s+\d{4}-\d{2}-\d{2}/gi, "").trim();
+  }
+  return text;
+}
+
+function canUndo(p: SageProposal): boolean {
+  if (p.executed === true) return false;
+  return p.approved === true || p.status === "waived_by_user";
 }
 
 type Section = {
@@ -256,7 +255,7 @@ export function SageInbox() {
     const out: Record<number, string> = {};
     for (const idx of indexes) {
       const p = proposals[idx];
-      if (!p || !needsDateField(p, item)) continue;
+      if (!p || !needsDateField(p)) continue;
       const val = dates[dateKey(item.id, idx)]?.trim();
       if (val) out[idx] = val;
     }
@@ -267,14 +266,14 @@ export function SageInbox() {
     const proposals = item.plan?.proposals ?? [];
     return indexes.some((idx) => {
       const p = proposals[idx];
-      if (!p || !needsDateField(p, item)) return false;
+      if (!p || !needsDateField(p)) return false;
       return !(dates[dateKey(item.id, idx)] ?? "").trim();
     });
   }
 
   async function postProposalAction(
     item: SageItem,
-    action: "agree" | "dismiss",
+    action: "agree" | "dismiss" | "undo",
     proposal_indexes: number[],
     busyId: string
   ) {
@@ -409,7 +408,7 @@ export function SageInbox() {
 
                       {proposals.length > 0 && (
                         <div className="mt-3 ml-9 space-y-2 border-t border-[#E8E4DC] pt-2">
-                          <div className="flex items-center justify-between gap-2">
+                          <div className="flex flex-wrap items-center gap-2">
                             <p className="text-[11px] font-medium text-[#5B7A52]">Sage suggests</p>
                             {hasActionable && (
                               <button
@@ -441,7 +440,7 @@ export function SageInbox() {
                               const waived = isWaived(p);
                               const noteOnly = p.type === "note_only";
                               const actionable = isActionable(p);
-                              const showDate = actionable && needsDateField(p, item);
+                              const showDate = actionable && needsDateField(p);
                               const dKey = dateKey(item.id, idx);
                               const isChecked = checked.includes(idx);
                               const rowBusy = busyKey === `${item.id}:${idx}` || itemBusy;
@@ -455,8 +454,24 @@ export function SageInbox() {
                                   )}
                                 >
                                   {/* Left controls */}
-                                  {noteOnly || approved || waived || blocked ? (
+                                  {noteOnly || blocked ? (
                                     <span className="mt-0.5 w-12 shrink-0" aria-hidden />
+                                  ) : canUndo(p) ? (
+                                    <button
+                                      type="button"
+                                      className="mt-0.5 shrink-0 text-[10px] text-[#5B7A52] hover:underline disabled:opacity-40"
+                                      disabled={rowBusy}
+                                      onClick={() =>
+                                        postProposalAction(
+                                          item,
+                                          "undo",
+                                          [idx],
+                                          `${item.id}:${idx}`
+                                        )
+                                      }
+                                    >
+                                      Undo
+                                    </button>
                                   ) : isMulti ? (
                                     <input
                                       type="checkbox"
@@ -541,7 +556,7 @@ export function SageInbox() {
                                         (blocked || waived) && "text-foreground-secondary"
                                       )}
                                     >
-                                      {p.draft}
+                                      {displayDraft(p, showDate)}
                                     </p>
                                     {showDate && (
                                       <input

@@ -14,6 +14,7 @@ type PlanProposal = {
   status?: string;
   waived_at?: string;
   unblocked?: boolean;
+  executed?: boolean;
 };
 
 type SagePlan = {
@@ -82,8 +83,8 @@ export async function GET(_req: NextRequest) {
 
 /**
  * POST /api/sage-inbox
- * Body: { id, action: "agree" | "dismiss", proposal_indexes: number[], dates?: { [index]: ISO } }
- * Records approval or waiver on plan.proposals — does NOT execute actions.
+ * Body: { id, action: "agree" | "dismiss" | "undo", proposal_indexes: number[], dates?: { [index]: ISO } }
+ * Records approval, waiver, or undo on plan.proposals — does NOT execute actions.
  */
 export async function POST(req: NextRequest) {
   try {
@@ -95,7 +96,12 @@ export async function POST(req: NextRequest) {
     } | null;
 
     const id = body?.id ? String(body.id) : "";
-    const action = body?.action === "agree" || body?.action === "dismiss" ? body.action : null;
+    const action =
+      body?.action === "agree" ||
+      body?.action === "dismiss" ||
+      body?.action === "undo"
+        ? body.action
+        : null;
     const indexes = Array.isArray(body?.proposal_indexes)
       ? body!.proposal_indexes.filter(
           (n): n is number => typeof n === "number" && Number.isInteger(n) && n >= 0
@@ -149,11 +155,34 @@ export async function POST(req: NextRequest) {
 
     const now = new Date().toISOString();
     let waivedAskClarification = false;
+    let undidWaivedAskClarification = false;
 
     for (const idx of indexes) {
       if (idx >= proposals.length) continue;
       const p = proposals[idx];
       if (!p || p.type === "note_only") continue;
+
+      if (action === "undo") {
+        if (p.executed === true) {
+          return NextResponse.json(
+            { success: false, error: "already sent, cannot undo" },
+            { status: 400 }
+          );
+        }
+        const wasWaivedAsk =
+          p.type === "ask_clarification" && p.status === "waived_by_user";
+        const next: PlanProposal = { ...p };
+        delete next.approved;
+        delete next.approved_at;
+        delete next.chosen_date;
+        delete next.status;
+        delete next.waived_at;
+        proposals[idx] = next;
+        if (wasWaivedAsk) undidWaivedAskClarification = true;
+        continue;
+      }
+
+      if (p.executed === true) continue;
       if (p.approved === true || p.status === "waived_by_user") continue;
 
       // Blocked proposals cannot be agreed unless already unblocked
@@ -196,6 +225,25 @@ export async function POST(req: NextRequest) {
         if (p.status === "waived_by_user") continue;
         if (p.depends_on != null && String(p.depends_on).trim() !== "") {
           proposals[i] = { ...p, unblocked: true };
+        }
+      }
+    }
+
+    // Undo of a waived ask_clarification: re-block downstream unless another
+    // ask_clarification remains waived.
+    if (undidWaivedAskClarification) {
+      const stillHasWaivedAsk = proposals.some(
+        (p) => p.type === "ask_clarification" && p.status === "waived_by_user"
+      );
+      if (!stillHasWaivedAsk) {
+        for (let i = 0; i < proposals.length; i++) {
+          const p = proposals[i];
+          if (!p) continue;
+          if (p.depends_on != null && String(p.depends_on).trim() !== "") {
+            const next = { ...p };
+            delete next.unblocked;
+            proposals[i] = next;
+          }
         }
       }
     }

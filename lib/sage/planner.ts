@@ -107,7 +107,7 @@ function fallbackReply(ctx: PlanContext): string {
   return `Thanks for letting me know — I'm aligning with this: ${ctx.summary.trim() || "your update"}.`;
 }
 
-async function callAnthropicDraft(userPrompt: string): Promise<string | null> {
+export async function callAnthropicDraft(userPrompt: string): Promise<string | null> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
     console.error("[sage/planner] ANTHROPIC_API_KEY not configured");
@@ -177,6 +177,31 @@ Domain: ${ctx.domain}`;
   const second = await callAnthropicDraft(userPrompt);
   if (second) return second;
   return fallback;
+}
+
+/**
+ * Redraft a reply/clarification with optional user guidance. Returns text only — does not persist.
+ */
+export async function redraftMessage(params: {
+  summary: string;
+  proposalType: "reply_coparent" | "ask_clarification";
+  currentDraft: string;
+  guidance: string;
+}): Promise<string | null> {
+  const kindLabel =
+    params.proposalType === "ask_clarification"
+      ? "clarification question to Co-Parent"
+      : "reply to Co-Parent";
+  const guidance = params.guidance.trim() || "(no specific guidance — improve clarity and calm tone)";
+  const userPrompt = `Redraft this ${kindLabel} as ONE short calm sentence.
+Context summary: ${params.summary}
+Current draft: ${params.currentDraft}
+User guidance for the rewrite: ${guidance}`;
+
+  const first = await callAnthropicDraft(userPrompt);
+  if (first) return first;
+  const second = await callAnthropicDraft(userPrompt);
+  return second;
 }
 
 /**

@@ -447,13 +447,6 @@ export function SageInbox() {
                             )}
                           </div>
 
-                          {!isMulti && actionableCount > 0 && (
-                            <div className="flex items-center gap-1 text-[9px] uppercase tracking-wide text-foreground-secondary">
-                              <span className="w-[3.25rem] text-center">Agree</span>
-                              <span className="w-[3.25rem] text-center">Dismiss</span>
-                            </div>
-                          )}
-
                           <ul className="space-y-2">
                             {proposals.map((p, idx) => {
                               const blocked = isBlocked(p);
@@ -503,57 +496,40 @@ export function SageInbox() {
                                       aria-label={`Select: ${proposalTypeLabel(p.type)}`}
                                     />
                                   ) : (
-                                    <div className="flex shrink-0 flex-col items-start gap-1">
-                                      <div className="flex items-start gap-1">
+                                    <div className="flex shrink-0 items-start gap-1">
+                                      <button
+                                        type="button"
+                                        title="Agree"
+                                        disabled={
+                                          rowBusy ||
+                                          (showDate && !(dates[dKey] ?? "").trim())
+                                        }
+                                        className={cn(
+                                          "inline-flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-medium",
+                                          "bg-[#7B9E87] text-white hover:bg-[#6A8A78]",
+                                          "disabled:opacity-40 disabled:cursor-not-allowed"
+                                        )}
+                                        onClick={() =>
+                                          postProposalAction(
+                                            item,
+                                            "agree",
+                                            [idx],
+                                            `${item.id}:${idx}`
+                                          )
+                                        }
+                                      >
+                                        ✓
+                                      </button>
+                                      {isRevisable(p) && (
                                         <button
                                           type="button"
-                                          title="Agree"
-                                          disabled={
-                                            rowBusy ||
-                                            (showDate && !(dates[dKey] ?? "").trim())
-                                          }
-                                          className={cn(
-                                            "inline-flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-medium",
-                                            "bg-[#7B9E87] text-white hover:bg-[#6A8A78]",
-                                            "disabled:opacity-40 disabled:cursor-not-allowed"
-                                          )}
-                                          onClick={() =>
-                                            postProposalAction(
-                                              item,
-                                              "agree",
-                                              [idx],
-                                              `${item.id}:${idx}`
-                                            )
-                                          }
-                                        >
-                                          ✓
-                                        </button>
-                                        <button
-                                          type="button"
-                                          title="Dismiss"
+                                          title="Revise"
                                           disabled={rowBusy}
                                           className={cn(
                                             "inline-flex h-6 w-6 items-center justify-center rounded-full text-[11px]",
                                             "border border-[#D5D0C6] bg-white text-foreground-secondary hover:bg-[#F2F5EF]",
                                             "disabled:opacity-40 disabled:cursor-not-allowed"
                                           )}
-                                          onClick={() =>
-                                            postProposalAction(
-                                              item,
-                                              "dismiss",
-                                              [idx],
-                                              `${item.id}:${idx}`
-                                            )
-                                          }
-                                        >
-                                          ✗
-                                        </button>
-                                      </div>
-                                      {isRevisable(p) && (
-                                        <button
-                                          type="button"
-                                          className="text-[10px] text-[#5B7A52] hover:underline"
-                                          disabled={rowBusy}
                                           onClick={() =>
                                             setReviseTarget({
                                               itemId: item.id,
@@ -570,9 +546,29 @@ export function SageInbox() {
                                             })
                                           }
                                         >
-                                          Revise
+                                          ✏️
                                         </button>
                                       )}
+                                      <button
+                                        type="button"
+                                        title="Dismiss"
+                                        disabled={rowBusy}
+                                        className={cn(
+                                          "inline-flex h-6 w-6 items-center justify-center rounded-full text-[11px]",
+                                          "border border-[#D5D0C6] bg-white text-foreground-secondary hover:bg-[#F2F5EF]",
+                                          "disabled:opacity-40 disabled:cursor-not-allowed"
+                                        )}
+                                        onClick={() =>
+                                          postProposalAction(
+                                            item,
+                                            "dismiss",
+                                            [idx],
+                                            `${item.id}:${idx}`
+                                          )
+                                        }
+                                      >
+                                        ✗
+                                      </button>
                                     </div>
                                   )}
 

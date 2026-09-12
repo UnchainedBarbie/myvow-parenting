@@ -147,7 +147,21 @@ export function AddEventForm({
     if (!initialValues) return;
     if (initialValues.title != null) setTitle(initialValues.title);
     if (initialValues.date != null) setDate(initialValues.date);
-    if (initialValues.startTime != null) setStartTime(initialValues.startTime);
+    if (initialValues.startTime != null) {
+      setStartTime(initialValues.startTime);
+      // Default duration: 1 hour when no explicit end time is provided
+      if (initialValues.endTime == null) {
+        const [hStr, mStr] = initialValues.startTime.split(":");
+        const h = parseInt(hStr, 10);
+        const m = parseInt(mStr ?? "0", 10);
+        if (!Number.isNaN(h) && !Number.isNaN(m)) {
+          const endH = (h + 1) % 24;
+          setEndTime(
+            `${String(endH).padStart(2, "0")}:${String(m).padStart(2, "0")}`
+          );
+        }
+      }
+    }
     if (initialValues.endTime != null) setEndTime(initialValues.endTime);
     if (initialValues.description != null) setDescription(initialValues.description);
     if (initialValues.visibility != null) setVisibility(initialValues.visibility);
@@ -276,8 +290,17 @@ export function AddEventForm({
     }
     const startTimeValue = startTime || "00:00";
     const endTimeValue = endTime || "";
-    const start = `${date}T${startTimeValue}:00.000Z`;
-    const end = endTimeValue ? `${date}T${endTimeValue}:00.000Z` : null;
+    // date is "YYYY-MM-DD", times are "HH:mm" — interpret as LOCAL, convert to UTC
+    const [sy, sm, sd] = date.split("-").map(Number);
+    const [sh, smin] = startTimeValue.split(":").map(Number);
+    const startDate = new Date(sy, sm - 1, sd, sh, smin, 0, 0);
+    const start = startDate.toISOString();
+    let end: string | null = null;
+    if (endTimeValue) {
+      const [eh, emin] = endTimeValue.split(":").map(Number);
+      const endDate = new Date(sy, sm - 1, sd, eh, emin, 0, 0);
+      end = endDate.toISOString();
+    }
     setLoading(true);
     try {
       const res = await fetch("/api/calendar/create", {

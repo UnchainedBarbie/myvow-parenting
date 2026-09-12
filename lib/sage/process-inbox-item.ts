@@ -10,6 +10,7 @@ import {
   formatObservationForUnderstanding,
   type RawItem,
 } from "@/lib/sage/observation-builder";
+import { plan } from "@/lib/sage/planner";
 import { resolveChildren, resolveDates } from "@/lib/sage/resolver";
 import { interpret } from "@/lib/sage/understanding";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -281,13 +282,34 @@ export async function processInboxItem(
     const childNames = entities.children
       .map((c) => c.name)
       .filter((n) => typeof n === "string" && n.trim().length > 0);
-    const { child_ids } = await resolveChildren(inboxRow.case_id, childNames);
+    const { child_ids, resolved: childResolutions } = await resolveChildren(
+      inboxRow.case_id,
+      childNames
+    );
+    const unresolved_children = childResolutions
+      .filter((r) => r.child_id === null)
+      .map((r) => r.name);
 
     const resolved_dates = resolveDates(
       entities.dates.map((d) => ({ raw: d.raw })),
       new Date(),
       "America/Denver"
     );
+
+    const itemPlan = await plan({
+      item_type: intent.item_type,
+      domain: intent.domain,
+      action_required: intent.action_required,
+      summary: intent.summary,
+      child_ids,
+      unresolved_children,
+      resolved_dates: resolved_dates.map((d) => ({
+        raw: d.raw,
+        status: d.status,
+        iso: d.iso,
+      })),
+      sender: "Co-Parent",
+    });
 
     const { data: sageRow, error: insertError } = await admin
       .from("sage_items")
@@ -307,6 +329,7 @@ export async function processInboxItem(
         confidence: intent.confidence,
         tool_input: { ...entities, resolved_dates },
         child_ids,
+        plan: itemPlan,
         status: "pending",
       })
       .select("id")

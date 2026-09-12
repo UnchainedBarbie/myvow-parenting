@@ -10,6 +10,7 @@ import {
   formatObservationForUnderstanding,
   type RawItem,
 } from "@/lib/sage/observation-builder";
+import { resolveChildren } from "@/lib/sage/resolver";
 import { interpret } from "@/lib/sage/understanding";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -277,6 +278,11 @@ export async function processInboxItem(
 
     const { intent, entities } = interpretation;
 
+    const childNames = entities.children
+      .map((c) => c.name)
+      .filter((n) => typeof n === "string" && n.trim().length > 0);
+    const { child_ids } = await resolveChildren(inboxRow.case_id, childNames);
+
     const { data: sageRow, error: insertError } = await admin
       .from("sage_items")
       .insert({
@@ -294,7 +300,7 @@ export async function processInboxItem(
         urgency: intent.urgency,
         confidence: intent.confidence,
         tool_input: entities,
-        child_ids: [],
+        child_ids,
         status: "pending",
       })
       .select("id")

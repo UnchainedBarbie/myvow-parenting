@@ -5,6 +5,7 @@ import Image from "next/image";
 import { usePathname } from "next/navigation";
 import {
   LayoutDashboard,
+  Inbox,
   MessageSquare,
   Receipt,
   FileText,
@@ -30,6 +31,7 @@ import {
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/sage-inbox", label: "Sage Inbox", icon: Inbox },
   { href: "/my-vow", label: "My Vow", icon: Feather },
   { href: "/messages", label: "Messages", icon: MessageSquare },
   { href: "/expenses", label: "Expenses", icon: Receipt },

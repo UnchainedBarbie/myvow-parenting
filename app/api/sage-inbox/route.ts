@@ -10,6 +10,10 @@ type PlanProposal = {
   requires_approval?: boolean;
   approved?: boolean;
   approved_at?: string;
+  chosen_date?: string;
+  status?: string;
+  waived_at?: string;
+  unblocked?: boolean;
 };
 
 type SagePlan = {
@@ -78,25 +82,33 @@ export async function GET(_req: NextRequest) {
 
 /**
  * POST /api/sage-inbox
- * Body: { id, approved_proposal_indexes: number[] }
- * Records approval flags on plan.proposals — does NOT execute actions.
+ * Body: { id, action: "agree" | "dismiss", proposal_indexes: number[], dates?: { [index]: ISO } }
+ * Records approval or waiver on plan.proposals — does NOT execute actions.
  */
 export async function POST(req: NextRequest) {
   try {
-    const body = (await req.json().catch(() => null)) as
-      | { id?: string | null; approved_proposal_indexes?: unknown }
-      | null;
+    const body = (await req.json().catch(() => null)) as {
+      id?: string | null;
+      action?: string | null;
+      proposal_indexes?: unknown;
+      dates?: Record<string, string> | null;
+    } | null;
 
     const id = body?.id ? String(body.id) : "";
-    const indexes = Array.isArray(body?.approved_proposal_indexes)
-      ? body!.approved_proposal_indexes.filter(
+    const action = body?.action === "agree" || body?.action === "dismiss" ? body.action : null;
+    const indexes = Array.isArray(body?.proposal_indexes)
+      ? body!.proposal_indexes.filter(
           (n): n is number => typeof n === "number" && Number.isInteger(n) && n >= 0
         )
       : [];
+    const dates =
+      body?.dates && typeof body.dates === "object" && !Array.isArray(body.dates)
+        ? body.dates
+        : {};
 
-    if (!id || indexes.length === 0) {
+    if (!id || !action || indexes.length === 0) {
       return NextResponse.json(
-        { success: false, error: "Invalid id or approved_proposal_indexes" },
+        { success: false, error: "Invalid id, action, or proposal_indexes" },
         { status: 400 }
       );
     }
@@ -135,18 +147,57 @@ export async function POST(req: NextRequest) {
       ? plan.proposals.map((p) => ({ ...p }))
       : [];
 
-    const approvedAt = new Date().toISOString();
+    const now = new Date().toISOString();
+    let waivedAskClarification = false;
+
     for (const idx of indexes) {
       if (idx >= proposals.length) continue;
       const p = proposals[idx];
       if (!p || p.type === "note_only") continue;
-      if (p.depends_on != null && String(p.depends_on).trim() !== "") continue;
-      if (p.approved === true) continue;
-      proposals[idx] = {
-        ...p,
-        approved: true,
-        approved_at: approvedAt,
-      };
+      if (p.approved === true || p.status === "waived_by_user") continue;
+
+      // Blocked proposals cannot be agreed unless already unblocked
+      const blocked =
+        p.depends_on != null &&
+        String(p.depends_on).trim() !== "" &&
+        p.unblocked !== true;
+      if (action === "agree" && blocked) continue;
+
+      if (action === "agree") {
+        const chosenDate =
+          dates[String(idx)] ?? dates[idx as unknown as string] ?? undefined;
+        proposals[idx] = {
+          ...p,
+          approved: true,
+          approved_at: now,
+          ...(typeof chosenDate === "string" && chosenDate.trim()
+            ? { chosen_date: chosenDate.trim() }
+            : {}),
+        };
+      } else {
+        // dismiss / waive
+        proposals[idx] = {
+          ...p,
+          status: "waived_by_user",
+          waived_at: now,
+        };
+        if (p.type === "ask_clarification") {
+          waivedAskClarification = true;
+        }
+      }
+    }
+
+    // v1 simplification: dismissing ANY ask_clarification proposal sets unblocked = true
+    // on all OTHER proposals in that plan that had a non-null depends_on.
+    if (waivedAskClarification) {
+      for (let i = 0; i < proposals.length; i++) {
+        const p = proposals[i];
+        if (!p) continue;
+        if (p.status === "waived_by_user") continue;
+        if (p.depends_on != null && String(p.depends_on).trim() !== "") {
+          proposals[i] = { ...p, unblocked: true };
+        }
+      }
     }
 
     const updatedPlan: SagePlan = { ...plan, proposals };
@@ -160,7 +211,7 @@ export async function POST(req: NextRequest) {
     if (updateError) {
       console.error("[sage-inbox/POST] Failed to update plan:", updateError);
       return NextResponse.json(
-        { success: false, error: updateError.message ?? "Failed to record approval" },
+        { success: false, error: updateError.message ?? "Failed to record action" },
         { status: 500 }
       );
     }

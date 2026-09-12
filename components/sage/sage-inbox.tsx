@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Archive, ArchiveRestore, MoreVertical, Search } from "lucide-react";
+import { Archive, ArchiveRestore, Flag, MoreVertical, Search } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
@@ -41,6 +41,7 @@ type SageItem = {
   tool_input: unknown;
   plan: SagePlan | null;
   status: string | null;
+  flagged?: boolean | null;
   created_at: string;
 };
 
@@ -203,7 +204,9 @@ function dateKey(itemId: string, index: number): string {
 export function SageInbox() {
   const [items, setItems] = useState<SageItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [statusFilter, setStatusFilter] = useState<"open" | "archived" | "all">("open");
+  const [statusFilter, setStatusFilter] = useState<
+    "open" | "flagged" | "archived" | "all"
+  >("open");
   const [search, setSearch] = useState("");
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
   const [confirmArchiveItem, setConfirmArchiveItem] = useState<SageItem | null>(null);
@@ -219,7 +222,9 @@ export function SageInbox() {
     initialText: string;
   } | null>(null);
 
-  async function fetchInbox(status: "open" | "archived" | "all" = statusFilter) {
+  async function fetchInbox(
+    status: "open" | "flagged" | "archived" | "all" = statusFilter
+  ) {
     setLoading(true);
     try {
       const res = await fetch(`/api/sage-inbox?status=${encodeURIComponent(status)}`);
@@ -342,9 +347,23 @@ export function SageInbox() {
   const emptyMessage =
     statusFilter === "archived"
       ? "No archived items."
-      : search.trim()
-        ? "No items match your search."
-        : "Sage hasn't flagged anything yet.";
+      : statusFilter === "flagged"
+        ? "No flagged items."
+        : search.trim()
+          ? "No items match your search."
+          : "Sage hasn't flagged anything yet.";
+
+  async function toggleFlag(item: SageItem) {
+    const nextFlagged = !item.flagged;
+    setMenuOpenId(null);
+    const res = await fetch("/api/sage-inbox", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: item.id, flagged: nextFlagged }),
+    });
+    if (!res.ok) return;
+    await fetchInbox();
+  }
 
   return (
     <Card className="shadow-card border-border rounded-card">
@@ -371,7 +390,9 @@ export function SageInbox() {
           <select
             value={statusFilter}
             onChange={(e) =>
-              setStatusFilter(e.target.value as "open" | "archived" | "all")
+              setStatusFilter(
+                e.target.value as "open" | "flagged" | "archived" | "all"
+              )
             }
             className={cn(
               "h-8 w-[90px] shrink-0 rounded-full border px-2 py-1 text-[11px] text-[#3D3D3D] bg-[#FDFBF7] border-[#E8E4DC] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E]",
@@ -380,6 +401,7 @@ export function SageInbox() {
             aria-label="Filter by status"
           >
             <option value="open">Open</option>
+            <option value="flagged">Flagged</option>
             <option value="archived">Archived</option>
             <option value="all">All</option>
           </select>
@@ -409,6 +431,7 @@ export function SageInbox() {
                   const showUrgency = urgency === "high" || urgency === "emergency";
                   const children = childNamesFromItem(item);
                   const isArchived = item.status === "archived";
+                  const isFlagged = item.flagged === true;
                   const summary = (item.summary ?? "").trim() || "(no summary)";
                   const proposals = Array.isArray(item.plan?.proposals)
                     ? item.plan!.proposals!
@@ -450,7 +473,7 @@ export function SageInbox() {
                                   e.stopPropagation();
                                   setMenuOpenId(menuOpenId === item.id ? null : item.id);
                                 }}
-                                className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded hover:bg-[#E8E4DC] text-[#B0A899] hover:text-[#6A7A6E]"
+                                className="p-0.5 rounded hover:bg-[#E8E4DC] text-[#B0A899] hover:text-[#6A7A6E]"
                                 aria-label="Item options"
                                 aria-expanded={menuOpenId === item.id}
                               >
@@ -477,6 +500,14 @@ export function SageInbox() {
                             <span className="text-[11px] text-foreground-secondary">
                               {formatRelativeTime(item.created_at)}
                             </span>
+                            {isFlagged && (
+                              <span
+                                className="text-[#B45309]"
+                                title="Flagged for reference"
+                              >
+                                <Flag className="h-3.5 w-3.5 fill-current" />
+                              </span>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -486,6 +517,31 @@ export function SageInbox() {
                           data-sage-item-menu
                           className="absolute right-2 top-9 z-20 min-w-[180px] rounded-lg border border-[#E8E4DC] bg-white py-1 shadow-lg"
                         >
+                          {isFlagged ? (
+                            <button
+                              type="button"
+                              className="flex w-full items-center gap-2 px-3 py-2 text-[13px] text-[#3D3D3D] hover:bg-[#F2F5EF] text-left"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                void toggleFlag(item);
+                              }}
+                            >
+                              <Flag className="h-3.5 w-3.5" /> Remove flag
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              className="flex w-full items-center gap-2 px-3 py-2 text-[13px] text-[#3D3D3D] hover:bg-[#F2F5EF] text-left"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                void toggleFlag(item);
+                              }}
+                            >
+                              <Flag className="h-3.5 w-3.5" /> Flag for reference
+                            </button>
+                          )}
                           {!isArchived ? (
                             <button
                               type="button"

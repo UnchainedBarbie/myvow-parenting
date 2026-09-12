@@ -26,10 +26,11 @@ type SagePlan = {
 };
 
 /**
- * GET /api/sage-inbox?status=open|archived|all
+ * GET /api/sage-inbox?status=open|flagged|archived|all
  * Authenticated parent user.
  * Returns sage_items for the user's case that are visible to them.
  * Default status=open (status ≠ archived).
+ * flagged = flagged = true (any archive status).
  */
 export async function GET(req: NextRequest) {
   try {
@@ -62,12 +63,16 @@ export async function GET(req: NextRequest) {
     const caseId = membership.case_id as string;
     const statusParam = (req.nextUrl.searchParams.get("status") ?? "open").toLowerCase();
     const statusFilter =
-      statusParam === "archived" || statusParam === "all" ? statusParam : "open";
+      statusParam === "archived" ||
+      statusParam === "flagged" ||
+      statusParam === "all"
+        ? statusParam
+        : "open";
 
     let query = admin
       .from("sage_items")
       .select(
-        "id, item_type, domain, summary, evidence_excerpt, urgency, action_required, child_ids, tool_input, plan, status, created_at"
+        "id, item_type, domain, summary, evidence_excerpt, urgency, action_required, child_ids, tool_input, plan, status, flagged, created_at"
       )
       .eq("case_id", caseId)
       .eq("visible_to", user.id)
@@ -75,10 +80,12 @@ export async function GET(req: NextRequest) {
 
     if (statusFilter === "archived") {
       query = query.eq("status", "archived");
+    } else if (statusFilter === "flagged") {
+      query = query.eq("flagged", true);
     } else if (statusFilter === "open") {
       query = query.neq("status", "archived");
     }
-    // "all" — no status filter
+    // "all" — no status/flag filter
 
     const { data: items, error: itemsError } = await query;
 
@@ -338,13 +345,13 @@ export async function POST(req: NextRequest) {
 
 /**
  * PATCH /api/sage-inbox
- * Body: { id, status: 'archived' | 'pending' | 'dismissed' }
- * Updates sage_items.status for an item visible to the current user.
+ * Body: { id, status?: 'archived'|'pending'|'dismissed', flagged?: boolean }
+ * Updates sage_items for an item visible to the current user.
  */
 export async function PATCH(req: NextRequest) {
   try {
     const body = (await req.json().catch(() => null)) as
-      | { id?: string | null; status?: string | null }
+      | { id?: string | null; status?: string | null; flagged?: boolean | null }
       | null;
 
     const id = body?.id ? String(body.id) : "";
@@ -354,10 +361,12 @@ export async function PATCH(req: NextRequest) {
       body?.status === "dismissed"
         ? body.status
         : null;
+    const hasFlagged = typeof body?.flagged === "boolean";
+    const flagged = hasFlagged ? body!.flagged : null;
 
-    if (!id || !status) {
+    if (!id || (status === null && !hasFlagged)) {
       return NextResponse.json(
-        { success: false, error: "Invalid id or status" },
+        { success: false, error: "Invalid id or update fields" },
         { status: 400 }
       );
     }
@@ -371,17 +380,21 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
     }
 
+    const updates: { status?: string; flagged?: boolean } = {};
+    if (status) updates.status = status;
+    if (hasFlagged) updates.flagged = flagged as boolean;
+
     const admin = getServiceRoleClient();
     const { error: updateError } = await admin
       .from("sage_items")
-      .update({ status })
+      .update(updates)
       .eq("id", id)
       .eq("visible_to", user.id);
 
     if (updateError) {
-      console.error("[sage-inbox/PATCH] Failed to update sage_items.status:", updateError);
+      console.error("[sage-inbox/PATCH] Failed to update sage_items:", updateError);
       return NextResponse.json(
-        { success: false, error: updateError.message ?? "Failed to update status" },
+        { success: false, error: updateError.message ?? "Failed to update" },
         { status: 500 }
       );
     }

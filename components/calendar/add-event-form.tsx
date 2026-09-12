@@ -94,6 +94,8 @@ interface AddEventFormProps {
   initialMonth: number;
   initialValues?: AddEventFormInitialValues | null;
   onSuccess?: (eventId: string) => void | Promise<void>;
+  /** Omit CardHeader when embedded in another modal that already has a title. */
+  hideHeader?: boolean;
 }
 
 export function AddEventForm({
@@ -103,6 +105,7 @@ export function AddEventForm({
   initialMonth,
   initialValues,
   onSuccess,
+  hideHeader = false,
 }: AddEventFormProps) {
   const router = useRouter();
   const [title, setTitle] = useState("");
@@ -325,13 +328,15 @@ export function AddEventForm({
 
   return (
     <Card className="shadow-card border-border rounded-card">
-      <CardHeader className="pb-2 px-4 pt-4">
-        <CardTitle className="font-heading text-lg text-foreground">Add event</CardTitle>
-        <p className="text-sm text-foreground-secondary mt-0.5">
-          Medical, school, extracurricular, custody exchange, therapy, or other.
-        </p>
-      </CardHeader>
-      <CardContent className="px-4 pb-4 pt-0 space-y-4">
+      {!hideHeader && (
+        <CardHeader className="pb-2 px-4 pt-4">
+          <CardTitle className="font-heading text-lg text-foreground">Add event</CardTitle>
+          <p className="text-sm text-foreground-secondary mt-0.5">
+            Medical, school, extracurricular, custody exchange, therapy, or other.
+          </p>
+        </CardHeader>
+      )}
+      <CardContent className={cn("px-4 pb-4 space-y-4", hideHeader ? "pt-4" : "pt-0")}>
         <form onSubmit={handleSubmit} className="space-y-4">
           {error && (
             <p className="text-xs text-alert" role="alert">

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Archive, ArchiveRestore, Flag, MoreVertical, Search } from "lucide-react";
+import { Archive, ArchiveRestore, Flag, Search } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
@@ -208,7 +208,6 @@ export function SageInbox() {
     "open" | "flagged" | "archived" | "all"
   >("open");
   const [search, setSearch] = useState("");
-  const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
   const [confirmArchiveItem, setConfirmArchiveItem] = useState<SageItem | null>(null);
   const [multiSelect, setMultiSelect] = useState<Record<string, boolean>>({});
   const [selected, setSelected] = useState<Record<string, number[]>>({});
@@ -243,23 +242,6 @@ export function SageInbox() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- refetch when status filter changes
   }, [statusFilter]);
 
-  // Close item overflow menu on click outside (Messages pattern)
-  useEffect(() => {
-    if (!menuOpenId) return;
-    const handle = (e: MouseEvent) => {
-      const target = e.target as HTMLElement;
-      if (
-        target.closest("[data-sage-item-card]")?.getAttribute("data-sage-item-card") !==
-          menuOpenId &&
-        !target.closest("[data-sage-item-menu]")
-      ) {
-        setMenuOpenId(null);
-      }
-    };
-    document.addEventListener("mousedown", handle);
-    return () => document.removeEventListener("mousedown", handle);
-  }, [menuOpenId]);
-
   const visibleItems = useMemo(() => {
     if (!search.trim()) return items;
     const q = search.trim().toLowerCase();
@@ -271,6 +253,33 @@ export function SageInbox() {
       return text.includes(q);
     });
   }, [items, search]);
+
+  async function toggleFlag(item: SageItem) {
+    const nextFlagged = !item.flagged;
+    const prevFlagged = item.flagged === true;
+    setItems((prev) => {
+      const updated = prev.map((i) =>
+        i.id === item.id ? { ...i, flagged: nextFlagged } : i
+      );
+      if (statusFilter === "flagged" && !nextFlagged) {
+        return updated.filter((i) => i.id !== item.id);
+      }
+      return updated;
+    });
+    const res = await fetch("/api/sage-inbox", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: item.id, flagged: nextFlagged }),
+    });
+    if (!res.ok) {
+      setItems((prev) =>
+        prev.map((i) =>
+          i.id === item.id ? { ...i, flagged: prevFlagged } : i
+        )
+      );
+      if (statusFilter === "flagged") await fetchInbox();
+    }
+  }
 
   function toggleProposal(itemId: string, index: number) {
     setSelected((prev) => {
@@ -353,18 +362,6 @@ export function SageInbox() {
           ? "No items match your search."
           : "Sage hasn't flagged anything yet.";
 
-  async function toggleFlag(item: SageItem) {
-    const nextFlagged = !item.flagged;
-    setMenuOpenId(null);
-    const res = await fetch("/api/sage-inbox", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: item.id, flagged: nextFlagged }),
-    });
-    if (!res.ok) return;
-    await fetchInbox();
-  }
-
   return (
     <Card className="shadow-card border-border rounded-card">
       <CardHeader className="pb-2 px-4 pt-4 space-y-3">
@@ -445,11 +442,7 @@ export function SageInbox() {
                   return (
                     <li
                       key={item.id}
-                      data-sage-item-card={item.id}
-                      onMouseLeave={() => {
-                        if (menuOpenId === item.id) setMenuOpenId(null);
-                      }}
-                      className="group relative rounded-lg border border-[#E8E4DC] bg-white px-3 py-2"
+                      className="relative rounded-lg border border-[#E8E4DC] bg-white px-3 py-2"
                     >
                       <div className="flex items-start gap-2 min-w-0">
                         <span className="mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#F2F5EF] text-[#5B7A52] text-[11px]">
@@ -460,24 +453,48 @@ export function SageInbox() {
                             <p className="text-sm text-foreground line-clamp-2 min-w-0">
                               {summary}
                             </p>
-                            <div className="flex shrink-0 items-center gap-1.5">
+                            <div className="flex shrink-0 items-center gap-0.5">
                               {isArchived && (
-                                <span className="inline-flex items-center rounded-full border border-[#E2C877] bg-[#FDF6E3] px-2 py-0.5 text-[9px] font-medium text-[#B8960F]">
+                                <span className="mr-1 inline-flex items-center rounded-full border border-[#E2C877] bg-[#FDF6E3] px-2 py-0.5 text-[9px] font-medium text-[#B8960F]">
                                   Archived
                                 </span>
                               )}
                               <button
                                 type="button"
-                                onClick={(e) => {
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                  setMenuOpenId(menuOpenId === item.id ? null : item.id);
-                                }}
-                                className="p-0.5 rounded hover:bg-[#E8E4DC] text-[#B0A899] hover:text-[#6A7A6E]"
-                                aria-label="Item options"
-                                aria-expanded={menuOpenId === item.id}
+                                title={
+                                  isFlagged ? "Remove flag" : "Flag for reference"
+                                }
+                                aria-label={
+                                  isFlagged ? "Remove flag" : "Flag for reference"
+                                }
+                                aria-pressed={isFlagged}
+                                onClick={() => void toggleFlag(item)}
+                                className={cn(
+                                  "inline-flex h-7 w-7 items-center justify-center rounded-md transition-colors",
+                                  isFlagged
+                                    ? "text-[#B45309] hover:bg-[#FDF2F0]"
+                                    : "text-[#B0A899] hover:bg-[#E8E4DC] hover:text-[#6A7A6E]"
+                                )}
                               >
-                                <MoreVertical className="h-4 w-4" />
+                                <Flag
+                                  className={cn(
+                                    "h-3.5 w-3.5",
+                                    isFlagged && "fill-current"
+                                  )}
+                                />
+                              </button>
+                              <button
+                                type="button"
+                                title={isArchived ? "Unarchive" : "Archive"}
+                                aria-label={isArchived ? "Unarchive" : "Archive"}
+                                onClick={() => setConfirmArchiveItem(item)}
+                                className="inline-flex h-7 w-7 items-center justify-center rounded-md text-[#B0A899] transition-colors hover:bg-[#E8E4DC] hover:text-[#6A7A6E]"
+                              >
+                                {isArchived ? (
+                                  <ArchiveRestore className="h-3.5 w-3.5" />
+                                ) : (
+                                  <Archive className="h-3.5 w-3.5" />
+                                )}
                               </button>
                             </div>
                           </div>
@@ -500,77 +517,9 @@ export function SageInbox() {
                             <span className="text-[11px] text-foreground-secondary">
                               {formatRelativeTime(item.created_at)}
                             </span>
-                            {isFlagged && (
-                              <span
-                                className="text-[#B45309]"
-                                title="Flagged for reference"
-                              >
-                                <Flag className="h-3.5 w-3.5 fill-current" />
-                              </span>
-                            )}
                           </div>
                         </div>
                       </div>
-
-                      {menuOpenId === item.id && (
-                        <div
-                          data-sage-item-menu
-                          className="absolute right-2 top-9 z-20 min-w-[180px] rounded-lg border border-[#E8E4DC] bg-white py-1 shadow-lg"
-                        >
-                          {isFlagged ? (
-                            <button
-                              type="button"
-                              className="flex w-full items-center gap-2 px-3 py-2 text-[13px] text-[#3D3D3D] hover:bg-[#F2F5EF] text-left"
-                              onClick={(e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                void toggleFlag(item);
-                              }}
-                            >
-                              <Flag className="h-3.5 w-3.5" /> Remove flag
-                            </button>
-                          ) : (
-                            <button
-                              type="button"
-                              className="flex w-full items-center gap-2 px-3 py-2 text-[13px] text-[#3D3D3D] hover:bg-[#F2F5EF] text-left"
-                              onClick={(e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                void toggleFlag(item);
-                              }}
-                            >
-                              <Flag className="h-3.5 w-3.5" /> Flag for reference
-                            </button>
-                          )}
-                          {!isArchived ? (
-                            <button
-                              type="button"
-                              className="flex w-full items-center gap-2 px-3 py-2 text-[13px] text-[#3D3D3D] hover:bg-[#F2F5EF] text-left"
-                              onClick={(e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                setConfirmArchiveItem(item);
-                                setMenuOpenId(null);
-                              }}
-                            >
-                              <Archive className="h-3.5 w-3.5" /> Archive
-                            </button>
-                          ) : (
-                            <button
-                              type="button"
-                              className="flex w-full items-center gap-2 px-3 py-2 text-[13px] text-[#3D3D3D] hover:bg-[#F2F5EF] text-left"
-                              onClick={(e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                setConfirmArchiveItem(item);
-                                setMenuOpenId(null);
-                              }}
-                            >
-                              <ArchiveRestore className="h-3.5 w-3.5" /> Unarchive
-                            </button>
-                          )}
-                        </div>
-                      )}
 
                       {proposals.length > 0 && (
                         <div className="mt-3 ml-9 space-y-2 border-t border-[#E8E4DC] pt-2">

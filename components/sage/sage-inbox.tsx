@@ -4,10 +4,12 @@ import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { ReviseProposalModal } from "@/components/sage/revise-proposal-modal";
 
 type SageProposal = {
   type: string;
   draft: string;
+  revised_text?: string | null;
   depends_on: string | null;
   requires_approval?: boolean;
   approved?: boolean;
@@ -132,7 +134,11 @@ function needsDateField(p: SageProposal): boolean {
 
 /** Strip misleading "on YYYY-MM-DD" from drafts when the user must pick the date. */
 function displayDraft(p: SageProposal, showDateField: boolean): string {
-  let text = (p.draft ?? "").trim();
+  const source =
+    typeof p.revised_text === "string" && p.revised_text.trim()
+      ? p.revised_text.trim()
+      : (p.draft ?? "").trim();
+  let text = source;
   if (showDateField && !p.chosen_date) {
     text = text.replace(/\s+on\s+\d{4}-\d{2}-\d{2}/gi, "").trim();
   }
@@ -142,6 +148,13 @@ function displayDraft(p: SageProposal, showDateField: boolean): string {
 function canUndo(p: SageProposal): boolean {
   if (p.executed === true) return false;
   return p.approved === true || p.status === "waived_by_user";
+}
+
+function isRevisable(p: SageProposal): boolean {
+  return (
+    (p.type === "reply_coparent" || p.type === "ask_clarification") &&
+    isActionable(p)
+  );
 }
 
 type Section = {
@@ -193,6 +206,13 @@ export function SageInbox() {
   const [selected, setSelected] = useState<Record<string, number[]>>({});
   const [dates, setDates] = useState<Record<string, string>>({});
   const [busyKey, setBusyKey] = useState<string | null>(null);
+  const [reviseTarget, setReviseTarget] = useState<{
+    itemId: string;
+    proposalIndex: number;
+    proposalType: "reply_coparent" | "ask_clarification";
+    originalDraft: string;
+    initialText: string;
+  } | null>(null);
 
   async function fetchInbox() {
     setLoading(true);
@@ -350,9 +370,10 @@ export function SageInbox() {
                   const proposals = Array.isArray(item.plan?.proposals)
                     ? item.plan!.proposals!
                     : [];
-                  const isMulti = multiSelect[item.id] === true;
+                  const actionableCount = proposals.filter(isActionable).length;
+                  const isMulti =
+                    multiSelect[item.id] === true && actionableCount > 1;
                   const checked = selected[item.id] ?? [];
-                  const hasActionable = proposals.some(isActionable);
                   const itemBusy = busyKey?.startsWith(`${item.id}:`) ?? false;
 
                   return (
@@ -410,7 +431,7 @@ export function SageInbox() {
                         <div className="mt-3 ml-9 space-y-2 border-t border-[#E8E4DC] pt-2">
                           <div className="flex flex-wrap items-center gap-2">
                             <p className="text-[11px] font-medium text-[#5B7A52]">Sage suggests</p>
-                            {hasActionable && (
+                            {actionableCount > 1 && (
                               <button
                                 type="button"
                                 className="text-[11px] text-[#5B7A52] hover:underline"
@@ -426,7 +447,7 @@ export function SageInbox() {
                             )}
                           </div>
 
-                          {!isMulti && hasActionable && (
+                          {!isMulti && actionableCount > 0 && (
                             <div className="flex items-center gap-1 text-[9px] uppercase tracking-wide text-foreground-secondary">
                               <span className="w-[3.25rem] text-center">Agree</span>
                               <span className="w-[3.25rem] text-center">Dismiss</span>
@@ -482,50 +503,76 @@ export function SageInbox() {
                                       aria-label={`Select: ${proposalTypeLabel(p.type)}`}
                                     />
                                   ) : (
-                                    <div className="flex shrink-0 items-start gap-1">
-                                      <button
-                                        type="button"
-                                        title="Agree"
-                                        disabled={
-                                          rowBusy ||
-                                          (showDate && !(dates[dKey] ?? "").trim())
-                                        }
-                                        className={cn(
-                                          "inline-flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-medium",
-                                          "bg-[#7B9E87] text-white hover:bg-[#6A8A78]",
-                                          "disabled:opacity-40 disabled:cursor-not-allowed"
-                                        )}
-                                        onClick={() =>
-                                          postProposalAction(
-                                            item,
-                                            "agree",
-                                            [idx],
-                                            `${item.id}:${idx}`
-                                          )
-                                        }
-                                      >
-                                        ✓
-                                      </button>
-                                      <button
-                                        type="button"
-                                        title="Dismiss"
-                                        disabled={rowBusy}
-                                        className={cn(
-                                          "inline-flex h-6 w-6 items-center justify-center rounded-full text-[11px]",
-                                          "border border-[#D5D0C6] bg-white text-foreground-secondary hover:bg-[#F2F5EF]",
-                                          "disabled:opacity-40 disabled:cursor-not-allowed"
-                                        )}
-                                        onClick={() =>
-                                          postProposalAction(
-                                            item,
-                                            "dismiss",
-                                            [idx],
-                                            `${item.id}:${idx}`
-                                          )
-                                        }
-                                      >
-                                        ✗
-                                      </button>
+                                    <div className="flex shrink-0 flex-col items-start gap-1">
+                                      <div className="flex items-start gap-1">
+                                        <button
+                                          type="button"
+                                          title="Agree"
+                                          disabled={
+                                            rowBusy ||
+                                            (showDate && !(dates[dKey] ?? "").trim())
+                                          }
+                                          className={cn(
+                                            "inline-flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-medium",
+                                            "bg-[#7B9E87] text-white hover:bg-[#6A8A78]",
+                                            "disabled:opacity-40 disabled:cursor-not-allowed"
+                                          )}
+                                          onClick={() =>
+                                            postProposalAction(
+                                              item,
+                                              "agree",
+                                              [idx],
+                                              `${item.id}:${idx}`
+                                            )
+                                          }
+                                        >
+                                          ✓
+                                        </button>
+                                        <button
+                                          type="button"
+                                          title="Dismiss"
+                                          disabled={rowBusy}
+                                          className={cn(
+                                            "inline-flex h-6 w-6 items-center justify-center rounded-full text-[11px]",
+                                            "border border-[#D5D0C6] bg-white text-foreground-secondary hover:bg-[#F2F5EF]",
+                                            "disabled:opacity-40 disabled:cursor-not-allowed"
+                                          )}
+                                          onClick={() =>
+                                            postProposalAction(
+                                              item,
+                                              "dismiss",
+                                              [idx],
+                                              `${item.id}:${idx}`
+                                            )
+                                          }
+                                        >
+                                          ✗
+                                        </button>
+                                      </div>
+                                      {isRevisable(p) && (
+                                        <button
+                                          type="button"
+                                          className="text-[10px] text-[#5B7A52] hover:underline"
+                                          disabled={rowBusy}
+                                          onClick={() =>
+                                            setReviseTarget({
+                                              itemId: item.id,
+                                              proposalIndex: idx,
+                                              proposalType: p.type as
+                                                | "reply_coparent"
+                                                | "ask_clarification",
+                                              originalDraft: p.draft,
+                                              initialText:
+                                                typeof p.revised_text === "string" &&
+                                                p.revised_text.trim()
+                                                  ? p.revised_text.trim()
+                                                  : p.draft,
+                                            })
+                                          }
+                                        >
+                                          Revise
+                                        </button>
+                                      )}
                                     </div>
                                   )}
 
@@ -539,6 +586,14 @@ export function SageInbox() {
                                           ✓ approved
                                         </span>
                                       )}
+                                      {typeof p.revised_text === "string" &&
+                                        p.revised_text.trim() &&
+                                        !approved &&
+                                        !waived && (
+                                          <span className="text-[10px] text-[#5B7A52]">
+                                            revised
+                                          </span>
+                                        )}
                                       {waived && (
                                         <span className="text-[10px] text-foreground-secondary">
                                           dismissed
@@ -583,7 +638,7 @@ export function SageInbox() {
                             })}
                           </ul>
 
-                          {isMulti && hasActionable && (
+                          {isMulti && actionableCount > 1 && (
                             <div className="flex flex-wrap items-center gap-2 pt-1">
                               <Button
                                 type="button"
@@ -634,6 +689,20 @@ export function SageInbox() {
           ))
         )}
       </CardContent>
+
+      <ReviseProposalModal
+        open={reviseTarget !== null}
+        proposalType={reviseTarget?.proposalType ?? "reply_coparent"}
+        originalDraft={reviseTarget?.originalDraft ?? ""}
+        initialText={reviseTarget?.initialText ?? ""}
+        itemId={reviseTarget?.itemId ?? ""}
+        proposalIndex={reviseTarget?.proposalIndex ?? 0}
+        onClose={() => setReviseTarget(null)}
+        onSaved={() => {
+          setReviseTarget(null);
+          void fetchInbox();
+        }}
+      />
     </Card>
   );
 }

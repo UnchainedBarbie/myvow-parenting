@@ -6,6 +6,7 @@ export const runtime = "nodejs";
 type PlanProposal = {
   type?: string;
   draft?: string;
+  revised_text?: string | null;
   depends_on?: string | null;
   requires_approval?: boolean;
   approved?: boolean;
@@ -83,8 +84,10 @@ export async function GET(_req: NextRequest) {
 
 /**
  * POST /api/sage-inbox
- * Body: { id, action: "agree" | "dismiss" | "undo", proposal_indexes: number[], dates?: { [index]: ISO } }
- * Records approval, waiver, or undo on plan.proposals — does NOT execute actions.
+ * Body variants:
+ *  - { id, action: "agree"|"dismiss"|"undo", proposal_indexes, dates? }
+ *  - { id, action: "revise", proposal_index, revised_text }
+ * Records approval/waiver/undo/revise on plan.proposals — does NOT execute actions.
  */
 export async function POST(req: NextRequest) {
   try {
@@ -92,6 +95,8 @@ export async function POST(req: NextRequest) {
       id?: string | null;
       action?: string | null;
       proposal_indexes?: unknown;
+      proposal_index?: unknown;
+      revised_text?: unknown;
       dates?: Record<string, string> | null;
     } | null;
 
@@ -99,22 +104,14 @@ export async function POST(req: NextRequest) {
     const action =
       body?.action === "agree" ||
       body?.action === "dismiss" ||
-      body?.action === "undo"
+      body?.action === "undo" ||
+      body?.action === "revise"
         ? body.action
         : null;
-    const indexes = Array.isArray(body?.proposal_indexes)
-      ? body!.proposal_indexes.filter(
-          (n): n is number => typeof n === "number" && Number.isInteger(n) && n >= 0
-        )
-      : [];
-    const dates =
-      body?.dates && typeof body.dates === "object" && !Array.isArray(body.dates)
-        ? body.dates
-        : {};
 
-    if (!id || !action || indexes.length === 0) {
+    if (!id || !action) {
       return NextResponse.json(
-        { success: false, error: "Invalid id, action, or proposal_indexes" },
+        { success: false, error: "Invalid id or action" },
         { status: 400 }
       );
     }
@@ -153,6 +150,66 @@ export async function POST(req: NextRequest) {
       ? plan.proposals.map((p) => ({ ...p }))
       : [];
 
+    if (action === "revise") {
+      const idx =
+        typeof body?.proposal_index === "number" && Number.isInteger(body.proposal_index)
+          ? body.proposal_index
+          : -1;
+      const revisedText =
+        typeof body?.revised_text === "string" ? body.revised_text.trim() : "";
+      if (idx < 0 || idx >= proposals.length || !revisedText) {
+        return NextResponse.json(
+          { success: false, error: "Invalid proposal_index or revised_text" },
+          { status: 400 }
+        );
+      }
+      const p = proposals[idx];
+      if (!p || (p.type !== "reply_coparent" && p.type !== "ask_clarification")) {
+        return NextResponse.json(
+          { success: false, error: "Proposal is not revisable" },
+          { status: 400 }
+        );
+      }
+      if (p.executed === true) {
+        return NextResponse.json(
+          { success: false, error: "already sent, cannot revise" },
+          { status: 400 }
+        );
+      }
+      proposals[idx] = { ...p, revised_text: revisedText };
+      const updatedPlan: SagePlan = { ...plan, proposals };
+      const { error: updateError } = await admin
+        .from("sage_items")
+        .update({ plan: updatedPlan })
+        .eq("id", id)
+        .eq("visible_to", user.id);
+      if (updateError) {
+        console.error("[sage-inbox/POST] Failed to save revise:", updateError);
+        return NextResponse.json(
+          { success: false, error: updateError.message ?? "Failed to save revise" },
+          { status: 500 }
+        );
+      }
+      return NextResponse.json({ success: true, plan: updatedPlan });
+    }
+
+    const indexes = Array.isArray(body?.proposal_indexes)
+      ? body!.proposal_indexes.filter(
+          (n): n is number => typeof n === "number" && Number.isInteger(n) && n >= 0
+        )
+      : [];
+    const dates =
+      body?.dates && typeof body.dates === "object" && !Array.isArray(body.dates)
+        ? body.dates
+        : {};
+
+    if (indexes.length === 0) {
+      return NextResponse.json(
+        { success: false, error: "Invalid proposal_indexes" },
+        { status: 400 }
+      );
+    }
+
     const now = new Date().toISOString();
     let waivedAskClarification = false;
     let undidWaivedAskClarification = false;
@@ -185,7 +242,6 @@ export async function POST(req: NextRequest) {
       if (p.executed === true) continue;
       if (p.approved === true || p.status === "waived_by_user") continue;
 
-      // Blocked proposals cannot be agreed unless already unblocked
       const blocked =
         p.depends_on != null &&
         String(p.depends_on).trim() !== "" &&
@@ -204,7 +260,6 @@ export async function POST(req: NextRequest) {
             : {}),
         };
       } else {
-        // dismiss / waive
         proposals[idx] = {
           ...p,
           status: "waived_by_user",
@@ -229,8 +284,6 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Undo of a waived ask_clarification: re-block downstream unless another
-    // ask_clarification remains waived.
     if (undidWaivedAskClarification) {
       const stillHasWaivedAsk = proposals.some(
         (p) => p.type === "ask_clarification" && p.status === "waived_by_user"

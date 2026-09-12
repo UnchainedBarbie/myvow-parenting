@@ -208,7 +208,11 @@ export function SageInbox() {
     "open" | "flagged" | "archived" | "all"
   >("open");
   const [search, setSearch] = useState("");
+  const [itemSelectMode, setItemSelectMode] = useState(false);
+  const [selectedItemIds, setSelectedItemIds] = useState<string[]>([]);
   const [confirmArchiveItem, setConfirmArchiveItem] = useState<SageItem | null>(null);
+  const [confirmBulkArchive, setConfirmBulkArchive] = useState(false);
+  const [bulkBusy, setBulkBusy] = useState(false);
   const [multiSelect, setMultiSelect] = useState<Record<string, boolean>>({});
   const [selected, setSelected] = useState<Record<string, number[]>>({});
   const [dates, setDates] = useState<Record<string, string>>({});
@@ -220,6 +224,18 @@ export function SageInbox() {
     originalDraft: string;
     initialText: string;
   } | null>(null);
+
+  function exitItemSelectMode() {
+    setItemSelectMode(false);
+    setSelectedItemIds([]);
+    setConfirmBulkArchive(false);
+  }
+
+  function toggleItemSelected(id: string) {
+    setSelectedItemIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  }
 
   async function fetchInbox(
     status: "open" | "flagged" | "archived" | "all" = statusFilter
@@ -278,6 +294,43 @@ export function SageInbox() {
         )
       );
       if (statusFilter === "flagged") await fetchInbox();
+    }
+  }
+
+  async function bulkFlagSelected() {
+    if (selectedItemIds.length === 0 || bulkBusy) return;
+    setBulkBusy(true);
+    try {
+      for (const id of selectedItemIds) {
+        await fetch("/api/sage-inbox", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id, flagged: true }),
+        });
+      }
+      setSelectedItemIds([]);
+      await fetchInbox();
+    } finally {
+      setBulkBusy(false);
+    }
+  }
+
+  async function bulkArchiveSelected() {
+    if (selectedItemIds.length === 0 || bulkBusy) return;
+    setBulkBusy(true);
+    try {
+      for (const id of selectedItemIds) {
+        await fetch("/api/sage-inbox", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id, status: "archived" }),
+        });
+      }
+      setConfirmBulkArchive(false);
+      exitItemSelectMode();
+      await fetchInbox();
+    } finally {
+      setBulkBusy(false);
     }
   }
 
@@ -402,7 +455,58 @@ export function SageInbox() {
             <option value="archived">Archived</option>
             <option value="all">All</option>
           </select>
+          <button
+            type="button"
+            onClick={() => {
+              if (itemSelectMode) {
+                exitItemSelectMode();
+              } else {
+                setItemSelectMode(true);
+                setSelectedItemIds([]);
+              }
+            }}
+            className={cn(
+              "h-8 shrink-0 rounded-full border px-3 text-[11px] text-[#3D3D3D] bg-[#FDFBF7] border-[#E8E4DC] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E]",
+              itemSelectMode && "bg-[#F2F5EF] border-[#7C8B6E]"
+            )}
+          >
+            {itemSelectMode ? "Cancel" : "Select"}
+          </button>
         </div>
+        {itemSelectMode && (
+          <div className="flex flex-wrap items-center gap-2 rounded-xl border border-[#E8E4DC] bg-[#FDFBF7] px-3 py-2">
+            <span className="text-[11px] text-[#6A7A6E]">
+              {selectedItemIds.length} selected
+            </span>
+            <Button
+              type="button"
+              size="sm"
+              className="h-7 rounded-full px-3 text-[11px] bg-[#7B9E87] text-white hover:bg-[#6A8A78] disabled:opacity-50"
+              disabled={selectedItemIds.length === 0 || bulkBusy}
+              onClick={() => setConfirmBulkArchive(true)}
+            >
+              Archive selected
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-7 rounded-full px-3 text-[11px] disabled:opacity-50"
+              disabled={selectedItemIds.length === 0 || bulkBusy}
+              onClick={() => void bulkFlagSelected()}
+            >
+              Flag selected
+            </Button>
+            <button
+              type="button"
+              className="text-[11px] text-[#6A7A6E] hover:underline disabled:opacity-50"
+              disabled={bulkBusy}
+              onClick={exitItemSelectMode}
+            >
+              Cancel
+            </button>
+          </div>
+        )}
       </CardHeader>
       <CardContent className="px-4 pb-4 space-y-5">
         {loading ? (
@@ -438,6 +542,7 @@ export function SageInbox() {
                     multiSelect[item.id] === true && actionableCount > 1;
                   const checked = selected[item.id] ?? [];
                   const itemBusy = busyKey?.startsWith(`${item.id}:`) ?? false;
+                  const itemChecked = selectedItemIds.includes(item.id);
 
                   return (
                     <li
@@ -445,6 +550,16 @@ export function SageInbox() {
                       className="relative rounded-lg border border-[#E8E4DC] bg-white px-3 py-2"
                     >
                       <div className="flex items-start gap-2 min-w-0">
+                        {itemSelectMode && (
+                          <input
+                            type="checkbox"
+                            className="mt-1.5 h-4 w-4 shrink-0 rounded border-[#C5D0C0] accent-[#7B9E87]"
+                            checked={itemChecked}
+                            disabled={bulkBusy}
+                            onChange={() => toggleItemSelected(item.id)}
+                            aria-label="Select item"
+                          />
+                        )}
                         <span className="mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#F2F5EF] text-[#5B7A52] text-[11px]">
                           {icon}
                         </span>
@@ -459,43 +574,53 @@ export function SageInbox() {
                                   Archived
                                 </span>
                               )}
-                              <button
-                                type="button"
-                                title={
-                                  isFlagged ? "Remove flag" : "Flag for reference"
-                                }
-                                aria-label={
-                                  isFlagged ? "Remove flag" : "Flag for reference"
-                                }
-                                aria-pressed={isFlagged}
-                                onClick={() => void toggleFlag(item)}
-                                className={cn(
-                                  "inline-flex h-7 w-7 items-center justify-center rounded-md transition-colors",
-                                  isFlagged
-                                    ? "text-[#B45309] hover:bg-[#FDF2F0]"
-                                    : "text-[#B0A899] hover:bg-[#E8E4DC] hover:text-[#6A7A6E]"
-                                )}
-                              >
-                                <Flag
-                                  className={cn(
-                                    "h-3.5 w-3.5",
-                                    isFlagged && "fill-current"
-                                  )}
-                                />
-                              </button>
-                              <button
-                                type="button"
-                                title={isArchived ? "Unarchive" : "Archive"}
-                                aria-label={isArchived ? "Unarchive" : "Archive"}
-                                onClick={() => setConfirmArchiveItem(item)}
-                                className="inline-flex h-7 w-7 items-center justify-center rounded-md text-[#B0A899] transition-colors hover:bg-[#E8E4DC] hover:text-[#6A7A6E]"
-                              >
-                                {isArchived ? (
-                                  <ArchiveRestore className="h-3.5 w-3.5" />
-                                ) : (
-                                  <Archive className="h-3.5 w-3.5" />
-                                )}
-                              </button>
+                              {!itemSelectMode && (
+                                <>
+                                  <button
+                                    type="button"
+                                    title={
+                                      isFlagged
+                                        ? "Remove flag"
+                                        : "Flag for reference"
+                                    }
+                                    aria-label={
+                                      isFlagged
+                                        ? "Remove flag"
+                                        : "Flag for reference"
+                                    }
+                                    aria-pressed={isFlagged}
+                                    onClick={() => void toggleFlag(item)}
+                                    className={cn(
+                                      "inline-flex h-7 w-7 items-center justify-center rounded-md transition-colors",
+                                      isFlagged
+                                        ? "text-[#B45309] hover:bg-[#FDF2F0]"
+                                        : "text-[#B0A899] hover:bg-[#E8E4DC] hover:text-[#6A7A6E]"
+                                    )}
+                                  >
+                                    <Flag
+                                      className={cn(
+                                        "h-3.5 w-3.5",
+                                        isFlagged && "fill-current"
+                                      )}
+                                    />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    title={isArchived ? "Unarchive" : "Archive"}
+                                    aria-label={
+                                      isArchived ? "Unarchive" : "Archive"
+                                    }
+                                    onClick={() => setConfirmArchiveItem(item)}
+                                    className="inline-flex h-7 w-7 items-center justify-center rounded-md text-[#B0A899] transition-colors hover:bg-[#E8E4DC] hover:text-[#6A7A6E]"
+                                  >
+                                    {isArchived ? (
+                                      <ArchiveRestore className="h-3.5 w-3.5" />
+                                    ) : (
+                                      <Archive className="h-3.5 w-3.5" />
+                                    )}
+                                  </button>
+                                </>
+                              )}
                             </div>
                           </div>
                           <div className="flex flex-wrap items-center gap-2">
@@ -522,10 +647,17 @@ export function SageInbox() {
                       </div>
 
                       {proposals.length > 0 && (
-                        <div className="mt-3 ml-9 space-y-2 border-t border-[#E8E4DC] pt-2">
+                        <div
+                          className={cn(
+                            "mt-3 space-y-2 border-t border-[#E8E4DC] pt-2",
+                            itemSelectMode ? "ml-0" : "ml-9"
+                          )}
+                        >
                           <div className="flex flex-wrap items-center gap-2">
-                            <p className="text-[11px] font-medium text-[#5B7A52]">Sage suggests</p>
-                            {actionableCount > 1 && (
+                            <p className="text-[11px] font-medium text-[#5B7A52]">
+                              Sage suggests
+                            </p>
+                            {!itemSelectMode && actionableCount > 1 && (
                               <button
                                 type="button"
                                 className="text-[11px] text-[#5B7A52] hover:underline"
@@ -551,7 +683,8 @@ export function SageInbox() {
                               const showDate = actionable && needsDateField(p);
                               const dKey = dateKey(item.id, idx);
                               const isChecked = checked.includes(idx);
-                              const rowBusy = busyKey === `${item.id}:${idx}` || itemBusy;
+                              const rowBusy =
+                                busyKey === `${item.id}:${idx}` || itemBusy;
 
                               return (
                                 <li
@@ -561,9 +694,13 @@ export function SageInbox() {
                                     blocked && "bg-[#F7F5F0] opacity-80"
                                   )}
                                 >
-                                  {/* Left controls */}
-                                  {noteOnly || blocked ? (
-                                    <span className="mt-0.5 w-12 shrink-0" aria-hidden />
+                                  {/* Left controls — hidden in item bulk-select mode */}
+                                  {itemSelectMode ? null : noteOnly ||
+                                    blocked ? (
+                                    <span
+                                      className="mt-0.5 w-12 shrink-0"
+                                      aria-hidden
+                                    />
                                   ) : canUndo(p) ? (
                                     <button
                                       type="button"
@@ -586,7 +723,9 @@ export function SageInbox() {
                                       className="mt-1 h-4 w-4 shrink-0 rounded border-[#C5D0C0] accent-[#7B9E87]"
                                       checked={isChecked}
                                       disabled={rowBusy}
-                                      onChange={() => toggleProposal(item.id, idx)}
+                                      onChange={() =>
+                                        toggleProposal(item.id, idx)
+                                      }
                                       aria-label={`Select: ${proposalTypeLabel(p.type)}`}
                                     />
                                   ) : (
@@ -596,7 +735,8 @@ export function SageInbox() {
                                         title="Agree"
                                         disabled={
                                           rowBusy ||
-                                          (showDate && !(dates[dKey] ?? "").trim())
+                                          (showDate &&
+                                            !(dates[dKey] ?? "").trim())
                                         }
                                         className={cn(
                                           "inline-flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-medium",
@@ -633,7 +773,8 @@ export function SageInbox() {
                                                 | "ask_clarification",
                                               originalDraft: p.draft,
                                               initialText:
-                                                typeof p.revised_text === "string" &&
+                                                typeof p.revised_text ===
+                                                  "string" &&
                                                 p.revised_text.trim()
                                                   ? p.revised_text.trim()
                                                   : p.draft,
@@ -698,12 +839,13 @@ export function SageInbox() {
                                     <p
                                       className={cn(
                                         "text-[12px] leading-snug text-foreground",
-                                        (blocked || waived) && "text-foreground-secondary"
+                                        (blocked || waived) &&
+                                          "text-foreground-secondary"
                                       )}
                                     >
                                       {displayDraft(p, showDate)}
                                     </p>
-                                    {showDate && (
+                                    {!itemSelectMode && showDate && (
                                       <input
                                         type="date"
                                         className="mt-1 h-7 rounded-md border border-[#E8E4DC] bg-white px-2 text-[11px] text-foreground"
@@ -728,47 +870,49 @@ export function SageInbox() {
                             })}
                           </ul>
 
-                          {isMulti && actionableCount > 1 && (
-                            <div className="flex flex-wrap items-center gap-2 pt-1">
-                              <Button
-                                type="button"
-                                size="sm"
-                                className="h-7 rounded-full px-3 text-[11px] bg-[#7B9E87] text-white hover:bg-[#6A8A78] disabled:opacity-50"
-                                disabled={
-                                  checked.length === 0 ||
-                                  itemBusy ||
-                                  missingRequiredDates(item, checked)
-                                }
-                                onClick={() =>
-                                  postProposalAction(
-                                    item,
-                                    "agree",
-                                    checked,
-                                    `${item.id}:multi`
-                                  )
-                                }
-                              >
-                                Agree
-                              </Button>
-                              <Button
-                                type="button"
-                                size="sm"
-                                variant="outline"
-                                className="h-7 rounded-full px-3 text-[11px] disabled:opacity-50"
-                                disabled={checked.length === 0 || itemBusy}
-                                onClick={() =>
-                                  postProposalAction(
-                                    item,
-                                    "dismiss",
-                                    checked,
-                                    `${item.id}:multi`
-                                  )
-                                }
-                              >
-                                Dismiss
-                              </Button>
-                            </div>
-                          )}
+                          {!itemSelectMode &&
+                            isMulti &&
+                            actionableCount > 1 && (
+                              <div className="flex flex-wrap items-center gap-2 pt-1">
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  className="h-7 rounded-full px-3 text-[11px] bg-[#7B9E87] text-white hover:bg-[#6A8A78] disabled:opacity-50"
+                                  disabled={
+                                    checked.length === 0 ||
+                                    itemBusy ||
+                                    missingRequiredDates(item, checked)
+                                  }
+                                  onClick={() =>
+                                    postProposalAction(
+                                      item,
+                                      "agree",
+                                      checked,
+                                      `${item.id}:multi`
+                                    )
+                                  }
+                                >
+                                  Agree
+                                </Button>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-7 rounded-full px-3 text-[11px] disabled:opacity-50"
+                                  disabled={checked.length === 0 || itemBusy}
+                                  onClick={() =>
+                                    postProposalAction(
+                                      item,
+                                      "dismiss",
+                                      checked,
+                                      `${item.id}:multi`
+                                    )
+                                  }
+                                >
+                                  Dismiss
+                                </Button>
+                              </div>
+                            )}
                         </div>
                       )}
                     </li>
@@ -826,6 +970,15 @@ export function SageInbox() {
           setConfirmArchiveItem(null);
           await fetchInbox();
         }}
+      />
+
+      <ConfirmModal
+        open={confirmBulkArchive && selectedItemIds.length > 0}
+        title={`Archive ${selectedItemIds.length} item${selectedItemIds.length === 1 ? "" : "s"}?`}
+        description="You can find these later under Archived."
+        confirmLabel="Archive"
+        onCancel={() => setConfirmBulkArchive(false)}
+        onConfirm={() => void bulkArchiveSelected()}
       />
     </Card>
   );

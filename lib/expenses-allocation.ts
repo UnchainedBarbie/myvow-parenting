@@ -6,6 +6,11 @@ function normalizeCategory(value: string | null | undefined): string {
   return (value ?? "").trim().toLowerCase();
 }
 
+function isMedicalish(category: string): boolean {
+  const c = normalizeCategory(category);
+  return c === "medical" || c === "dental";
+}
+
 /** Dentist bills use medical; dental and medical share the same plan split. */
 function categoriesCompatible(
   ruleCategory: string | null | undefined,
@@ -14,8 +19,31 @@ function categoriesCompatible(
   const a = normalizeCategory(ruleCategory);
   const b = normalizeCategory(inputCategory);
   if (!a || a === b) return true;
-  const medicalish = (c: string) => c === "medical" || c === "dental";
-  return medicalish(a) && medicalish(b);
+  return isMedicalish(a) && isMedicalish(b);
+}
+
+function asPercent(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim()) {
+    const n = Number(value);
+    if (Number.isFinite(n)) return n;
+  }
+  return null;
+}
+
+function splitFromPercent(
+  amount: number,
+  pct: number
+): ExpenseAllocationResult {
+  const share = Math.round(amount * (pct / 100) * 100) / 100;
+  const splitLabel =
+    pct > 0 && pct < 100 ? `${pct}/${100 - pct}` : pct === 0 ? "0/100" : "100/0";
+  return {
+    allocation_status: pct > 0 ? "ALLOCATED" : "NONE",
+    other_parent_percent: pct,
+    other_parent_share: share,
+    split_label: splitLabel,
+  };
 }
 
 type RuleType = "SPLIT_PERCENT" | "FIXED_AMOUNT" | "NONE" | "MANUAL";
@@ -46,15 +74,74 @@ export interface ExpenseAllocationResult {
 }
 
 /**
+ * Live `expenses.allocation_status` check allows pending (and similar), not ALLOCATED/NONE.
+ * Successful splits still store amount_owed + other_parent_percent; pending matches historical rows.
+ */
+export function allocationStatusForDb(status: AllocationStatus): string {
+  if (status === "MANUAL_REQUIRED") return "MANUAL_REQUIRED";
+  return "pending";
+}
+
+/**
+ * Case-level percents from the parenting plan / court-order ingest.
+ * Medical/dental use extraordinary_medical_split_percent; otherwise custody_split_percent.
+ * This is what older "Add expense" rows used before per-category rule rows existed.
+ */
+async function allocationFromCaseDefaults(
+  caseId: string,
+  amount: number,
+  category: string
+): Promise<ExpenseAllocationResult> {
+  const admin = getServiceRoleClient();
+  const { data: caseRow } = await admin
+    .from("cases")
+    .select("custody_split_percent, extraordinary_medical_split_percent")
+    .eq("id", caseId)
+    .maybeSingle();
+
+  const medicalPct = asPercent(
+    (caseRow as { extraordinary_medical_split_percent?: unknown } | null)
+      ?.extraordinary_medical_split_percent
+  );
+  const custodyPct = asPercent(
+    (caseRow as { custody_split_percent?: unknown } | null)?.custody_split_percent
+  );
+
+  // Medical/dental follow the extraordinary-medical split (else the general custody split).
+  // Other categories without a matching rule row stay unallocated — same as historical
+  // "Add expense" rows for non-medical (e.g. DMV) that stored $0 share.
+  if (!isMedicalish(category)) {
+    return {
+      allocation_status: "NONE",
+      other_parent_percent: null,
+      other_parent_share: 0,
+      split_label: null,
+    };
+  }
+
+  const pct = medicalPct ?? custodyPct;
+  if (pct == null) {
+    return {
+      allocation_status: "NONE",
+      other_parent_percent: null,
+      other_parent_share: 0,
+      split_label: null,
+    };
+  }
+  return splitFromPercent(amount, pct);
+}
+
+/**
  * Compute allocation for an expense based on parenting plan rules.
- * Fallback: if no matching rule, treat as NONE (no allocation).
+ * If per-category rules are missing (table not migrated, or no matching row),
+ * fall back to the case's medical / custody split percents — the same source
+ * the original Add-expense path used.
  */
 export async function computeAllocationFromParentingPlan(
   input: ExpenseAllocationInput
 ): Promise<ExpenseAllocationResult> {
   const admin = getServiceRoleClient();
 
-  // Find the most recent active parenting plan for this case.
   const { data: plan } = await admin
     .from("parenting_plans")
     .select("id")
@@ -66,13 +153,23 @@ export async function computeAllocationFromParentingPlan(
 
   const planId = (plan as { id?: string } | null)?.id ?? null;
 
-  const { data: rules } = await admin
+  const { data: rules, error: rulesError } = await admin
     .from("parenting_plan_expense_rules")
     .select(
       "id, parenting_plan_id, case_id, category, child_scope, rule_type, other_parent_percent, notes"
     )
     .eq("case_id", input.caseId)
     .order("created_at", { ascending: true });
+
+  if (rulesError || !rules || rules.length === 0) {
+    if (rulesError) {
+      console.warn(
+        "[expenses-allocation] plan rules unavailable, using case split:",
+        rulesError.message
+      );
+    }
+    return allocationFromCaseDefaults(input.caseId, input.amount, input.category);
+  }
 
   const candidates: ExpenseRuleRow[] = (rules ?? []).filter((r) => {
     if (planId && r.parenting_plan_id && r.parenting_plan_id !== planId) {
@@ -107,12 +204,7 @@ export async function computeAllocationFromParentingPlan(
   }
 
   if (!best) {
-    return {
-      allocation_status: "NONE",
-      other_parent_percent: null,
-      other_parent_share: 0,
-      split_label: null,
-    };
+    return allocationFromCaseDefaults(input.caseId, input.amount, input.category);
   }
 
   if (best.rule_type === "NONE") {
@@ -134,21 +226,13 @@ export async function computeAllocationFromParentingPlan(
   }
 
   if (best.rule_type === "SPLIT_PERCENT") {
-    const pct = typeof best.other_parent_percent === "number" ? best.other_parent_percent : 0;
-    const shareRaw = input.amount * (pct / 100);
-    const share = Math.round(shareRaw * 100) / 100;
-    const splitLabel =
-      pct > 0 && pct < 100 ? `${pct}/${100 - pct}` : pct === 0 ? "0/100" : "100/0";
-
-    return {
-      allocation_status: "ALLOCATED",
-      other_parent_percent: pct,
-      other_parent_share: share,
-      split_label: splitLabel,
-    };
+    const pct = asPercent(best.other_parent_percent);
+    if (pct == null) {
+      return allocationFromCaseDefaults(input.caseId, input.amount, input.category);
+    }
+    return splitFromPercent(input.amount, pct);
   }
 
-  // FIXED_AMOUNT and unhandled types fall back to MANUAL for now.
   return {
     allocation_status: "MANUAL_REQUIRED",
     other_parent_percent: null,
@@ -156,4 +240,3 @@ export async function computeAllocationFromParentingPlan(
     split_label: null,
   };
 }
-

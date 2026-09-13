@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
-import { computeAllocationFromParentingPlan } from "@/lib/expenses-allocation";
+import { computeAllocationFromParentingPlan, allocationStatusForDb } from "@/lib/expenses-allocation";
 import { expenseWorkflowStatus } from "@/lib/expenses-share";
 
 /**
@@ -105,10 +105,9 @@ export async function PATCH(
       updates.other_parent_percent = allocation.other_parent_percent;
       updates.other_parent_share = allocation.other_parent_share;
       updates.split_label = allocation.split_label;
-      updates.allocation_status =
-        allocation.allocation_status === "NONE"
-          ? "pending"
-          : allocation.allocation_status;
+      updates.allocation_status = allocationStatusForDb(
+        allocation.allocation_status
+      );
       const currentStatus = String(
         (updates.status as string | undefined) ??
           (expense as { status?: string }).status ??

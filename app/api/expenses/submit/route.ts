@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
-import { computeAllocationFromParentingPlan } from "@/lib/expenses-allocation";
+import { computeAllocationFromParentingPlan, allocationStatusForDb } from "@/lib/expenses-allocation";
 import { expenseWorkflowStatus } from "@/lib/expenses-share";
 
 /**
@@ -71,10 +71,7 @@ export async function POST(request: NextRequest) {
         child_id: child_id ?? null,
         split_percent: allocation.other_parent_percent,
         amount_owed: allocation.other_parent_share,
-        allocation_status:
-          allocation.allocation_status === "NONE"
-            ? "pending"
-            : allocation.allocation_status,
+        allocation_status: allocationStatusForDb(allocation.allocation_status),
         other_parent_percent: allocation.other_parent_percent,
         other_parent_share: allocation.other_parent_share,
         split_label: allocation.split_label,

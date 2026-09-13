@@ -12,6 +12,7 @@ import { getCategoryColor } from "@/lib/categoryColors";
 import { Download, Trash2, Check, XCircle, Filter, Paperclip, Pencil, Lock } from "lucide-react";
 import { showErrorToast, showSuccessToast } from "@/components/ui/toaster";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
+import { coparentShareInvolves } from "@/lib/expenses-share";
 import { Label } from "@/components/ui/label";
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -31,6 +32,7 @@ const STATUS_LABELS: Record<string, string> = {
   disputed: "Disputed",
   resolved: "Resolved",
   paid: "Paid",
+  logged: "Logged",
 };
 
 const STATUS_FILTER_OPTIONS = [
@@ -75,6 +77,28 @@ function formatDate(createdAt: string) {
     day: "numeric",
     year: "numeric",
   });
+}
+
+function coparentShareForRow(
+  exp: ExpenseRow,
+  currentUserId: string
+): number {
+  const amountNum = Number(exp.amount);
+  const owedNum = exp.amount_owed != null ? Number(exp.amount_owed) : 0;
+  const isMine = exp.submitted_by === currentUserId;
+  if (exp.allocation_status === "NONE") return 0;
+  const theirShare = isMine ? owedNum : amountNum - owedNum;
+  return Number.isFinite(theirShare) ? theirShare : 0;
+}
+
+function displayExpenseStatus(exp: ExpenseRow, involved: boolean): string {
+  if (
+    !involved &&
+    (exp.status === "submitted" || exp.status === "resolved" || exp.status === "logged")
+  ) {
+    return "Logged";
+  }
+  return STATUS_LABELS[exp.status] ?? exp.status;
 }
 
 function expenseIdFromIndex(idx: number) {
@@ -588,7 +612,9 @@ export function ExpenseList({
   }
 
   const canRespond = (exp: ExpenseRow) =>
-    exp.submitted_by !== currentUserId && exp.status === "submitted";
+    exp.submitted_by !== currentUserId &&
+    exp.status === "submitted" &&
+    coparentShareInvolves(coparentShareForRow(exp, currentUserId));
 
   const netLabel =
     totals.net > 0.01
@@ -876,14 +902,17 @@ const dateFilterValue: DateFilterValue = {
               <tbody>
                 {filtered.map((exp, idx) => {
                   const amountNum = Number(exp.amount);
-                  const owedNum = exp.amount_owed != null ? Number(exp.amount_owed) : null;
-                  const isMine = exp.submitted_by === currentUserId;
-                  const theirShare =
-                    owedNum != null ? (isMine ? owedNum : amountNum - owedNum) : null;
+                  const theirShare = coparentShareForRow(exp, currentUserId);
+                  const involved = coparentShareInvolves(theirShare);
                   const catColors = getCategoryColor(exp.category);
-                  const statusLabel = STATUS_LABELS[exp.status] ?? exp.status;
+                  const statusLabel = displayExpenseStatus(exp, involved);
                   const statusClasses =
-                    exp.status === "submitted"
+                    !involved &&
+                    (exp.status === "submitted" ||
+                      exp.status === "resolved" ||
+                      exp.status === "logged")
+                      ? "bg-[#F2F5EF] text-[#5B7A52]"
+                      : exp.status === "submitted"
                       ? "bg-muted text-foreground-secondary"
                       : exp.status === "disputed"
                         ? "bg-[#FDF6E3] text-[#D4A843]"
@@ -1009,13 +1038,11 @@ const dateFilterValue: DateFilterValue = {
                               statusClasses
                             )}
                           >
-                            {exp.allocation_status === "NONE"
-                              ? "No allocation"
-                              : statusLabel}
+                            {statusLabel}
                           </span>
                           {exp.submitted_by !== currentUserId ? (
                             <div className="flex flex-wrap gap-1 text-[11px]">
-                              {exp.status === "submitted" && (
+                              {involved && exp.status === "submitted" && (
                                 <>
                                   <button
                                     type="button"
@@ -1080,7 +1107,7 @@ const dateFilterValue: DateFilterValue = {
                             </div>
                           ) : (
                             <div className="flex flex-col gap-1 text-[11px] text-foreground-secondary">
-                              {exp.status === "submitted" && (
+                              {involved && exp.status === "submitted" && (
                                 <span>Awaiting response</span>
                               )}
                               {exp.status === "disputed" && (
@@ -1103,7 +1130,7 @@ const dateFilterValue: DateFilterValue = {
                                   </button>
                                 </>
                               )}
-                              {exp.status === "resolved" && (
+                              {involved && exp.status === "resolved" && (
                                 <span className="text-[#5B7A52]">Resolved</span>
                               )}
                               {exp.status === "paid" && (

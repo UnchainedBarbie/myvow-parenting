@@ -349,7 +349,7 @@ export default async function DashboardPage() {
   // Expenses: net balance + open items
   const { data: expensesRaw } = await admin
     .from("expenses")
-    .select("id, amount, amount_owed, submitted_by, status, deleted_at")
+    .select("id, amount, amount_owed, other_parent_share, submitted_by, status, deleted_at")
     .eq("case_id", caseId)
     .is("deleted_at", null);
 
@@ -362,7 +362,17 @@ export default async function DashboardPage() {
       (e.amount_owed as number | null | undefined) != null
         ? Number(e.amount_owed)
         : null;
-    if ((e.status as string | null) !== "resolved") {
+    const shareNum =
+      (e as { other_parent_share?: number | null }).other_parent_share != null
+        ? Number((e as { other_parent_share?: number | null }).other_parent_share)
+        : owedNum;
+    const status = (e.status as string | null) ?? "";
+    if (
+      (status === "submitted" || status === "disputed") &&
+      shareNum != null &&
+      !Number.isNaN(shareNum) &&
+      shareNum > 0
+    ) {
       openExpenseItems += 1;
     }
     if (Number.isNaN(amountNum) || owedNum == null || Number.isNaN(owedNum)) continue;

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -53,16 +53,32 @@ function mapAiToCategory(aiCategory: string): ExpenseCategory {
 
 type Child = { id: string; first_name: string };
 
+export type ExpenseFormInitialValues = {
+  description?: string;
+  amount?: number | string;
+  incurredDate?: string;
+  category?: string;
+  categoryDescription?: string;
+  childId?: string;
+  visibility?: string;
+};
+
 interface ExpenseFormProps {
   caseId: string;
   children: Child[];
-  custodySplitPercent: number;
+  custodySplitPercent?: number;
+  initialValues?: ExpenseFormInitialValues | null;
+  onSuccess?: (expenseId: string) => void | Promise<void>;
+  /** Omit CardHeader when embedded in another modal that already has a title. */
+  hideHeader?: boolean;
 }
 
 export function ExpenseForm({
   caseId,
   children,
-  custodySplitPercent,
+  initialValues,
+  onSuccess,
+  hideHeader = false,
 }: ExpenseFormProps) {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -74,6 +90,7 @@ export function ExpenseForm({
   const [categoryDescription, setCategoryDescription] = useState("");
   const [selectedChildIds, setSelectedChildIds] = useState<string[]>([]);
   const [visibility, setVisibility] = useState<string>("parents_only");
+  const [notifyCoparent, setNotifyCoparent] = useState(false);
   const [receiptFile, setReceiptFile] = useState<File | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -88,6 +105,31 @@ export function ExpenseForm({
   const [amountSuggested, setAmountSuggested] = useState(false);
   const [categorySuggested, setCategorySuggested] = useState(false);
   const [childSuggested, setChildSuggested] = useState(false);
+
+  useEffect(() => {
+    if (!initialValues) return;
+    if (initialValues.description != null) {
+      setDescription(initialValues.description.slice(0, 80));
+    }
+    if (initialValues.amount != null && initialValues.amount !== "") {
+      setAmount(String(initialValues.amount));
+    }
+    if (initialValues.incurredDate != null) {
+      setIncurredDate(initialValues.incurredDate);
+    }
+    if (initialValues.category != null) {
+      setCategory(initialValues.category);
+    }
+    if (initialValues.categoryDescription != null) {
+      setCategoryDescription(initialValues.categoryDescription.slice(0, 100));
+    }
+    if (initialValues.childId) {
+      setSelectedChildIds([initialValues.childId]);
+    }
+    if (initialValues.visibility != null) {
+      setVisibility(initialValues.visibility);
+    }
+  }, [initialValues]);
 
   function handleDrag(e: React.DragEvent) {
     e.preventDefault();
@@ -217,10 +259,16 @@ export function ExpenseForm({
           incurred_date: incurredDate || undefined,
           child_id: childId || undefined,
           receipt_file_id: receiptFileId,
+          notify_coparent: notifyCoparent,
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || "Submit failed");
+      const expenseId = data.expense_id as string | undefined;
+      if (onSuccess && expenseId) {
+        await onSuccess(expenseId);
+        return;
+      }
       setDescription("");
       setAmount("");
       setIncurredDate("");
@@ -228,6 +276,7 @@ export function ExpenseForm({
       setCategoryDescription("");
       setSelectedChildIds([]);
       setVisibility("parents_only");
+      setNotifyCoparent(false);
       setReceiptFile(null);
       setDescriptionSuggested(false);
       setAmountSuggested(false);
@@ -248,13 +297,15 @@ export function ExpenseForm({
 
   return (
     <Card className="shadow-card border-border rounded-card">
-      <CardHeader className="pb-2 px-4 pt-4">
-        <CardTitle className="font-heading text-lg text-foreground">Add expense</CardTitle>
-        <p className="text-[11px] text-foreground-secondary mt-0.5">
-          Allocation is based on your parenting plan.
-        </p>
-      </CardHeader>
-      <CardContent className="px-4 pb-4 space-y-4">
+      {!hideHeader && (
+        <CardHeader className="pb-2 px-4 pt-4">
+          <CardTitle className="font-heading text-lg text-foreground">Add expense</CardTitle>
+          <p className="text-[11px] text-foreground-secondary mt-0.5">
+            Allocation is based on your parenting plan.
+          </p>
+        </CardHeader>
+      )}
+      <CardContent className={cn("px-4 pb-4 space-y-4", hideHeader ? "pt-4" : "")}>
         <form onSubmit={handleSubmit} className="space-y-4">
           {error && (
             <p className="text-xs text-alert" role="alert">
@@ -545,6 +596,21 @@ export function ExpenseForm({
               ))}
             </select>
           </div>
+          <label className="flex items-start gap-2 text-xs text-foreground">
+            <input
+              type="checkbox"
+              className="mt-0.5 rounded border-border"
+              checked={notifyCoparent}
+              onChange={(e) => setNotifyCoparent(e.target.checked)}
+            />
+            <span>
+              Notify co-parent about this expense
+              <span className="block text-[11px] text-foreground-secondary">
+                Optional if their share is $0 — only needed if you want them to
+                acknowledge a personal/documentation record.
+              </span>
+            </span>
+          </label>
           <Button
             type="submit"
             disabled={loading}

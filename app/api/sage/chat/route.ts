@@ -83,6 +83,8 @@ export async function POST(req: NextRequest) {
         child_ids: result.child_ids,
         unresolved_children: result.unresolved_children,
         resolved_dates: result.resolved_dates,
+        amounts: result.interpretation.entities.amounts,
+        dates: result.interpretation.entities.dates,
         plan_status: result.plan.status,
       },
     });

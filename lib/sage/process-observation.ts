@@ -19,6 +19,11 @@ import {
   interpret,
   type SageInterpretation,
 } from "@/lib/sage/understanding";
+import { computeAllocationFromParentingPlan } from "@/lib/expenses-allocation";
+import {
+  inferExpenseCategoryFromText,
+  userAskedToNotifyCoparent,
+} from "@/lib/expenses-share";
 
 export type ObservationProcessContext = {
   case_id: string;
@@ -84,6 +89,38 @@ export async function processObservation(
     context.timezone
   );
 
+  let expense_allocation: {
+    other_parent_share: number | null;
+    allocation_status?: string;
+    notify_coparent?: boolean;
+  } | undefined;
+  if (intent.item_type === "expense") {
+    const notify_coparent = userAskedToNotifyCoparent(observationText);
+    const amount = entities.amounts[0]?.value;
+    const category = inferExpenseCategoryFromText(
+      [intent.summary, intent.evidence_excerpt, observationText].filter(Boolean).join(" ")
+    );
+    if (typeof amount === "number" && Number.isFinite(amount) && amount > 0) {
+      const allocation = await computeAllocationFromParentingPlan({
+        caseId: context.case_id,
+        amount,
+        category,
+        childId: child_ids[0] ?? null,
+      });
+      expense_allocation = {
+        other_parent_share: allocation.other_parent_share,
+        allocation_status: allocation.allocation_status,
+        notify_coparent,
+      };
+    } else {
+      expense_allocation = {
+        other_parent_share: 0,
+        allocation_status: "NONE",
+        notify_coparent,
+      };
+    }
+  }
+
   const itemPlan = await plan({
     item_type: intent.item_type,
     domain: intent.domain,
@@ -98,6 +135,7 @@ export async function processObservation(
     })),
     sender: context.plan_sender ?? context.sender,
     source_type: context.source_type,
+    expense_allocation,
   });
 
   return {

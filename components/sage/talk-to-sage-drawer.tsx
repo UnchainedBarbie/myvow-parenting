@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import { ProposalCardList } from "@/components/sage/proposal-card-list";
 import {
   buildCalendarInitialValues,
+  buildExpenseInitialValues,
   dateKey,
   needsDateField,
 } from "@/components/sage/proposal-helpers";
@@ -14,6 +15,10 @@ import {
   AddEventForm,
   type AddEventFormInitialValues,
 } from "@/components/calendar/add-event-form";
+import {
+  ExpenseForm,
+  type ExpenseFormInitialValues,
+} from "@/components/expenses/expense-form";
 
 type Child = { id: string; first_name: string };
 
@@ -31,6 +36,12 @@ type CalendarTarget = {
   initialValues: AddEventFormInitialValues;
 };
 
+type ExpenseTarget = {
+  item: SageItem;
+  proposalIndex: number;
+  initialValues: ExpenseFormInitialValues;
+};
+
 type ChatApiResponse = {
   reply?: string;
   actions?: SageProposal[];
@@ -41,6 +52,8 @@ type ChatApiResponse = {
     child_ids?: string[];
     unresolved_children?: string[];
     resolved_dates?: unknown;
+    amounts?: unknown;
+    dates?: unknown;
   };
   error?: string;
 };
@@ -69,6 +82,8 @@ function buildLocalItem(
     tool_input: {
       children: childNames,
       resolved_dates: meta?.resolved_dates ?? [],
+      amounts: meta?.amounts ?? [],
+      dates: meta?.dates ?? [],
     },
     plan: { status: "ready", proposals: actions },
     status: "pending",
@@ -94,6 +109,9 @@ export function TalkToSageDrawer({
   const [dates, setDates] = useState<Record<string, string>>({});
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [calendarTarget, setCalendarTarget] = useState<CalendarTarget | null>(
+    null
+  );
+  const [expenseTarget, setExpenseTarget] = useState<ExpenseTarget | null>(
     null
   );
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -179,10 +197,27 @@ export function TalkToSageDrawer({
       const dKey = dateKey(item.id, idx);
       const chosen = (dates[dKey] ?? "").trim() || p.chosen_date || "";
       if (needsDateField(p, item) && !chosen) return;
+      setExpenseTarget(null);
       setCalendarTarget({
         item,
         proposalIndex: idx,
         initialValues: buildCalendarInitialValues(
+          item,
+          p,
+          chosen || undefined
+        ),
+      });
+      return;
+    }
+
+    if (p.type === "log_expense") {
+      const dKey = dateKey(item.id, idx);
+      const chosen = (dates[dKey] ?? "").trim() || p.chosen_date || "";
+      setCalendarTarget(null);
+      setExpenseTarget({
+        item,
+        proposalIndex: idx,
+        initialValues: buildExpenseInitialValues(
           item,
           p,
           chosen || undefined
@@ -259,6 +294,26 @@ export function TalkToSageDrawer({
       )
     );
     setCalendarTarget(null);
+  }
+
+  async function handleExpenseCreated(expenseId: string) {
+    if (!expenseTarget) return;
+    const { item, proposalIndex } = expenseTarget;
+    updateItemProposals(item.id, (list) =>
+      list.map((prop, i) =>
+        i === proposalIndex
+          ? {
+              ...prop,
+              approved: true,
+              approved_at: prop.approved_at ?? new Date().toISOString(),
+              executed: true,
+              executed_at: new Date().toISOString(),
+              result_expense_id: expenseId,
+            }
+          : prop
+      )
+    );
+    setExpenseTarget(null);
   }
 
   if (!open) return null;
@@ -471,6 +526,49 @@ export function TalkToSageDrawer({
               initialValues={calendarTarget.initialValues}
               hideHeader
               onSuccess={(eventId) => void handleCalendarCreated(eventId)}
+            />
+          </div>
+        </div>
+      )}
+
+      {expenseTarget && caseId && (
+        <div
+          className="fixed inset-0 z-[60] flex items-start justify-center overflow-y-auto bg-black/40 px-3 py-6"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="talk-sage-add-expense-title"
+          onClick={() => setExpenseTarget(null)}
+        >
+          <div
+            className="relative my-4 w-full max-w-md rounded-2xl border border-[#E8E4DC] bg-[#FDFBF7] p-4 shadow-card"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <h2
+                id="talk-sage-add-expense-title"
+                className="font-heading text-base font-semibold text-[#3D3D3D]"
+              >
+                Add expense
+              </h2>
+              <button
+                type="button"
+                className="rounded-md p-1.5 text-[#8A8A8A] hover:bg-[#E8E4DC] hover:text-[#3D3D3D]"
+                aria-label="Close"
+                onClick={() => setExpenseTarget(null)}
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <p className="mb-3 text-[11px] text-[#8A8A8A]">
+              Review the expense details, then click Submit expense to add it to
+              your ledger.
+            </p>
+            <ExpenseForm
+              caseId={caseId}
+              children={childrenList}
+              initialValues={expenseTarget.initialValues}
+              hideHeader
+              onSuccess={(expenseId) => void handleExpenseCreated(expenseId)}
             />
           </div>
         </div>

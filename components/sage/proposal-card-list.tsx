@@ -183,7 +183,11 @@ export function ProposalCardList({
                   </span>
                   {executed ? (
                     <span className="text-[10px] font-medium text-[#5B7A52]">
-                      ✓ done · added to calendar
+                      {p.type === "log_expense"
+                        ? "✓ done"
+                        : p.type === "calendar_update"
+                          ? "✓ done · added to calendar"
+                          : "✓ done"}
                     </span>
                   ) : approved ? (
                     <span className="text-[10px] font-medium text-[#5B7A52]">

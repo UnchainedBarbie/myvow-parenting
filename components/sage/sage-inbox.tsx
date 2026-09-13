@@ -18,6 +18,7 @@ import { ProposalCardList } from "@/components/sage/proposal-card-list";
 import { TalkToSageDrawer } from "@/components/sage/talk-to-sage-drawer";
 import {
   buildCalendarInitialValues,
+  buildExpenseInitialValues,
   childNamesFromItem,
   dateKey,
   isActionable,
@@ -28,6 +29,10 @@ import {
   AddEventForm,
   type AddEventFormInitialValues,
 } from "@/components/calendar/add-event-form";
+import {
+  ExpenseForm,
+  type ExpenseFormInitialValues,
+} from "@/components/expenses/expense-form";
 
 function formatRelativeTime(iso: string): string {
   if (!iso) return "";
@@ -103,6 +108,13 @@ type CalendarAgreeTarget = {
   queue: number[];
 };
 
+type ExpenseAgreeTarget = {
+  item: SageItem;
+  proposalIndex: number;
+  initialValues: ExpenseFormInitialValues;
+  queue: number[];
+};
+
 export function SageInbox({
   caseId,
   children: childrenList,
@@ -126,6 +138,9 @@ export function SageInbox({
   const [dates, setDates] = useState<Record<string, string>>({});
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [calendarAgree, setCalendarAgree] = useState<CalendarAgreeTarget | null>(
+    null
+  );
+  const [expenseAgree, setExpenseAgree] = useState<ExpenseAgreeTarget | null>(
     null
   );
   const [reviseTarget, setReviseTarget] = useState<{
@@ -328,6 +343,7 @@ export function SageInbox({
       (dates[dateKey(item.id, proposalIndex)] ?? "").trim() ||
       p.chosen_date ||
       "";
+    setExpenseAgree(null);
     setCalendarAgree({
       item,
       proposalIndex,
@@ -336,7 +352,41 @@ export function SageInbox({
     });
   }
 
-  /** Agree: calendar_update opens AddEventForm; other types record approval only. */
+  function openExpenseAgree(
+    item: SageItem,
+    proposalIndex: number,
+    queue: number[] = []
+  ) {
+    const proposals = item.plan?.proposals ?? [];
+    const p = proposals[proposalIndex];
+    if (!p || p.type !== "log_expense") return;
+    const chosen =
+      (dates[dateKey(item.id, proposalIndex)] ?? "").trim() ||
+      p.chosen_date ||
+      "";
+    setCalendarAgree(null);
+    setExpenseAgree({
+      item,
+      proposalIndex,
+      initialValues: buildExpenseInitialValues(item, p, chosen || undefined),
+      queue,
+    });
+  }
+
+  function openFormAgree(
+    item: SageItem,
+    proposalIndex: number,
+    queue: number[] = []
+  ) {
+    const p = item.plan?.proposals?.[proposalIndex];
+    if (p?.type === "calendar_update") {
+      openCalendarAgree(item, proposalIndex, queue);
+    } else if (p?.type === "log_expense") {
+      openExpenseAgree(item, proposalIndex, queue);
+    }
+  }
+
+  /** Agree: calendar_update / log_expense open forms; other types record approval only. */
   async function handleAgree(
     item: SageItem,
     proposal_indexes: number[],
@@ -346,12 +396,14 @@ export function SageInbox({
     if (missingRequiredDates(item, proposal_indexes)) return;
 
     const proposals = item.plan?.proposals ?? [];
-    const calendarIdxs = proposal_indexes.filter(
-      (i) => proposals[i]?.type === "calendar_update"
-    );
-    const otherIdxs = proposal_indexes.filter(
-      (i) => proposals[i]?.type !== "calendar_update"
-    );
+    const formIdxs = proposal_indexes.filter((i) => {
+      const t = proposals[i]?.type;
+      return t === "calendar_update" || t === "log_expense";
+    });
+    const otherIdxs = proposal_indexes.filter((i) => {
+      const t = proposals[i]?.type;
+      return t !== "calendar_update" && t !== "log_expense";
+    });
 
     if (otherIdxs.length > 0) {
       await postProposalAction(item, "agree", otherIdxs, busyId);
@@ -363,9 +415,9 @@ export function SageInbox({
       });
     }
 
-    if (calendarIdxs.length > 0) {
-      const [first, ...rest] = calendarIdxs;
-      openCalendarAgree(item, first, rest);
+    if (formIdxs.length > 0) {
+      const [first, ...rest] = formIdxs;
+      openFormAgree(item, first, rest);
     }
   }
 
@@ -386,12 +438,38 @@ export function SageInbox({
 
     if (queue.length > 0) {
       const [nextIdx, ...rest] = queue;
-      openCalendarAgree(item, nextIdx, rest);
+      openFormAgree(item, nextIdx, rest);
       void fetchInbox();
       return;
     }
 
     setCalendarAgree(null);
+    await fetchInbox();
+  }
+
+  async function handleExpenseCreated(expenseId: string) {
+    if (!expenseAgree) return;
+    const { item, proposalIndex, queue } = expenseAgree;
+    const res = await fetch("/api/sage-inbox", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: item.id,
+        action: "execute",
+        proposal_index: proposalIndex,
+        expense_id: expenseId,
+      }),
+    });
+    if (!res.ok) return;
+
+    if (queue.length > 0) {
+      const [nextIdx, ...rest] = queue;
+      openFormAgree(item, nextIdx, rest);
+      void fetchInbox();
+      return;
+    }
+
+    setExpenseAgree(null);
     await fetchInbox();
   }
 
@@ -764,6 +842,49 @@ export function SageInbox({
               initialValues={calendarAgree.initialValues}
               hideHeader
               onSuccess={(eventId) => void handleCalendarEventCreated(eventId)}
+            />
+          </div>
+        </div>
+      )}
+
+      {expenseAgree && caseId && (
+        <div
+          className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 px-3 py-6"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="sage-add-expense-title"
+          onClick={() => setExpenseAgree(null)}
+        >
+          <div
+            className="relative my-4 w-full max-w-md rounded-2xl border border-[#E8E4DC] bg-[#FDFBF7] p-4 shadow-card"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <h2
+                id="sage-add-expense-title"
+                className="font-heading text-base font-semibold text-[#3D3D3D]"
+              >
+                Add expense
+              </h2>
+              <button
+                type="button"
+                className="rounded-md p-1.5 text-[#8A8A8A] hover:bg-[#E8E4DC] hover:text-[#3D3D3D]"
+                aria-label="Close"
+                onClick={() => setExpenseAgree(null)}
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <p className="mb-3 text-[11px] text-[#8A8A8A]">
+              Review the expense details, then click Submit expense to add it to
+              your ledger.
+            </p>
+            <ExpenseForm
+              caseId={caseId}
+              children={childrenList}
+              initialValues={expenseAgree.initialValues}
+              hideHeader
+              onSuccess={(expenseId) => void handleExpenseCreated(expenseId)}
             />
           </div>
         </div>

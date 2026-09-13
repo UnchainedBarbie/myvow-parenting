@@ -5,6 +5,7 @@
  */
 
 import { isUserCommand } from "@/lib/sage/observation-builder";
+import { coparentShareInvolves } from "@/lib/expenses-share";
 
 const SAGE_MODEL = "claude-sonnet-4-6";
 
@@ -19,6 +20,12 @@ export type PlanContext = {
   sender: string;
   /** Adapter source ("chat" | "email"). Chat = user command on own records. */
   source_type?: string;
+  /** Plan-driven co-parent share for expense items, if computed. */
+  expense_allocation?: {
+    other_parent_share: number | null;
+    allocation_status?: string;
+    notify_coparent?: boolean;
+  };
 };
 
 export type Proposal = {
@@ -102,10 +109,28 @@ function templateCalendar(ctx: PlanContext): string {
 
 function templateExpense(ctx: PlanContext): string {
   const summary = ctx.summary.trim().replace(/\.$/, "");
+  const share = ctx.expense_allocation?.other_parent_share;
+  const involved = coparentShareInvolves(share);
+  const notify = ctx.expense_allocation?.notify_coparent === true;
+  const shareLabel =
+    involved && share != null
+      ? `$${share.toFixed(2)} will be Co-Parent's share per your plan`
+      : null;
+
   if (userCommand(ctx)) {
-    if (!summary) return "You'd like to log this expense.";
-    if (/^you'd like to/i.test(summary)) return `${summary}.`;
-    return `You'd like to log ${summary}.`;
+    let base = "You'd like to log this expense";
+    if (summary) {
+      base = /^you'd like to/i.test(summary)
+        ? summary
+        : `You'd like to log ${summary}`;
+    }
+    if (shareLabel) {
+      return `${base}. ${shareLabel}.`;
+    }
+    if (notify) {
+      return `${base} for your records. You'll notify Co-Parent even though their share is $0.`;
+    }
+    return `${base} for your records.`;
   }
   return `Propose logging expense from Co-Parent: ${summary || "expense shared by Co-Parent"}.`;
 }
@@ -329,11 +354,18 @@ export async function plan(ctx: PlanContext): Promise<Plan> {
   // 6. Expense → ready
   if (ctx.item_type === "expense") {
     if (userCommand(ctx)) {
+      const share = ctx.expense_allocation?.other_parent_share;
+      const involved = coparentShareInvolves(share);
+      const notify = ctx.expense_allocation?.notify_coparent === true;
       return {
         status: "ready",
         proposals: [proposal("log_expense", templateExpense(ctx), null)],
         reasoning:
-          "User command — log expense on the user's own records; no co-parent reply.",
+          involved
+            ? "User command — log expense; co-parent has a plan share so they will be asked to respond."
+            : notify
+              ? "User command — log expense for records and notify Co-Parent at the user's request (share is $0)."
+              : "User command — log expense for the user's records; co-parent share is $0 so no notification.",
       };
     }
     const proposals: Proposal[] = [

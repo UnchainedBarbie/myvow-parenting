@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
 import { computeAllocationFromParentingPlan } from "@/lib/expenses-allocation";
+import { expenseWorkflowStatus } from "@/lib/expenses-share";
 
 /**
  * PATCH /api/expenses/[id] — update expense. Role-based: owner can edit all fields; co-parent can edit status, dispute_reason, and payment fields only.
@@ -28,7 +29,7 @@ export async function PATCH(
     const { data: expense, error: fetchError } = await admin
       .from("expenses")
       .select(
-        "id, case_id, submitted_by, amount, amount_owed, split_percent, allocation_status, deleted_at"
+        "id, case_id, submitted_by, amount, amount_owed, split_percent, allocation_status, status, category, child_id, deleted_at"
       )
       .eq("id", expenseId)
       .maybeSingle();
@@ -104,6 +105,20 @@ export async function PATCH(
       updates.other_parent_percent = allocation.other_parent_percent;
       updates.other_parent_share = allocation.other_parent_share;
       updates.split_label = allocation.split_label;
+      updates.allocation_status =
+        allocation.allocation_status === "NONE"
+          ? "pending"
+          : allocation.allocation_status;
+      const currentStatus = String(
+        (updates.status as string | undefined) ??
+          (expense as { status?: string }).status ??
+          ""
+      );
+      if (currentStatus === "submitted" || currentStatus === "resolved") {
+        updates.status = expenseWorkflowStatus({
+          otherParentShare: allocation.other_parent_share,
+        });
+      }
     }
 
     const { error: updateError } = await admin

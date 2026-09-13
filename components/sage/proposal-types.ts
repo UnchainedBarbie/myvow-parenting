@@ -13,6 +13,7 @@ export type SageProposal = {
   executed?: boolean;
   executed_at?: string;
   result_event_id?: string;
+  result_expense_id?: string;
 };
 
 export type SagePlan = {

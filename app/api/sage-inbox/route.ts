@@ -18,6 +18,7 @@ type PlanProposal = {
   executed?: boolean;
   executed_at?: string;
   result_event_id?: string;
+  result_expense_id?: string;
 };
 
 type SagePlan = {
@@ -110,9 +111,10 @@ export async function GET(req: NextRequest) {
  * Body variants:
  *  - { id, action: "agree"|"dismiss"|"undo", proposal_indexes, dates? }
  *  - { id, action: "revise", proposal_index, revised_text }
- *  - { id, action: "execute", proposal_index, event_id }
- * Records approval/waiver/undo/revise/execute on plan.proposals — does NOT execute calendar/email itself
- * (calendar create happens client-side via AddEventForm; execute only marks the proposal done).
+ *  - { id, action: "execute", proposal_index, event_id? | expense_id? }
+ * Records approval/waiver/undo/revise/execute on plan.proposals — does NOT execute calendar/email/expense itself
+ * (calendar create happens client-side via AddEventForm; expense create via ExpenseForm;
+ *  execute only marks the proposal done).
  */
 export async function POST(req: NextRequest) {
   try {
@@ -123,6 +125,7 @@ export async function POST(req: NextRequest) {
       proposal_index?: unknown;
       revised_text?: unknown;
       event_id?: unknown;
+      expense_id?: unknown;
       dates?: Record<string, string> | null;
     } | null;
 
@@ -229,16 +232,32 @@ export async function POST(req: NextRequest) {
         typeof body?.event_id === "string" && body.event_id.trim()
           ? body.event_id.trim()
           : "";
-      if (idx < 0 || idx >= proposals.length || !eventId) {
+      const expenseId =
+        typeof body?.expense_id === "string" && body.expense_id.trim()
+          ? body.expense_id.trim()
+          : "";
+      if (idx < 0 || idx >= proposals.length) {
         return NextResponse.json(
-          { success: false, error: "Invalid proposal_index or event_id" },
+          { success: false, error: "Invalid proposal_index" },
           { status: 400 }
         );
       }
       const p = proposals[idx];
-      if (!p || p.type !== "calendar_update") {
+      if (!p || (p.type !== "calendar_update" && p.type !== "log_expense")) {
         return NextResponse.json(
-          { success: false, error: "Proposal is not a calendar_update" },
+          { success: false, error: "Proposal is not executable" },
+          { status: 400 }
+        );
+      }
+      if (p.type === "calendar_update" && !eventId) {
+        return NextResponse.json(
+          { success: false, error: "Invalid event_id" },
+          { status: 400 }
+        );
+      }
+      if (p.type === "log_expense" && !expenseId) {
+        return NextResponse.json(
+          { success: false, error: "Invalid expense_id" },
           { status: 400 }
         );
       }
@@ -255,7 +274,8 @@ export async function POST(req: NextRequest) {
         approved_at: p.approved_at ?? nowIso,
         executed: true,
         executed_at: nowIso,
-        result_event_id: eventId,
+        ...(p.type === "calendar_update" ? { result_event_id: eventId } : {}),
+        ...(p.type === "log_expense" ? { result_expense_id: expenseId } : {}),
       };
       const updatedPlan: SagePlan = { ...plan, proposals };
       const { error: updateError } = await admin

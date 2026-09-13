@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
 import { computeAllocationFromParentingPlan } from "@/lib/expenses-allocation";
+import { expenseWorkflowStatus } from "@/lib/expenses-share";
 
 /**
  * Submit expense with optional receipt. Service role for writes.
@@ -21,16 +22,16 @@ export async function POST(request: NextRequest) {
       amount,
       category,
       child_id,
-      split_percent,
       receipt_file_id,
+      notify_coparent,
     } = body as {
       case_id?: string;
       description?: string;
       amount?: number;
       category?: string;
       child_id?: string;
-      split_percent?: number;
       receipt_file_id?: string;
+      notify_coparent?: boolean;
     };
     const descTrimmed = (description ?? "").trim();
     if (!case_id || !descTrimmed || amount == null) {
@@ -54,6 +55,11 @@ export async function POST(request: NextRequest) {
       category: category ?? "other",
       childId: child_id ?? null,
     });
+    const notifyCoparent = notify_coparent === true;
+    const status = expenseWorkflowStatus({
+      otherParentShare: allocation.other_parent_share,
+      notifyCoparent,
+    });
     const { data: expense, error } = await admin
       .from("expenses")
       .insert({
@@ -65,12 +71,15 @@ export async function POST(request: NextRequest) {
         child_id: child_id ?? null,
         split_percent: allocation.other_parent_percent,
         amount_owed: allocation.other_parent_share,
-        allocation_status: "pending",
+        allocation_status:
+          allocation.allocation_status === "NONE"
+            ? "pending"
+            : allocation.allocation_status,
         other_parent_percent: allocation.other_parent_percent,
         other_parent_share: allocation.other_parent_share,
         split_label: allocation.split_label,
         receipt_file_id: receipt_file_id ?? null,
-        status: "submitted",
+        status,
       })
       .select("id")
       .single();

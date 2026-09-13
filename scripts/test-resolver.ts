@@ -8,6 +8,7 @@ import { config } from "dotenv";
 import { resolve } from "path";
 import {
   buildCalendarTitle,
+  buildExpenseInitialValues,
   inferCalendarEventType,
 } from "../components/sage/proposal-helpers";
 import type { SageItem } from "../components/sage/proposal-types";
@@ -95,6 +96,35 @@ async function main() {
   };
   console.log("title (raw ask):", buildCalendarTitle(rawAsk));
   console.log("category (raw ask):", inferCalendarEventType(rawAsk));
+
+  const expenseItem: SageItem = {
+    ...choirItem,
+    item_type: "expense",
+    domain: "expense",
+    summary:
+      "You'd like to log a $20 expense for Ashley's dentist visit on Sept 10.",
+    child_ids: ["367d8922-aad5-4655-b592-75b006240b8b"],
+    tool_input: {
+      children: [{ name: "Ashley", confidence: 1 }],
+      amounts: [{ value: 20, currency: "USD" }],
+      dates: [{ raw: "9/10", value: "" }],
+      resolved_dates: [
+        { raw: "9/10", status: "resolved", iso: "2026-09-10" },
+      ],
+    },
+  };
+  console.log("\n========== Expense pre-fill ==========");
+  console.log(
+    JSON.stringify(
+      buildExpenseInitialValues(expenseItem, {
+        type: "log_expense",
+        draft: expenseItem.summary ?? "",
+        depends_on: null,
+      }),
+      null,
+      2
+    )
+  );
 }
 
 main().catch((e) => {

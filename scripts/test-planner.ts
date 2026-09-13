@@ -103,6 +103,47 @@ const CASES: { label: string; ctx: PlanContext }[] = [
       source_type: "chat",
     },
   },
+  {
+    label: "G. user-command expense $0 share — records only",
+    ctx: {
+      item_type: "expense",
+      domain: "expense",
+      action_required: true,
+      summary: "You'd like to log a $20 DMV fee for Ashley.",
+      child_ids: ["367d8922-aad5-4655-b592-75b006240b8b"],
+      unresolved_children: [],
+      resolved_dates: [],
+      sender: "You",
+      source_type: "chat",
+      expense_allocation: {
+        other_parent_share: 0,
+        allocation_status: "NONE",
+        notify_coparent: false,
+      },
+    },
+  },
+  {
+    label: "H. user-command expense with plan share",
+    ctx: {
+      item_type: "expense",
+      domain: "expense",
+      action_required: true,
+      summary:
+        "You'd like to log a $20 expense for Ashley's dentist visit on Sept 10.",
+      child_ids: ["367d8922-aad5-4655-b592-75b006240b8b"],
+      unresolved_children: [],
+      resolved_dates: [
+        { raw: "9/10", status: "resolved", iso: "2026-09-10" },
+      ],
+      sender: "You",
+      source_type: "chat",
+      expense_allocation: {
+        other_parent_share: 10,
+        allocation_status: "ALLOCATED",
+        notify_coparent: false,
+      },
+    },
+  },
 ];
 
 async function main() {

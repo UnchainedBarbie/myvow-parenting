@@ -1,4 +1,5 @@
 import type { AddEventFormInitialValues } from "@/components/calendar/add-event-form";
+import type { ExpenseFormInitialValues } from "@/components/expenses/expense-form";
 import type { SageItem, SageProposal } from "./proposal-types";
 
 export function proposalTypeLabel(type: string): string {
@@ -434,5 +435,112 @@ export function buildCalendarInitialValues(
     title: buildCalendarTitle(item, proposal),
     eventType,
     description: summary || undefined,
+  };
+}
+
+function amountFromToolInput(item: SageItem): number | undefined {
+  const amounts = toolInputRecord(item)?.amounts;
+  if (!Array.isArray(amounts)) return undefined;
+  for (const entry of amounts) {
+    if (!entry || typeof entry !== "object") continue;
+    const value = (entry as { value?: unknown }).value;
+    const n = typeof value === "number" ? value : Number(value);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return undefined;
+}
+
+function amountFromText(text: string): number | undefined {
+  const match = text.match(
+    /\$\s*(\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?)/
+  );
+  if (!match) return undefined;
+  const n = parseFloat(match[1].replace(/,/g, ""));
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
+/** Expense incurred dates may already have passed this year — do not roll to next year. */
+function incurredIso(iso: string): string {
+  const m = iso.trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return iso.trim();
+  const y = Number(m[1]);
+  const cy = new Date().getFullYear();
+  if (y >= cy) return iso.trim();
+  return `${cy}-${m[2]}-${m[3]}`;
+}
+
+function resolvedExpenseIso(item: SageItem | null | undefined): string | undefined {
+  const iso = resolvedCalendarIso(item);
+  return iso ? incurredIso(iso) : undefined;
+}
+
+function inferExpenseCategory(item: SageItem, proposal?: SageProposal): string {
+  const blob = eventCorpus(item, proposal);
+  if (
+    /dentist|dental|orthodont|doctor|pediatric|physician|clinic|hospital|checkup|vaccine|medical|optometr|ophthalm/.test(
+      blob
+    )
+  ) {
+    return "medical";
+  }
+  return "other";
+}
+
+function expenseDescriptionFromText(text: string): string | null {
+  let s = text.trim();
+  if (!s) return null;
+  s = s.replace(/\$\s*\d[\d,]*(?:\.\d{1,2})?/g, " ");
+  s = s.replace(/\b\d+(?:\.\d{1,2})?\s*(?:dollars?|usd)\b/gi, " ");
+  s = s.replace(/\b(at|@)\s+\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?)?/gi, " ");
+  s = s.replace(/\bon\s+\d{4}-\d{2}-\d{2}\b/gi, " ");
+  s = s.replace(/\bon\s+\d{1,2}[\/\-]\d{1,2}(?:[\/\-]\d{2,4})?\b/gi, " ");
+  s = s.replace(
+    /\bon\s+(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+\d{1,2}(?:st|nd|rd|th)?(?:,?\s+\d{4})?/gi,
+    " "
+  );
+  s = s.replace(
+    /\b(you['’]d like to|you would like to|please|create|add|log|record|submit|propose logging expense from co-parent)\b/gi,
+    " "
+  );
+  s = s.replace(/\b(a|an|the|this|that)\s+(expense|receipt)\b/gi, " ");
+  s = s.replace(/\b(expense|receipt)\b/gi, " ");
+  s = s.replace(/[.,;:!?]+/g, " ");
+  s = s.replace(/\s+/g, " ").trim();
+  s = s.replace(/^(for|from|to)\s+/i, "").trim();
+  if (s.length < 3) return null;
+  return toTitleCase(s).slice(0, 80);
+}
+
+export function buildExpenseInitialValues(
+  item: SageItem,
+  proposal: SageProposal,
+  chosenDate?: string
+): ExpenseFormInitialValues {
+  const childId =
+    Array.isArray(item.child_ids) && item.child_ids[0]
+      ? item.child_ids[0]
+      : undefined;
+  const draftSource =
+    (typeof proposal.revised_text === "string" && proposal.revised_text.trim()
+      ? proposal.revised_text
+      : proposal.draft) ?? "";
+  const summary = (item.summary ?? "").trim();
+  const blob = [summary, draftSource].filter(Boolean).join(" ");
+  const amount = amountFromToolInput(item) ?? amountFromText(blob);
+  const description =
+    expenseDescriptionFromText(summary) ??
+    expenseDescriptionFromText(draftSource) ??
+    namedValues(toolInputRecord(item), "providers")[0] ??
+    namedValues(toolInputRecord(item), "merchants")[0] ??
+    "Expense";
+  const date =
+    (chosenDate ?? proposal.chosen_date ?? resolvedExpenseIso(item) ?? "").trim() ||
+    undefined;
+  return {
+    description: toTitleCase(description).slice(0, 80),
+    ...(amount != null ? { amount } : {}),
+    incurredDate: date,
+    category: inferExpenseCategory(item, proposal),
+    childId,
   };
 }

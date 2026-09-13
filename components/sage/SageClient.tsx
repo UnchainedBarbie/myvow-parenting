@@ -530,11 +530,11 @@ export function SageClient({
     <div className="rounded-2xl border border-border bg-background-secondary/40 p-3 md:p-4 flex flex-col gap-3 w-full h-full min-h-[60vh]">
       <div className="rounded-card border border-border bg-background shadow-card flex-1 min-h-[220px] overflow-hidden">
         <ScrollArea className="h-full px-3 py-3">
-          <div className="space-y-3 text-sm">
+          <div className="space-y-3 text-base">
             {loading ? (
-              <p className="text-foreground-secondary text-xs">Loading your reflections…</p>
+              <p className="text-foreground-secondary text-sm">Loading your reflections…</p>
             ) : messages.length === 0 ? (
-              <p className="text-foreground-secondary text-xs">
+              <p className="text-foreground-secondary text-sm">
                 Start typing below. This is your private space with Sage.
               </p>
             ) : (
@@ -557,7 +557,7 @@ export function SageClient({
                       >
                         <div
                           className={cn(
-                            "max-w-[75%] rounded-2xl px-3 py-2 text-[13px] leading-snug",
+                            "max-w-[75%] rounded-2xl px-3.5 py-2.5 text-base leading-relaxed",
                             isUser
                               ? "bg-[#5B7A52] text-white rounded-br-sm"
                               : "bg-[#FDFBF7] text-foreground rounded-bl-sm border border-[#E8E4DC]"
@@ -659,7 +659,7 @@ export function SageClient({
               ? "Write what's on your mind. This stays here."
               : "Start typing…"
           }
-          className="min-h-[72px] max-h-[140px] resize-y rounded-card border-border bg-background text-sm"
+          className="min-h-[72px] max-h-[140px] resize-y rounded-card border-border bg-background text-base"
         />
         <div className="flex items-center justify-end">
           <Button

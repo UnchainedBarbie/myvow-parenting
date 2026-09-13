@@ -10,6 +10,7 @@ import {
   Trash2,
   Flag,
   Archive,
+  ArchiveRestore,
   Search,
   FileText,
   MoreVertical,
@@ -293,7 +294,7 @@ export function SageSplitView() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         showErrorToast(
-          (data as { message?: string }).message ?? "Could not delete session."
+          (data as { message?: string }).message ?? "Could not delete conversation."
         );
         return;
       }
@@ -375,6 +376,36 @@ export function SageSplitView() {
     setDraftAssistantInput("");
   }
 
+  function renderArchiveButton(
+    s: SageSessionRow,
+    opts?: { alwaysVisible?: boolean }
+  ) {
+    const archived = !!s.archived;
+    return (
+      <button
+        type="button"
+        title={archived ? "Unarchive" : "Archive"}
+        aria-label={archived ? "Unarchive chat" : "Archive chat"}
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          void handleArchive(s.id, !archived);
+          setMenuOpenId(null);
+        }}
+        className={cn(
+          "inline-flex h-7 w-7 items-center justify-center rounded-md text-[#B0A899] transition-colors hover:bg-[#E8E4DC] hover:text-[#6A7A6E]",
+          !opts?.alwaysVisible && "opacity-0 group-hover:opacity-100"
+        )}
+      >
+        {archived ? (
+          <ArchiveRestore className="h-3.5 w-3.5" />
+        ) : (
+          <Archive className="h-3.5 w-3.5" />
+        )}
+      </button>
+    );
+  }
+
   function renderSessionMenu(s: SageSessionRow) {
     return (
       <>
@@ -400,7 +431,27 @@ export function SageSplitView() {
           >
             <button
               type="button"
-              className="flex w-full items-center gap-2 px-3 py-2 text-[13px] text-[#3D3D3D] hover:bg-[#F2F5EF] text-left"
+              className="flex w-full items-center gap-2 px-3 py-2 text-sm font-medium text-[#5B7A52] hover:bg-[#F2F5EF] text-left"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                void handleArchive(s.id, !s.archived);
+                setMenuOpenId(null);
+              }}
+            >
+              {s.archived ? (
+                <>
+                  <ArchiveRestore className="h-4 w-4" /> Unarchive
+                </>
+              ) : (
+                <>
+                  <Archive className="h-4 w-4" /> Archive
+                </>
+              )}
+            </button>
+            <button
+              type="button"
+              className="flex w-full items-center gap-2 px-3 py-2 text-sm text-[#3D3D3D] hover:bg-[#F2F5EF] text-left"
               onClick={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
@@ -412,7 +463,7 @@ export function SageSplitView() {
             </button>
             <button
               type="button"
-              className="flex w-full items-center gap-2 px-3 py-2 text-[13px] text-[#3D3D3D] hover:bg-[#F2F5EF] text-left"
+              className="flex w-full items-center gap-2 px-3 py-2 text-sm text-[#3D3D3D] hover:bg-[#F2F5EF] text-left"
               onClick={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
@@ -421,32 +472,12 @@ export function SageSplitView() {
               }}
             >
               <Flag className="h-3.5 w-3.5" />{" "}
-              {s.flagged ? "Unflag session" : "Flag session"}
-            </button>
-            <button
-              type="button"
-              className="flex w-full items-center gap-2 px-3 py-2 text-[13px] text-[#3D3D3D] hover:bg-[#F2F5EF] text-left"
-              onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                void handleArchive(s.id, !s.archived);
-                setMenuOpenId(null);
-              }}
-            >
-              {s.archived ? (
-                <>
-                  <Archive className="h-3.5 w-3.5" /> Unarchive session
-                </>
-              ) : (
-                <>
-                  <Archive className="h-3.5 w-3.5" /> Archive session
-                </>
-              )}
+              {s.flagged ? "Unflag" : "Flag"}
             </button>
             <div className="border-t border-[#F2F5EF] mt-1 pt-1">
               {deleteConfirmId === s.id ? (
                 <div className="px-3 py-2 text-[12px] text-[#6B6B6B] space-y-1">
-                  <p>Delete this session?</p>
+                  <p>Delete this conversation?</p>
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
@@ -475,14 +506,14 @@ export function SageSplitView() {
               ) : (
                 <button
                   type="button"
-                  className="flex w-full items-center gap-2 px-3 py-2 text-[13px] text-[#C3442D] hover:bg-[#FDF2F0] text-left"
+                  className="flex w-full items-center gap-2 px-3 py-2 text-sm text-[#C3442D] hover:bg-[#FDF2F0] text-left"
                   onClick={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
                     setDeleteConfirmId(s.id);
                   }}
                 >
-                  <Trash2 className="h-3.5 w-3.5" /> Delete session
+                  <Trash2 className="h-3.5 w-3.5" /> Delete conversation
                 </button>
               )}
             </div>
@@ -592,7 +623,7 @@ export function SageSplitView() {
                           onClick={() => router.push(sageChatHref(s.id))}
                           className="min-w-0 flex-1 rounded-lg text-left"
                         >
-                          <p className="text-xs font-medium text-[#3D3D3D] truncate flex items-center gap-1.5">
+                          <p className="text-sm font-medium text-[#3D3D3D] truncate flex items-center gap-1.5">
                             {s.flagged && (
                               <span
                                 className="shrink-0 text-[#5B7A52]"
@@ -629,7 +660,7 @@ export function SageSplitView() {
                                   setRenamingId(null);
                                   setRenameValue("");
                                 }}
-                                className="w-full rounded border border-[#E8E4DC] bg-[#FDFBF7] px-2 py-1 text-[11px] text-[#3D3D3D] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E]"
+                                className="w-full rounded border border-[#E8E4DC] bg-[#FDFBF7] px-2 py-1 text-sm text-[#3D3D3D] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E]"
                               />
                             ) : (
                               <span className="min-w-0 truncate">
@@ -653,8 +684,11 @@ export function SageSplitView() {
                             ) : null}
                           </div>
                         </button>
-                        <div className="relative shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-                          {renderSessionMenu(s)}
+                        <div className="relative shrink-0 flex items-center">
+                          {renderArchiveButton(s)}
+                          <span className="opacity-0 group-hover:opacity-100 transition-opacity">
+                            {renderSessionMenu(s)}
+                          </span>
                         </div>
                       </div>
                     </div>
@@ -754,7 +788,7 @@ export function SageSplitView() {
                   className="min-w-0 flex-1 rounded border border-[#E8E4DC] bg-[#FDFBF7] px-2 py-1 text-sm text-[#3D3D3D] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E]"
                 />
               ) : (
-                <h2 className="font-heading text-sm md:text-base font-semibold text-foreground truncate">
+                <h2 className="font-heading text-base font-semibold text-foreground truncate">
                   {truncateSageSessionTitle(selectedSession.title)}
                 </h2>
               )}
@@ -763,7 +797,8 @@ export function SageSplitView() {
                   ? "Incident"
                   : "Private"}
               </span>
-              <div className="relative ml-auto">
+              <div className="relative ml-auto flex items-center gap-0.5">
+                {renderArchiveButton(selectedSession, { alwaysVisible: true })}
                 {renderSessionMenu(selectedSession)}
               </div>
             </div>

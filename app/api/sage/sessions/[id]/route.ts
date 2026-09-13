@@ -152,6 +152,10 @@ export async function PATCH(
   }
 }
 
+// Deletes the working conversation only: the sage_sessions row and, via
+// FK ON DELETE CASCADE, its sage_journal_messages. Does not touch expenses,
+// calendar_events, documents, sage_items, or other ledger tables (none of
+// those reference sage_sessions).
 export async function DELETE(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }

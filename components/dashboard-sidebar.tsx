@@ -203,7 +203,7 @@ export function DashboardSidebar({
                   href={href}
                   title={s.title ?? "New chat"}
                   className={cn(
-                    "block rounded-lg px-3 py-1.5 text-left text-xs transition-colors",
+                    "block rounded-lg px-3 py-1.5 text-left text-sm transition-colors",
                     isActive
                       ? "bg-[#E8EDE3] text-[#3D3D3D]"
                       : "text-foreground-secondary hover:bg-muted hover:text-foreground"

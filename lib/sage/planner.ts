@@ -101,7 +101,13 @@ function templateCalendar(ctx: PlanContext): string {
 }
 
 function templateExpense(ctx: PlanContext): string {
-  return `Propose logging expense from Co-Parent: ${ctx.summary.trim() || "expense shared by Co-Parent"}.`;
+  const summary = ctx.summary.trim().replace(/\.$/, "");
+  if (userCommand(ctx)) {
+    if (!summary) return "You'd like to log this expense.";
+    if (/^you'd like to/i.test(summary)) return `${summary}.`;
+    return `You'd like to log ${summary}.`;
+  }
+  return `Propose logging expense from Co-Parent: ${summary || "expense shared by Co-Parent"}.`;
 }
 
 function fallbackAsk(ctx: PlanContext): string {
@@ -277,6 +283,8 @@ export async function plan(ctx: PlanContext): Promise<Plan> {
       proposals.push(
         proposal("calendar_update", templateCalendar(ctx), depends)
       );
+    } else if (ctx.item_type === "expense" && userCommand(ctx)) {
+      proposals.push(proposal("log_expense", templateExpense(ctx), depends));
     }
 
     return {
@@ -320,10 +328,18 @@ export async function plan(ctx: PlanContext): Promise<Plan> {
 
   // 6. Expense → ready
   if (ctx.item_type === "expense") {
+    if (userCommand(ctx)) {
+      return {
+        status: "ready",
+        proposals: [proposal("log_expense", templateExpense(ctx), null)],
+        reasoning:
+          "User command — log expense on the user's own records; no co-parent reply.",
+      };
+    }
     const proposals: Proposal[] = [
       proposal("log_expense", templateExpense(ctx), null),
     ];
-    // A brief reply is often warranted for shared expense notices
+    // Inbound receipt/notice — a brief reply is often warranted
     const replyDraft = await draftWithLlm(
       "reply_coparent",
       ctx,

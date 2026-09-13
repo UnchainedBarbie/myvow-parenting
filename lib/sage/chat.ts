@@ -37,11 +37,11 @@ function buildReply(result: ProcessObservationResult): string {
   if (plan.proposals.some((p) => p.type === "calendar_update")) {
     return "I can do that.";
   }
-  if (plan.proposals.some((p) => p.type === "reply_coparent")) {
-    return "I can draft that for Co-Parent.";
-  }
   if (plan.proposals.some((p) => p.type === "log_expense")) {
     return "I can log that.";
+  }
+  if (plan.proposals.some((p) => p.type === "reply_coparent")) {
+    return "I can draft that for Co-Parent.";
   }
   if (plan.proposals.some((p) => p.type === "note_only")) {
     return "Got it — noted.";

@@ -4,6 +4,8 @@
  * No database, tools, or side effects.
  */
 
+import { isUserCommand } from "@/lib/sage/observation-builder";
+
 const SAGE_MODEL = "claude-sonnet-4-6";
 
 export type NormalizedEvent = {
@@ -49,13 +51,20 @@ You are NOT making decisions. You are NOT changing family state. You are NOT com
 
 Summary voice (intent.summary ONLY — voice must not change item_type, domain, tool_name, or action fields):
 - Write as a warm, trusted assistant speaking directly to the parent — not a corporate document summarizer or court stenographer.
-- Prefer natural phrasing: "It looks like your co-parent is asking whether…", "Your co-parent shared that…", "It sounds like a coordination question about…"
-- Avoid stiff phrasing: "Co-Parent is noting that…", "Co-Parent has indicated…", "The sender requests…"
-- Refer to the other parent as "Co-Parent" — never use their name or email, even if provided.
 - Calm, helpful, suggestive — never shame, alarm, escalate, or use red-flag framing.
 - Be suggestive and helpful, never authoritarian or commanding.
 - Do not use words like "conflict"; prefer "communication" when relevant.
 - evidence_excerpt must be a tiny verbatim snippet from the input (10 words or fewer) that anchors your read — NOT the full message.
+
+When source_type is "chat" (the parent is speaking to Sage — a USER COMMAND):
+- Frame intent.summary as the user's own request: "You'd like to add Ashley's dentist appointment on Sept 15 at 3 PM to your calendar."
+- Do NOT treat this as an inbound Co-Parent message. Do NOT write "your co-parent is asking", "Co-Parent shared", or "Co-Parent has … in mind."
+- The user is directing Sage to act on their own records (calendar, notes). They are not relaying a co-parent request unless they explicitly say the co-parent asked.
+
+When source_type is email or any inbound co-parent source:
+- Prefer natural phrasing: "It looks like your co-parent is asking whether…", "Your co-parent shared that…", "It sounds like a coordination question about…"
+- Avoid stiff phrasing: "Co-Parent is noting that…", "Co-Parent has indicated…", "The sender requests…"
+- Refer to the other parent as "Co-Parent" — never use their name or email, even if provided.
 
 Classification:
 - item_type: one of schedule_change | needs_response | information_only | calendar_update | expense | document_summary | medical_update | school_update | concern | agreement | dispute | emergency | needs_review
@@ -161,12 +170,20 @@ function buildUserPrompt(event: NormalizedEvent): string {
           .join("\n\n---\n\n")
       : "(none)";
 
-  return `Interpret this co-parenting input.
+  const command = isUserCommand({
+    sender: event.sender,
+    source_type: event.source_type,
+  });
+  const senderLine = command
+    ? `Sender identity: ${event.sender} (the parent using Sage). This is a USER COMMAND to Sage, not an inbound Co-Parent message. Frame intent.summary as the user's own request ("You'd like to…"). Do NOT write as if Co-Parent is asking or sharing.`
+    : `Sender identity (for context only — refer to them as Co-Parent in output): ${event.sender}`;
+
+  return `Interpret this ${command ? "user command to Sage" : "co-parenting input"}.
 
 Source type: ${event.source_type}
 Source id: ${event.source_id ?? "(none)"}
 Case id: ${event.case_id}
-Sender identity (for context only — refer to them as Co-Parent in output): ${event.sender}
+${senderLine}
 
 Message / body:
 ${event.text.trim() || "(empty)"}

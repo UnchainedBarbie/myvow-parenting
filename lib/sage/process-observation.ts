@@ -96,6 +96,7 @@ export async function processObservation(
       iso: d.iso,
     })),
     sender: context.plan_sender ?? context.sender,
+    source_type: context.source_type,
   });
 
   return {

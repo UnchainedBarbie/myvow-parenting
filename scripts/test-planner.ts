@@ -69,6 +69,23 @@ const CASES: { label: string; ctx: PlanContext }[] = [
       sender: "Co-Parent",
     },
   },
+  {
+    label: "E. user-command schedule_change (chat) — no co-parent gate",
+    ctx: {
+      item_type: "schedule_change",
+      domain: "calendar",
+      action_required: true,
+      summary:
+        "You'd like to add Ashley's dentist appointment on Sept 15 at 3 PM to your calendar.",
+      child_ids: ["367d8922-aad5-4655-b592-75b006240b8b"],
+      unresolved_children: [],
+      resolved_dates: [
+        { raw: "Sept 15", status: "resolved", iso: "2026-09-15" },
+      ],
+      sender: "You",
+      source_type: "chat",
+    },
+  },
 ];
 
 async function main() {

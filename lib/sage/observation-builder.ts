@@ -80,9 +80,27 @@ export function buildObservation(targetId: string, inputs: RawItem[]): Observati
   };
 }
 
-function formatSenderLabel(from: string): string {
+/** True when the speaker is the parent using Sage (not Co-Parent). */
+export function isUserSender(from: string): boolean {
   const f = from.trim().toLowerCase();
-  if (f === "you" || f === "self" || f === "parent" || f === "user") return "You";
+  return f === "you" || f === "self" || f === "parent" || f === "user";
+}
+
+/**
+ * Chat (and any "You" sender) is a user command — the parent directing Sage
+ * to act on their own records. Email / Co-Parent sender is inbound.
+ */
+export function isUserCommand(opts: {
+  sender?: string | null;
+  source_type?: string | null;
+}): boolean {
+  if ((opts.source_type ?? "").trim().toLowerCase() === "chat") return true;
+  return isUserSender(opts.sender ?? "");
+}
+
+function formatSenderLabel(from: string): string {
+  if (isUserSender(from)) return "You";
+  const f = from.trim().toLowerCase();
   if (f === "coparent" || f === "co-parent") return "Co-Parent";
   return from.trim() || "Unknown";
 }

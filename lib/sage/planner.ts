@@ -4,6 +4,8 @@
  * Sage proposes; humans approve.
  */
 
+import { isUserCommand } from "@/lib/sage/observation-builder";
+
 const SAGE_MODEL = "claude-sonnet-4-6";
 
 export type PlanContext = {
@@ -15,6 +17,8 @@ export type PlanContext = {
   unresolved_children: string[];
   resolved_dates: { raw: string; status: string; iso: string | null }[];
   sender: string;
+  /** Adapter source ("chat" | "email"). Chat = user command on own records. */
+  source_type?: string;
 };
 
 export type Proposal = {
@@ -82,9 +86,17 @@ function templateNote(ctx: PlanContext): string {
   return `Noted for awareness: ${summary}`;
 }
 
+function userCommand(ctx: PlanContext): boolean {
+  return isUserCommand({ sender: ctx.sender, source_type: ctx.source_type });
+}
+
 function templateCalendar(ctx: PlanContext): string {
   const resolved = ctx.resolved_dates.find((d) => d.status === "resolved" && d.iso);
   const when = resolved?.iso ? ` on ${resolved.iso}` : "";
+  if (userCommand(ctx)) {
+    const summary = ctx.summary.trim().replace(/\.$/, "") || "this event";
+    return `Add to your calendar${when}: ${summary}.`;
+  }
   return `Propose calendar update${when} based on: ${ctx.summary.trim() || "schedule change from Co-Parent"}.`;
 }
 
@@ -158,7 +170,16 @@ async function draftWithLlm(
   const blocker = describeBlockers(ctx);
   const userPrompt =
     kind === "ask_clarification"
-      ? `Draft ONE short calm question asking Co-Parent for clarification.
+      ? userCommand(ctx)
+        ? `Draft ONE short calm question asking the parent (who just told Sage this) for the missing detail. Address them as "you". Do not ask Co-Parent.
+Context summary: ${ctx.summary}
+What needs clarifying: ${blocker}
+Unresolved children: ${ctx.unresolved_children.join(", ") || "(none)"}
+Unclear dates: ${ctx.resolved_dates
+  .filter((d) => d.status === "needs_clarification")
+  .map((d) => d.raw)
+  .join(", ") || "(none)"}`
+        : `Draft ONE short calm question asking Co-Parent for clarification.
 Context summary: ${ctx.summary}
 What needs clarifying: ${blocker}
 Unresolved children: ${ctx.unresolved_children.join(", ") || "(none)"}
@@ -243,12 +264,14 @@ export async function plan(ctx: PlanContext): Promise<Plan> {
       proposal("ask_clarification", askDraft, null),
     ];
 
-    const replyDraft = await draftWithLlm(
-      "reply_coparent",
-      ctx,
-      fallbackReply(ctx)
-    );
-    proposals.push(proposal("reply_coparent", replyDraft, depends));
+    if (!userCommand(ctx)) {
+      const replyDraft = await draftWithLlm(
+        "reply_coparent",
+        ctx,
+        fallbackReply(ctx)
+      );
+      proposals.push(proposal("reply_coparent", replyDraft, depends));
+    }
 
     if (isScheduleType(ctx.item_type)) {
       proposals.push(
@@ -265,6 +288,16 @@ export async function plan(ctx: PlanContext): Promise<Plan> {
 
   // 5. Schedule / calendar → ready
   if (isScheduleType(ctx.item_type)) {
+    if (userCommand(ctx)) {
+      return {
+        status: "ready",
+        proposals: [
+          proposal("calendar_update", templateCalendar(ctx), null),
+        ],
+        reasoning:
+          "User command — calendar update on the user's own calendar; no co-parent agreement gate.",
+      };
+    }
     const replyDraft = await draftWithLlm(
       "reply_coparent",
       ctx,

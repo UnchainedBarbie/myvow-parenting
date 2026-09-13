@@ -38,6 +38,10 @@ export type Proposal = {
   draft: string;
   depends_on: string | null;
   requires_approval: true;
+  /** Documents-vault file stored at chat attach; form links this id. */
+  attached_document_id?: string;
+  attached_file_name?: string;
+  attached_file_url?: string;
 };
 
 export type Plan = {

@@ -540,11 +540,43 @@ export function buildExpenseInitialValues(
   const date =
     (chosenDate ?? proposal.chosen_date ?? resolvedExpenseIso(item) ?? "").trim() ||
     undefined;
+  const attachedFile = attachedFileFrom(item, proposal);
   return {
     description: toTitleCase(description).slice(0, 80),
     ...(amount != null ? { amount } : {}),
     incurredDate: date,
     category: inferExpenseCategory(item, proposal),
     childId,
+    ...(attachedFile ? { attachedFile } : {}),
   };
+}
+
+function attachedFileFrom(
+  item: SageItem,
+  proposal: SageProposal
+): ExpenseFormInitialValues["attachedFile"] {
+  const input = toolInputRecord(item);
+  const fromProposal =
+    typeof proposal.attached_document_id === "string"
+      ? proposal.attached_document_id.trim()
+      : "";
+  const fromInput =
+    typeof input?.attached_document_id === "string"
+      ? input.attached_document_id.trim()
+      : "";
+  const document_id = fromProposal || fromInput;
+  if (!document_id) return undefined;
+  const file_name =
+    (typeof proposal.attached_file_name === "string" &&
+      proposal.attached_file_name.trim()) ||
+    (typeof input?.attached_file_name === "string" &&
+      input.attached_file_name.trim()) ||
+    "Receipt";
+  const url =
+    (typeof proposal.attached_file_url === "string" &&
+      proposal.attached_file_url.trim()) ||
+    (typeof input?.attached_file_url === "string" &&
+      input.attached_file_url.trim()) ||
+    `/api/documents/${document_id}/download`;
+  return { document_id, file_name, url };
 }

@@ -46,6 +46,33 @@ export function parseExpenseAmountFromText(text: string): number | undefined {
   return undefined;
 }
 
+const EXPENSE_FORM_CATEGORIES = [
+  "other",
+  "medical",
+  "school",
+  "therapy",
+  "extracurricular",
+  "clothing",
+  "transportation",
+  "childcare",
+  "dental",
+] as const;
+
+/** Map runClassify / receipt-extract category strings onto ExpenseForm values. */
+export function mapExpenseCategoryFromClassify(
+  raw: string | null | undefined
+): string {
+  if (!raw || !raw.trim()) return "other";
+  const lower = raw.trim().toLowerCase();
+  if (lower === "education") return "school";
+  if (lower === "activities" || lower === "activity") return "extracurricular";
+  if (lower === "food" || lower === "housing") return "other";
+  if ((EXPENSE_FORM_CATEGORIES as readonly string[]).includes(lower)) {
+    return lower;
+  }
+  return "other";
+}
+
 export function inferExpenseCategoryFromText(
   text: string,
   domain?: string | null

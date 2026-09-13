@@ -14,6 +14,10 @@ export type SageProposal = {
   executed_at?: string;
   result_event_id?: string;
   result_expense_id?: string;
+  /** Documents-vault id stored at chat attach — form links this, does not re-upload. */
+  attached_document_id?: string | null;
+  attached_file_name?: string | null;
+  attached_file_url?: string | null;
 };
 
 export type SagePlan = {

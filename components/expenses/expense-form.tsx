@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { FileText, Image, Trash2, Camera, Sparkles } from "lucide-react";
 import { ChildMultiSelect } from "@/components/documents/child-multi-select";
+import { mapExpenseCategoryFromClassify } from "@/lib/expenses-share";
 
 const EXPENSE_CATEGORIES = [
   { value: "medical", label: "Medical" },
@@ -35,23 +36,13 @@ function formatSize(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-type ExpenseCategory = "other" | "medical" | "school" | "therapy" |
-  "extracurricular" | "clothing" | "transportation" | "childcare" | "dental";
-
-const VALID_CATEGORIES: ExpenseCategory[] = [
-  "other", "medical", "school", "therapy", "extracurricular",
-  "clothing", "transportation", "childcare", "dental"
-];
-
-function mapAiToCategory(aiCategory: string): ExpenseCategory {
-  const lower = aiCategory.toLowerCase();
-  if (lower === "education") return "school";
-  return (VALID_CATEGORIES.includes(lower as ExpenseCategory)
-    ? lower
-    : "other") as ExpenseCategory;
-}
-
 type Child = { id: string; first_name: string };
+
+export type ExpenseAttachedFile = {
+  document_id: string;
+  file_name: string;
+  url?: string;
+};
 
 export type ExpenseFormInitialValues = {
   description?: string;
@@ -61,6 +52,8 @@ export type ExpenseFormInitialValues = {
   categoryDescription?: string;
   childId?: string;
   visibility?: string;
+  /** Already-stored vault file — shown as attached; not re-uploaded on submit. */
+  attachedFile?: ExpenseAttachedFile | null;
 };
 
 interface ExpenseFormProps {
@@ -108,6 +101,9 @@ export function ExpenseForm({
   );
   const [notifyCoparent, setNotifyCoparent] = useState(false);
   const [receiptFile, setReceiptFile] = useState<File | null>(null);
+  const [storedReceipt, setStoredReceipt] = useState<ExpenseAttachedFile | null>(
+    () => initialValues?.attachedFile ?? null
+  );
   const [dragActive, setDragActive] = useState(false);
   const [loading, setLoading] = useState(false);
   const [classifyLoading, setClassifyLoading] = useState(false);
@@ -145,6 +141,10 @@ export function ExpenseForm({
     if (initialValues.visibility != null) {
       setVisibility(initialValues.visibility);
     }
+    if (initialValues.attachedFile?.document_id) {
+      setStoredReceipt(initialValues.attachedFile);
+      setReceiptFile(null);
+    }
   }, [initialValues]);
 
   function handleDrag(e: React.DragEvent) {
@@ -165,6 +165,7 @@ export function ExpenseForm({
     setFileError(null);
     if (!file) {
       setReceiptFile(null);
+      setStoredReceipt(null);
       setDescriptionSuggested(false);
       setAmountSuggested(false);
       setCategorySuggested(false);
@@ -177,6 +178,7 @@ export function ExpenseForm({
       return;
     }
     setReceiptFile(file);
+    setStoredReceipt(null);
     setClassifyLoading(true);
     setError(null);
     try {
@@ -214,7 +216,7 @@ export function ExpenseForm({
         setAmountSuggested(true);
       }
       if (!categoryTouched && payload.category) {
-        setCategory(mapAiToCategory(payload.category ?? ""));
+        setCategory(mapExpenseCategoryFromClassify(payload.category ?? ""));
         setCategorySuggested(true);
       }
       if (!incurredDate && payload.date) {
@@ -261,6 +263,9 @@ export function ExpenseForm({
         const uploadData = await uploadRes.json();
         if (!uploadRes.ok) throw new Error(uploadData.message || "Receipt upload failed");
         receiptFileId = uploadData.document_id;
+      } else if (storedReceipt?.document_id) {
+        // Already in the documents vault from chat attach — do not re-upload.
+        receiptFileId = storedReceipt.document_id;
       }
       const childId = selectedChildIds.length > 0 ? selectedChildIds[0] : undefined;
       const res = await fetch("/api/expenses/submit", {
@@ -294,6 +299,7 @@ export function ExpenseForm({
       setVisibility("parents_only");
       setNotifyCoparent(false);
       setReceiptFile(null);
+      setStoredReceipt(null);
       setDescriptionSuggested(false);
       setAmountSuggested(false);
       setCategorySuggested(false);
@@ -329,71 +335,28 @@ export function ExpenseForm({
             </p>
           )}
           <div className="space-y-2">
-            {!receiptFile ? (
-              <>
-                <div
-                  onDragEnter={handleDrag}
-                  onDragLeave={handleDrag}
-                  onDragOver={handleDrag}
-                  onDrop={handleDrop}
-                  className={cn(
-                    "rounded-card border border-dashed transition-colors flex flex-col items-center justify-center min-h-[80px] py-6 px-4 text-center",
-                    dragActive ? "border-primary bg-primary/5" : "border-border bg-background-secondary/30"
-                  )}
-                >
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept={ACCEPT}
-                    className="hidden"
-                    onChange={(e) => {
-                      handleFileSelect(e.target.files?.[0] ?? null);
-                      e.target.value = "";
-                    }}
-                  />
-                  <input
-                    ref={cameraInputRef}
-                    type="file"
-                    accept="image/*"
-                    capture="environment"
-                    className="hidden"
-                    onChange={(e) => {
-                      handleFileSelect(e.target.files?.[0] ?? null);
-                      e.target.value = "";
-                    }}
-                  />
-                  <p className="text-sm text-foreground-secondary">
-                    Drop file or click to browse
-                  </p>
-                  <p className="text-[11px] text-foreground-secondary mt-1">
-                    {classifyLoading ? "Reading receipt…" : ACCEPT_LABEL}
-                  </p>
-                  <div className="mt-2 flex items-center gap-2">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="h-7 text-xs rounded-full"
-                      onClick={() => fileInputRef.current?.click()}
-                    >
-                      Choose file
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="h-7 text-xs rounded-full gap-1.5"
-                      onClick={() => cameraInputRef.current?.click()}
-                      disabled={classifyLoading}
-                    >
-                      <Camera className="h-3.5 w-3.5" aria-hidden />
-                      {classifyLoading ? "Analyzing…" : "Take photo"}
-                    </Button>
-                  </div>
-                </div>
-                {fileError && <p className="text-xs text-alert">{fileError}</p>}
-              </>
-            ) : (
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept={ACCEPT}
+              className="hidden"
+              onChange={(e) => {
+                handleFileSelect(e.target.files?.[0] ?? null);
+                e.target.value = "";
+              }}
+            />
+            <input
+              ref={cameraInputRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              className="hidden"
+              onChange={(e) => {
+                handleFileSelect(e.target.files?.[0] ?? null);
+                e.target.value = "";
+              }}
+            />
+            {receiptFile ? (
               <div className="rounded-card border border-border bg-background p-2 flex items-center gap-2">
                 {receiptFile.type.startsWith("image/") ? (
                   <Image className="h-8 w-8 text-foreground-secondary shrink-0" aria-hidden />
@@ -430,7 +393,82 @@ export function ExpenseForm({
                   <Trash2 className="h-4 w-4" />
                 </button>
               </div>
+            ) : storedReceipt ? (
+              <div className="rounded-card border border-border bg-background p-2 flex items-center gap-2">
+                <FileText className="h-8 w-8 text-foreground-secondary shrink-0" aria-hidden />
+                <div className="min-w-0 flex-1">
+                  <p
+                    className="text-xs text-foreground truncate"
+                    title={storedReceipt.file_name}
+                  >
+                    {storedReceipt.file_name}
+                  </p>
+                  <p className="text-[11px] text-foreground-secondary">
+                    Already attached
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 text-xs shrink-0"
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  Replace
+                </Button>
+                <button
+                  type="button"
+                  onClick={() => setStoredReceipt(null)}
+                  className="p-1.5 rounded hover:bg-muted text-foreground-secondary"
+                  aria-label="Remove attached file"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              </div>
+            ) : (
+              <>
+                <div
+                  onDragEnter={handleDrag}
+                  onDragLeave={handleDrag}
+                  onDragOver={handleDrag}
+                  onDrop={handleDrop}
+                  className={cn(
+                    "rounded-card border border-dashed transition-colors flex flex-col items-center justify-center min-h-[80px] py-6 px-4 text-center",
+                    dragActive ? "border-primary bg-primary/5" : "border-border bg-background-secondary/30"
+                  )}
+                >
+                  <p className="text-sm text-foreground-secondary">
+                    Drop file or click to browse
+                  </p>
+                  <p className="text-[11px] text-foreground-secondary mt-1">
+                    {classifyLoading ? "Reading receipt…" : ACCEPT_LABEL}
+                  </p>
+                  <div className="mt-2 flex items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-xs rounded-full"
+                      onClick={() => fileInputRef.current?.click()}
+                    >
+                      Choose file
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-xs rounded-full gap-1.5"
+                      onClick={() => cameraInputRef.current?.click()}
+                      disabled={classifyLoading}
+                    >
+                      <Camera className="h-3.5 w-3.5" aria-hidden />
+                      {classifyLoading ? "Analyzing…" : "Take photo"}
+                    </Button>
+                  </div>
+                </div>
+              </>
             )}
+            {fileError && <p className="text-xs text-alert">{fileError}</p>}
           </div>
           {(descriptionSuggested || amountSuggested || categorySuggested || childSuggested) && (
             <p className="text-xs text-muted-foreground flex items-center gap-1">

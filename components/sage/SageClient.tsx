@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { showErrorToast } from "@/components/ui/toaster";
-import { MessageSquare, PenLine, FileText } from "lucide-react";
+import { Paperclip, Camera, X, FileText } from "lucide-react";
 import { ProposalCardList } from "@/components/sage/proposal-card-list";
 import { ReviseProposalModal } from "@/components/sage/revise-proposal-modal";
 import {
@@ -51,7 +51,24 @@ const SAGE_PILL_CLASS =
 const SAGE_ACTION_PILL =
   "inline-flex items-center gap-1.5 rounded-full border border-[#7C8B6E] bg-transparent px-2.5 py-1.5 text-[11px] text-[#5B7A52] hover:bg-[#F2F5EF] transition-colors";
 
+const CHAT_ACCEPT = "image/*,.pdf,application/pdf";
+const CHAT_ACCEPT_LABEL = "PDF, JPG, PNG";
+const CHAT_MAX_BYTES = 25 * 1024 * 1024;
+const CHAT_ALLOWED_TYPES = [
+  "image/jpeg",
+  "image/png",
+  "image/gif",
+  "image/webp",
+  "application/pdf",
+];
+
 type Child = { id: string; first_name: string };
+
+type ChatAttachedDoc = {
+  document_id: string;
+  file_name: string;
+  url: string;
+};
 
 type CalendarAgreeTarget = {
   item: SageItem;
@@ -113,6 +130,14 @@ export function SageClient({
   } | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const cameraInputRef = useRef<HTMLInputElement | null>(null);
+  const uploadPromiseRef = useRef<Promise<ChatAttachedDoc | null> | null>(null);
+  const attachGenRef = useRef(0);
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const [attachedDoc, setAttachedDoc] = useState<ChatAttachedDoc | null>(null);
+  const [attachUploading, setAttachUploading] = useState(false);
+  const [composerDrag, setComposerDrag] = useState(false);
 
   useEffect(() => {
     if (initialDraft != null && initialDraft.trim()) {
@@ -429,10 +454,129 @@ export function SageClient({
     setExpenseAgree(null);
   }
 
+  async function ensureCaseId(): Promise<string | null> {
+    if (caseId) return caseId;
+    try {
+      const qs = sessionId
+        ? `?session_id=${encodeURIComponent(sessionId)}`
+        : "";
+      const res = await fetch(`/api/sage/messages${qs}`);
+      const data = (await res.json().catch(() => ({}))) as {
+        case_id?: string | null;
+        children?: Child[];
+      };
+      if (data.case_id) {
+        setCaseId(data.case_id);
+        if (Array.isArray(data.children)) setChildrenList(data.children);
+        return data.case_id;
+      }
+    } catch {
+      // fall through
+    }
+    return null;
+  }
+
+  async function uploadChatDocument(
+    file: File,
+    cid: string
+  ): Promise<ChatAttachedDoc> {
+    const formData = new FormData();
+    formData.set("file", file);
+    formData.set("case_id", cid);
+    formData.set("category", "expenses");
+    formData.set("visibility", "parents_only");
+    const base =
+      file.name.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ").trim() ||
+      "Receipt";
+    formData.set("title", base.slice(0, 120));
+    formData.set("description", "Receipt attached in Sage chat.");
+    const res = await fetch("/api/documents/upload", {
+      method: "POST",
+      body: formData,
+    });
+    const data = (await res.json().catch(() => ({}))) as {
+      document_id?: string;
+      message?: string;
+    };
+    if (!res.ok || !data.document_id) {
+      throw new Error(data.message || "Couldn't upload the file.");
+    }
+    return {
+      document_id: data.document_id,
+      file_name: file.name,
+      url: `/api/documents/${data.document_id}/download`,
+    };
+  }
+
+  function isAllowedChatFile(file: File): boolean {
+    if (file.size > CHAT_MAX_BYTES) return false;
+    return (
+      CHAT_ALLOWED_TYPES.includes(file.type) || file.type.startsWith("image/")
+    );
+  }
+
+  async function handleComposerFile(file: File | null) {
+    const gen = ++attachGenRef.current;
+    if (!file) {
+      setPendingFile(null);
+      setAttachedDoc(null);
+      uploadPromiseRef.current = null;
+      setAttachUploading(false);
+      return;
+    }
+    if (!isAllowedChatFile(file)) {
+      showErrorToast(`Accepted: ${CHAT_ACCEPT_LABEL} (up to 25MB).`);
+      return;
+    }
+    setPendingFile(file);
+    setAttachedDoc(null);
+    setAttachUploading(true);
+    const p = (async () => {
+      const cid = await ensureCaseId();
+      if (!cid) {
+        throw new Error("Couldn't upload — no case found.");
+      }
+      return uploadChatDocument(file, cid);
+    })();
+    uploadPromiseRef.current = p;
+    try {
+      const doc = await p;
+      if (gen !== attachGenRef.current) return;
+      setAttachedDoc(doc);
+    } catch (e) {
+      if (gen !== attachGenRef.current) return;
+      showErrorToast(
+        e instanceof Error ? e.message : "Couldn't upload the file."
+      );
+      setPendingFile(null);
+      setAttachedDoc(null);
+      uploadPromiseRef.current = null;
+    } finally {
+      if (gen === attachGenRef.current) setAttachUploading(false);
+    }
+  }
+
   async function handleSend() {
     const content = draft.trim();
-    if (!content || sending) return;
+    if (sending) return;
+
+    let attachment = attachedDoc;
+    if (!attachment && uploadPromiseRef.current) {
+      try {
+        attachment = await uploadPromiseRef.current;
+      } catch {
+        return;
+      }
+    }
+    if (!content && !attachment) return;
+
     const wasFirstMessage = messages.length === 0;
+    const fileLabel = attachment?.file_name ?? pendingFile?.name ?? "file";
+    const optimisticContent = attachment
+      ? content
+        ? `${content}\n\nAttached: ${fileLabel}`
+        : `Attached: ${fileLabel}`
+      : content;
     setSending(true);
     try {
       let sid = sessionId;
@@ -444,16 +588,30 @@ export function SageClient({
         id: `local-${Date.now()}`,
         user_id: "me",
         role: "user",
-        content,
+        content: optimisticContent,
         created_at: new Date().toISOString(),
       };
       setMessages((prev) => [...prev, optimisticUser]);
       setDraft("");
+      setPendingFile(null);
+      setAttachedDoc(null);
+      uploadPromiseRef.current = null;
 
       const res = await fetch("/api/sage/messages", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content, session_id: sid }),
+        body: JSON.stringify({
+          ...(content ? { content } : {}),
+          session_id: sid,
+          ...(attachment
+            ? {
+                attachment: {
+                  document_id: attachment.document_id,
+                  file_name: attachment.file_name,
+                },
+              }
+            : {}),
+        }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -490,7 +648,7 @@ export function SageClient({
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            firstMessage: content,
+            firstMessage: content || `Receipt: ${fileLabel}`,
             sessionId: sid,
           }),
         })
@@ -648,7 +806,83 @@ export function SageClient({
         </ScrollArea>
       </div>
 
-      <div className="space-y-2">
+      <div
+        className={cn(
+          "space-y-2 rounded-card transition-colors",
+          composerDrag ? "bg-primary/5" : ""
+        )}
+        onDragEnter={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setComposerDrag(true);
+        }}
+        onDragOver={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setComposerDrag(true);
+        }}
+        onDragLeave={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setComposerDrag(false);
+        }}
+        onDrop={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setComposerDrag(false);
+          const file = e.dataTransfer.files?.[0] ?? null;
+          if (file) void handleComposerFile(file);
+        }}
+      >
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept={CHAT_ACCEPT}
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0] ?? null;
+            e.target.value = "";
+            if (file) void handleComposerFile(file);
+          }}
+        />
+        <input
+          ref={cameraInputRef}
+          type="file"
+          accept="image/*"
+          capture="environment"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0] ?? null;
+            e.target.value = "";
+            if (file) void handleComposerFile(file);
+          }}
+        />
+        {pendingFile && (
+          <div className="flex items-center gap-2 rounded-card border border-border bg-background px-2 py-1.5">
+            <FileText className="h-4 w-4 text-foreground-secondary shrink-0" aria-hidden />
+            <div className="min-w-0 flex-1">
+              <p className="text-xs text-foreground truncate" title={pendingFile.name}>
+                {pendingFile.name}
+              </p>
+              <p className="text-[11px] text-foreground-secondary">
+                {attachUploading
+                  ? "Uploading…"
+                  : attachedDoc
+                    ? "Attached"
+                    : CHAT_ACCEPT_LABEL}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => void handleComposerFile(null)}
+              className="p-1 rounded hover:bg-muted text-foreground-secondary"
+              aria-label="Remove attached file"
+              disabled={sending}
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        )}
         <Textarea
           ref={textareaRef}
           value={draft}
@@ -657,19 +891,46 @@ export function SageClient({
           placeholder={
             writePrivatelyPlaceholder
               ? "Write what's on your mind. This stays here."
-              : "Start typing…"
+              : pendingFile
+                ? "Add a note, or send the file…"
+                : "Start typing or attach a receipt…"
           }
           className="min-h-[72px] max-h-[140px] resize-y rounded-card border-border bg-background text-base"
         />
-        <div className="flex items-center justify-end">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              className={SAGE_ACTION_PILL}
+              onClick={() => fileInputRef.current?.click()}
+              disabled={sending || attachUploading}
+              aria-label="Attach file"
+            >
+              <Paperclip className="h-3.5 w-3.5" aria-hidden />
+              Attach
+            </button>
+            <button
+              type="button"
+              className={SAGE_ACTION_PILL}
+              onClick={() => cameraInputRef.current?.click()}
+              disabled={sending || attachUploading}
+              aria-label="Take photo"
+            >
+              <Camera className="h-3.5 w-3.5" aria-hidden />
+              Take photo
+            </button>
+          </div>
           <Button
             type="button"
             size="sm"
             className="rounded-full h-8 px-4 bg-[#5B7A52] text-xs text-white hover:bg-[#476242]"
-            disabled={sending || !draft.trim()}
+            disabled={
+              sending ||
+              (!draft.trim() && !attachedDoc && !pendingFile)
+            }
             onClick={() => void handleSend()}
           >
-            {sending ? "Thinking…" : "Send"}
+            {sending ? "Thinking…" : attachUploading ? "Uploading…" : "Send"}
           </Button>
         </div>
       </div>

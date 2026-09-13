@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
 import { processChatMessage } from "@/lib/sage/chat";
+import {
+  loadAndClassifyDocument,
+  mergeClassifyIntoToolInput,
+  processChatAttachment,
+} from "@/lib/sage/process-chat-attachment";
 
 export const runtime = "nodejs";
 
@@ -159,13 +164,23 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json().catch(() => ({}));
-    const { content, session_id: bodySessionId } = body as {
-      content?: string;
-      session_id?: string;
-      category?: string;
-    };
+    const { content, session_id: bodySessionId, attachment: bodyAttachment } =
+      body as {
+        content?: string;
+        session_id?: string;
+        category?: string;
+        attachment?: { document_id?: string; file_name?: string };
+      };
     const trimmed = (content ?? "").trim();
-    if (!trimmed) {
+    const attachmentDocumentId =
+      typeof bodyAttachment?.document_id === "string"
+        ? bodyAttachment.document_id.trim()
+        : "";
+    const attachmentFileName =
+      typeof bodyAttachment?.file_name === "string"
+        ? bodyAttachment.file_name.trim()
+        : "";
+    if (!trimmed && !attachmentDocumentId) {
       return NextResponse.json(
         { message: "Content is required." },
         { status: 400 }
@@ -220,10 +235,45 @@ export async function POST(request: NextRequest) {
       profile as { timezone?: string } | null
     );
 
+    let classifiedAttachment: Awaited<
+      ReturnType<typeof loadAndClassifyDocument>
+    > | null = null;
+    if (attachmentDocumentId) {
+      if (!caseId) {
+        return NextResponse.json(
+          { message: "No case found." },
+          { status: 403 }
+        );
+      }
+      classifiedAttachment = await loadAndClassifyDocument({
+        admin,
+        userId: user.id,
+        caseId,
+        documentId: attachmentDocumentId,
+      });
+      if ("error" in classifiedAttachment) {
+        return NextResponse.json(
+          { message: classifiedAttachment.error },
+          { status: classifiedAttachment.status }
+        );
+      }
+    }
+
+    const fileLabel =
+      attachmentFileName ||
+      (classifiedAttachment && "attachment" in classifiedAttachment
+        ? classifiedAttachment.attachment.file_name
+        : "file");
+    const userContent = attachmentDocumentId
+      ? trimmed
+        ? `${trimmed}\n\nAttached: ${fileLabel}`
+        : `Attached: ${fileLabel}`
+      : trimmed;
+
     const insertPayload = {
       user_id: user.id,
       role: "user" as const,
-      content: trimmed,
+      content: userContent,
       created_at: now,
       ...(sessionId ? { session_id: sessionId } : {}),
     };
@@ -246,49 +296,111 @@ export async function POST(request: NextRequest) {
 
     if (caseId) {
       try {
-        const { reply, result } = await processChatMessage({
-          message: trimmed,
-          case_id: caseId,
-          timezone,
-          source_id: (userRow as { id: string }).id,
-        });
-        if (reply.trim()) sageContent = reply;
+        if (classifiedAttachment && "classify" in classifiedAttachment) {
+          const attachment = {
+            ...classifiedAttachment.attachment,
+            file_name:
+              attachmentFileName || classifiedAttachment.attachment.file_name,
+          };
+          const processed = await processChatAttachment({
+            caseId,
+            timezone,
+            sourceId: (userRow as { id: string }).id,
+            caption: trimmed,
+            classify: classifiedAttachment.classify,
+            attachment,
+          });
+          if (processed.reply.trim()) sageContent = processed.reply;
 
-        const { intent, entities } = result.interpretation;
-        const { data: itemRow, error: insertItemError } = await admin
-          .from("sage_items")
-          .insert({
-            case_id: caseId,
-            source_type: "chat",
-            source_id: (userRow as { id: string }).id,
-            visible_to: user.id,
-            item_type: intent.item_type,
-            domain: intent.domain,
-            summary: intent.summary,
-            evidence_excerpt: intent.evidence_excerpt,
-            tool_name: intent.tool_name,
-            action_required: intent.action_required,
-            action_type: intent.action_type,
-            urgency: intent.urgency,
-            confidence: intent.confidence,
-            tool_input: {
-              ...entities,
-              resolved_dates: result.resolved_dates,
-              ...(result.expense_category
-                ? { expense_category: result.expense_category }
-                : {}),
-            },
-            child_ids: result.child_ids,
-            plan: result.plan,
-            status: "pending",
-          })
-          .select(SAGE_ITEM_SELECT)
-          .single();
+          if (processed.kind === "expense" && processed.result) {
+            const { intent, entities } = processed.result.interpretation;
+            const tool_input = mergeClassifyIntoToolInput(
+              entities as unknown as Record<string, unknown>,
+              processed.result,
+              processed.classify,
+              attachment
+            );
+            const { data: itemRow, error: insertItemError } = await admin
+              .from("sage_items")
+              .insert({
+                case_id: caseId,
+                source_type: "chat",
+                source_id: (userRow as { id: string }).id,
+                visible_to: user.id,
+                item_type: intent.item_type,
+                domain: intent.domain,
+                summary: intent.summary,
+                evidence_excerpt: intent.evidence_excerpt,
+                tool_name: intent.tool_name,
+                action_required: intent.action_required,
+                action_type: intent.action_type,
+                urgency: intent.urgency,
+                confidence: intent.confidence,
+                tool_input,
+                child_ids: processed.result.child_ids,
+                plan: processed.result.plan,
+                status: "pending",
+              })
+              .select(SAGE_ITEM_SELECT)
+              .single();
 
-        if (insertItemError) {
-          console.error("[sage/messages] sage_items insert failed:", insertItemError);
+            if (insertItemError) {
+              console.error(
+                "[sage/messages] sage_items insert failed:",
+                insertItemError
+              );
+            } else {
+              sageItem = (itemRow as Record<string, unknown> | null) ?? null;
+            }
+          }
         } else {
-          sageItem = (itemRow as Record<string, unknown> | null) ?? null;
+          const { reply, result } = await processChatMessage({
+            message: trimmed,
+            case_id: caseId,
+            timezone,
+            source_id: (userRow as { id: string }).id,
+          });
+          if (reply.trim()) sageContent = reply;
+
+          const { intent, entities } = result.interpretation;
+          const { data: itemRow, error: insertItemError } = await admin
+            .from("sage_items")
+            .insert({
+              case_id: caseId,
+              source_type: "chat",
+              source_id: (userRow as { id: string }).id,
+              visible_to: user.id,
+              item_type: intent.item_type,
+              domain: intent.domain,
+              summary: intent.summary,
+              evidence_excerpt: intent.evidence_excerpt,
+              tool_name: intent.tool_name,
+              action_required: intent.action_required,
+              action_type: intent.action_type,
+              urgency: intent.urgency,
+              confidence: intent.confidence,
+              tool_input: {
+                ...entities,
+                resolved_dates: result.resolved_dates,
+                ...(result.expense_category
+                  ? { expense_category: result.expense_category }
+                  : {}),
+              },
+              child_ids: result.child_ids,
+              plan: result.plan,
+              status: "pending",
+            })
+            .select(SAGE_ITEM_SELECT)
+            .single();
+
+          if (insertItemError) {
+            console.error(
+              "[sage/messages] sage_items insert failed:",
+              insertItemError
+            );
+          } else {
+            sageItem = (itemRow as Record<string, unknown> | null) ?? null;
+          }
         }
       } catch (e) {
         console.error("[sage/messages] engine failed:", e);

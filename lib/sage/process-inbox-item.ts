@@ -292,7 +292,13 @@ export async function processInboxItem(
         action_type: intent.action_type,
         urgency: intent.urgency,
         confidence: intent.confidence,
-        tool_input: { ...entities, resolved_dates },
+        tool_input: {
+          ...entities,
+          resolved_dates,
+          ...(processed.expense_category
+            ? { expense_category: processed.expense_category }
+            : {}),
+        },
         child_ids,
         plan: itemPlan,
         status: "pending",

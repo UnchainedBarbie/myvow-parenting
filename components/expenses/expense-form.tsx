@@ -83,13 +83,29 @@ export function ExpenseForm({
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
-  const [description, setDescription] = useState("");
-  const [amount, setAmount] = useState("");
-  const [incurredDate, setIncurredDate] = useState("");
-  const [category, setCategory] = useState<string>("other");
-  const [categoryDescription, setCategoryDescription] = useState("");
-  const [selectedChildIds, setSelectedChildIds] = useState<string[]>([]);
-  const [visibility, setVisibility] = useState<string>("parents_only");
+  const [description, setDescription] = useState(
+    () => initialValues?.description?.slice(0, 80) ?? ""
+  );
+  const [amount, setAmount] = useState(() =>
+    initialValues?.amount != null && initialValues.amount !== ""
+      ? String(initialValues.amount)
+      : ""
+  );
+  const [incurredDate, setIncurredDate] = useState(
+    () => initialValues?.incurredDate ?? ""
+  );
+  const [category, setCategory] = useState<string>(
+    () => initialValues?.category ?? "other"
+  );
+  const [categoryDescription, setCategoryDescription] = useState(
+    () => initialValues?.categoryDescription?.slice(0, 100) ?? ""
+  );
+  const [selectedChildIds, setSelectedChildIds] = useState<string[]>(() =>
+    initialValues?.childId ? [initialValues.childId] : []
+  );
+  const [visibility, setVisibility] = useState<string>(
+    () => initialValues?.visibility ?? "parents_only"
+  );
   const [notifyCoparent, setNotifyCoparent] = useState(false);
   const [receiptFile, setReceiptFile] = useState<File | null>(null);
   const [dragActive, setDragActive] = useState(false);

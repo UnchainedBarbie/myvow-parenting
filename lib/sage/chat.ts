@@ -8,6 +8,7 @@ import {
   processObservation,
   type ProcessObservationResult,
 } from "@/lib/sage/process-observation";
+import { isCalendarUpdateProposal, isLogExpenseProposal } from "@/lib/sage/proposal-kind";
 import type { Proposal } from "@/lib/sage/planner";
 
 export type ChatAction = Proposal & { status: "proposed" };
@@ -34,10 +35,10 @@ function buildReply(result: ProcessObservationResult): string {
   if (plan.status === "awaiting_clarification" && ask?.draft?.trim()) {
     return ask.draft.trim();
   }
-  if (plan.proposals.some((p) => p.type === "calendar_update")) {
+  if (plan.proposals.some((p) => isCalendarUpdateProposal(p.type))) {
     return "I can do that.";
   }
-  if (plan.proposals.some((p) => p.type === "log_expense")) {
+  if (plan.proposals.some((p) => isLogExpenseProposal(p.type))) {
     return "I can log that.";
   }
   if (plan.proposals.some((p) => p.type === "reply_coparent")) {

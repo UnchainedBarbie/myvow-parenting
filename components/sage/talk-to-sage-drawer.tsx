@@ -8,8 +8,11 @@ import {
   buildCalendarInitialValues,
   buildExpenseInitialValues,
   dateKey,
+  isCalendarUpdateProposal,
+  isLogExpenseProposal,
   needsDateField,
 } from "@/components/sage/proposal-helpers";
+import { SageAgreeFormModal } from "@/components/sage/sage-agree-form-modal";
 import type { SageItem, SageProposal } from "@/components/sage/proposal-types";
 import {
   AddEventForm,
@@ -193,7 +196,7 @@ export function TalkToSageDrawer({
     const p = proposals[idx];
     if (!p) return;
 
-    if (p.type === "calendar_update") {
+    if (isCalendarUpdateProposal(p.type)) {
       const dKey = dateKey(item.id, idx);
       const chosen = (dates[dKey] ?? "").trim() || p.chosen_date || "";
       if (needsDateField(p, item) && !chosen) return;
@@ -210,7 +213,7 @@ export function TalkToSageDrawer({
       return;
     }
 
-    if (p.type === "log_expense") {
+    if (isLogExpenseProposal(p.type)) {
       const dKey = dateKey(item.id, idx);
       const chosen = (dates[dKey] ?? "").trim() || p.chosen_date || "";
       setCalendarTarget(null);
@@ -487,91 +490,40 @@ export function TalkToSageDrawer({
       </div>
 
       {calendarTarget && caseId && (
-        <div
-          className="fixed inset-0 z-[60] flex items-start justify-center overflow-y-auto bg-black/40 px-3 py-6"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="talk-sage-add-calendar-title"
-          onClick={() => setCalendarTarget(null)}
+        <SageAgreeFormModal
+          title="Add to calendar"
+          titleId="talk-sage-add-calendar-title"
+          hint="Review the event details, then click Add Event to put it on your calendar."
+          onClose={() => setCalendarTarget(null)}
         >
-          <div
-            className="relative my-4 w-full max-w-md rounded-2xl border border-[#E8E4DC] bg-[#FDFBF7] p-4 shadow-card"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="mb-3 flex items-center justify-between gap-2">
-              <h2
-                id="talk-sage-add-calendar-title"
-                className="font-heading text-base font-semibold text-[#3D3D3D]"
-              >
-                Add to calendar
-              </h2>
-              <button
-                type="button"
-                className="rounded-md p-1.5 text-[#8A8A8A] hover:bg-[#E8E4DC] hover:text-[#3D3D3D]"
-                aria-label="Close"
-                onClick={() => setCalendarTarget(null)}
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-            <p className="mb-3 text-[11px] text-[#8A8A8A]">
-              Review the event details, then click Add Event to put it on your
-              calendar.
-            </p>
-            <AddEventForm
-              caseId={caseId}
-              children={childrenList}
-              initialYear={new Date().getFullYear()}
-              initialMonth={new Date().getMonth() + 1}
-              initialValues={calendarTarget.initialValues}
-              hideHeader
-              onSuccess={(eventId) => void handleCalendarCreated(eventId)}
-            />
-          </div>
-        </div>
+          <AddEventForm
+            caseId={caseId}
+            children={childrenList}
+            initialYear={new Date().getFullYear()}
+            initialMonth={new Date().getMonth() + 1}
+            initialValues={calendarTarget.initialValues}
+            hideHeader
+            onSuccess={(eventId) => void handleCalendarCreated(eventId)}
+          />
+        </SageAgreeFormModal>
       )}
 
       {expenseTarget && caseId && (
-        <div
-          className="fixed inset-0 z-[60] flex items-start justify-center overflow-y-auto bg-black/40 px-3 py-6"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="talk-sage-add-expense-title"
-          onClick={() => setExpenseTarget(null)}
+        <SageAgreeFormModal
+          title="Add expense"
+          titleId="talk-sage-add-expense-title"
+          hint="Review the expense details, then click Submit expense to add it to your ledger."
+          onClose={() => setExpenseTarget(null)}
         >
-          <div
-            className="relative my-4 w-full max-w-md rounded-2xl border border-[#E8E4DC] bg-[#FDFBF7] p-4 shadow-card"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="mb-3 flex items-center justify-between gap-2">
-              <h2
-                id="talk-sage-add-expense-title"
-                className="font-heading text-base font-semibold text-[#3D3D3D]"
-              >
-                Add expense
-              </h2>
-              <button
-                type="button"
-                className="rounded-md p-1.5 text-[#8A8A8A] hover:bg-[#E8E4DC] hover:text-[#3D3D3D]"
-                aria-label="Close"
-                onClick={() => setExpenseTarget(null)}
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-            <p className="mb-3 text-[11px] text-[#8A8A8A]">
-              Review the expense details, then click Submit expense to add it to
-              your ledger.
-            </p>
-            <ExpenseForm
-              caseId={caseId}
-              children={childrenList}
-              initialValues={expenseTarget.initialValues}
-              hideHeader
-              onSuccess={(expenseId) => void handleExpenseCreated(expenseId)}
-            />
-          </div>
-        </div>
+          <ExpenseForm
+            key={`${expenseTarget.item.id}:${expenseTarget.proposalIndex}`}
+            caseId={caseId}
+            children={childrenList}
+            initialValues={expenseTarget.initialValues}
+            hideHeader
+            onSuccess={(expenseId) => void handleExpenseCreated(expenseId)}
+          />
+        </SageAgreeFormModal>
       )}
     </>
   );

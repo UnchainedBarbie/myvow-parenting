@@ -2,6 +2,11 @@
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import {
+  isCalendarUpdateProposal,
+  isFormExecuteProposal,
+  isLogExpenseProposal,
+} from "@/lib/sage/proposal-kind";
 import type { SageItem, SageProposal } from "./proposal-types";
 import {
   canUndo,
@@ -98,6 +103,9 @@ export function ProposalCardList({
           const dKey = dateKey(itemId, idx);
           const isChecked = checked.includes(idx);
           const rowBusy = busyKey === `${itemId}:${idx}` || itemBusy;
+          const formPending =
+            isFormExecuteProposal(p.type) && !executed && !waived && !blocked;
+          const showUndoOnly = canUndo(p) && !formPending;
 
           return (
             <li
@@ -110,7 +118,7 @@ export function ProposalCardList({
               {/* Left controls — hidden in item bulk-select mode */}
               {hideActions ? null : noteOnly || blocked ? (
                 <span className="mt-0.5 w-12 shrink-0" aria-hidden />
-              ) : canUndo(p) ? (
+              ) : showUndoOnly ? (
                 <button
                   type="button"
                   className="mt-0.5 shrink-0 text-[10px] text-[#5B7A52] hover:underline disabled:opacity-40"
@@ -183,13 +191,13 @@ export function ProposalCardList({
                   </span>
                   {executed ? (
                     <span className="text-[10px] font-medium text-[#5B7A52]">
-                      {p.type === "log_expense"
+                      {isLogExpenseProposal(p.type)
                         ? "✓ done"
-                        : p.type === "calendar_update"
+                        : isCalendarUpdateProposal(p.type)
                           ? "✓ done · added to calendar"
                           : "✓ done"}
                     </span>
-                  ) : approved ? (
+                  ) : approved && !formPending ? (
                     <span className="text-[10px] font-medium text-[#5B7A52]">
                       ✓ approved
                     </span>

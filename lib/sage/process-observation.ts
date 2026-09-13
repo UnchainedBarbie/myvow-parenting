@@ -22,6 +22,8 @@ import {
 import { computeAllocationFromParentingPlan } from "@/lib/expenses-allocation";
 import {
   inferExpenseCategoryFromText,
+  looksLikeExpenseCommand,
+  parseExpenseAmountFromText,
   userAskedToNotifyCoparent,
 } from "@/lib/expenses-share";
 
@@ -48,6 +50,8 @@ export type ProcessObservationResult = {
   unresolved_children: string[];
   resolved_dates: DateResolution[];
   plan: Plan;
+  /** Derived category used for allocation and form prefill (e.g. dentist → medical). */
+  expense_category?: string;
 };
 
 /**
@@ -71,6 +75,23 @@ export async function processObservation(
   });
 
   const { intent, entities } = interpretation;
+  const categoryBlob = [
+    intent.summary,
+    intent.evidence_excerpt,
+    observationText,
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  // Dentist/doctor bills are expenses (medical), not calendar-only medical_update.
+  if (
+    intent.item_type !== "expense" &&
+    (intent.tool_name === "expense" || looksLikeExpenseCommand(categoryBlob))
+  ) {
+    intent.item_type = "expense";
+    intent.tool_name = "expense";
+    intent.action_required = true;
+  }
 
   const childNames = entities.children
     .map((c) => c.name)
@@ -89,6 +110,26 @@ export async function processObservation(
     context.timezone
   );
 
+  const expense_category = inferExpenseCategoryFromText(
+    categoryBlob,
+    intent.domain
+  );
+  if (intent.item_type === "expense" && expense_category === "medical") {
+    intent.domain = "medical";
+  }
+
+  const entityAmount = entities.amounts[0]?.value;
+  const amount =
+    typeof entityAmount === "number" && Number.isFinite(entityAmount) && entityAmount > 0
+      ? entityAmount
+      : parseExpenseAmountFromText(categoryBlob);
+  if (
+    amount != null &&
+    !entities.amounts.some((a) => a.value === amount)
+  ) {
+    entities.amounts = [{ value: amount, currency: "USD" }, ...entities.amounts];
+  }
+
   let expense_allocation: {
     other_parent_share: number | null;
     allocation_status?: string;
@@ -96,15 +137,11 @@ export async function processObservation(
   } | undefined;
   if (intent.item_type === "expense") {
     const notify_coparent = userAskedToNotifyCoparent(observationText);
-    const amount = entities.amounts[0]?.value;
-    const category = inferExpenseCategoryFromText(
-      [intent.summary, intent.evidence_excerpt, observationText].filter(Boolean).join(" ")
-    );
     if (typeof amount === "number" && Number.isFinite(amount) && amount > 0) {
       const allocation = await computeAllocationFromParentingPlan({
         caseId: context.case_id,
         amount,
-        category,
+        category: expense_category,
         childId: child_ids[0] ?? null,
       });
       expense_allocation = {
@@ -145,5 +182,6 @@ export async function processObservation(
     unresolved_children,
     resolved_dates,
     plan: itemPlan,
+    expense_category: intent.item_type === "expense" ? expense_category : undefined,
   };
 }

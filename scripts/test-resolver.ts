@@ -125,6 +125,44 @@ async function main() {
       2
     )
   );
+
+  const dentistAppt: SageItem = {
+    ...expenseItem,
+    domain: "expense",
+    summary: "You'd like to log Ashley's dentist appt.",
+    evidence_excerpt: "ashley's dentist appt",
+    tool_input: {
+      children: [{ name: "Ashley", confidence: 1 }],
+      amounts: [],
+    },
+  };
+  const dentistPrefill = buildExpenseInitialValues(dentistAppt, {
+    type: "log_expense",
+    draft: "You'd like to log Ashley's dentist appt for your records.",
+    depends_on: null,
+  });
+  console.log("\n========== Dentist appt category ==========");
+  console.log("category:", dentistPrefill.category);
+  console.log("description:", dentistPrefill.description);
+
+  const dentistWithAmount: SageItem = {
+    ...expenseItem,
+    domain: "expense",
+    summary: "You'd like to log a $20 expense for Ashley's dentist appt.",
+    evidence_excerpt: "dentist's appt",
+    tool_input: {
+      children: [{ name: "Ashley", confidence: 1 }],
+      amounts: [],
+    },
+  };
+  const dentistAmtPrefill = buildExpenseInitialValues(dentistWithAmount, {
+    type: "log_expense",
+    draft: dentistWithAmount.summary ?? "",
+    depends_on: null,
+  });
+  console.log("\n========== Dentist $20 category/amount ==========");
+  console.log("category:", dentistAmtPrefill.category);
+  console.log("amount:", dentistAmtPrefill.amount);
 }
 
 main().catch((e) => {

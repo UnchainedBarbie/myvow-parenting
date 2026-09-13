@@ -23,13 +23,36 @@ export function expenseWorkflowStatus(opts: {
   return "resolved";
 }
 
-export function inferExpenseCategoryFromText(text: string): string {
+/** Medical/dental bills are allocable shared categories — never "other"/personal. */
+export const MEDICAL_EXPENSE_RE =
+  /dentist|dental|orthodont|doctor|pediatric|physician|clinic|hospital|checkup|vaccine|medical|optometr|ophthalm|\bdr\.?\b/;
+
+export function parseExpenseAmountFromText(text: string): number | undefined {
+  if (!text.trim()) return undefined;
+  const dollar = text.match(
+    /\$\s*(\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?)/
+  );
+  if (dollar) {
+    const n = parseFloat(dollar[1].replace(/,/g, ""));
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  const words = text.match(
+    /\b(\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?)\s*(?:dollars?|usd)\b/i
+  );
+  if (words) {
+    const n = parseFloat(words[1].replace(/,/g, ""));
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return undefined;
+}
+
+export function inferExpenseCategoryFromText(
+  text: string,
+  domain?: string | null
+): string {
   const blob = text.toLowerCase();
-  if (
-    /dentist|dental|orthodont|doctor|pediatric|physician|clinic|hospital|checkup|vaccine|medical|optometr|ophthalm/.test(
-      blob
-    )
-  ) {
+  const domainNorm = (domain ?? "").toLowerCase();
+  if (MEDICAL_EXPENSE_RE.test(blob) || domainNorm === "medical") {
     return "medical";
   }
   if (/school|teacher|tuition|classroom|parent-?teacher/.test(blob)) return "school";
@@ -45,6 +68,18 @@ export function inferExpenseCategoryFromText(text: string): string {
   if (/childcare|daycare|babysit/.test(blob)) return "childcare";
   if (/\buber\b|gas|mileage|transport/.test(blob)) return "transportation";
   return "other";
+}
+
+/** True when the parent is logging a bill/cost (vs a calendar-only medical appointment). */
+export function looksLikeExpenseCommand(text: string): boolean {
+  const blob = text.toLowerCase();
+  if (/\b(expense|receipt|reimburse|ledger|invoice)\b/.test(blob)) return true;
+  const amount = parseExpenseAmountFromText(text);
+  const medical = MEDICAL_EXPENSE_RE.test(blob);
+  if (amount != null && medical) return true;
+  if (amount != null && /\b(log|paid|pay|cost|bill|charge)\b/.test(blob)) return true;
+  if (/\b(calendar|schedule)\b/.test(blob) && amount == null) return false;
+  return /\b(log|record|submit)\b/.test(blob) && medical;
 }
 
 export function userAskedToNotifyCoparent(text: string): boolean {

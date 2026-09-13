@@ -1,6 +1,17 @@
 import type { AddEventFormInitialValues } from "@/components/calendar/add-event-form";
 import type { ExpenseFormInitialValues } from "@/components/expenses/expense-form";
+import {
+  inferExpenseCategoryFromText,
+  parseExpenseAmountFromText,
+} from "@/lib/expenses-share";
+import { isCalendarUpdateProposal, isFormExecuteProposal } from "@/lib/sage/proposal-kind";
 import type { SageItem, SageProposal } from "./proposal-types";
+
+export {
+  isCalendarUpdateProposal,
+  isFormExecuteProposal,
+  isLogExpenseProposal,
+} from "@/lib/sage/proposal-kind";
 
 export function proposalTypeLabel(type: string): string {
   switch (type) {
@@ -10,6 +21,7 @@ export function proposalTypeLabel(type: string): string {
       return "Reply to Co-Parent";
     case "calendar_update":
       return "Update calendar";
+    case "expense":
     case "log_expense":
       return "Log expense";
     case "note_only":
@@ -49,12 +61,11 @@ export function isBlocked(p: SageProposal): boolean {
 }
 
 export function isActionable(p: SageProposal): boolean {
-  return (
-    p.type !== "note_only" &&
-    p.approved !== true &&
-    !isWaived(p) &&
-    !isBlocked(p)
-  );
+  if (p.type === "note_only" || isWaived(p) || isBlocked(p)) return false;
+  if (p.executed === true) return false;
+  // Calendar / expense stay actionable until the form actually creates the record.
+  if (isFormExecuteProposal(p.type)) return true;
+  return p.approved !== true;
 }
 
 function isIsoDate(value: string | null | undefined): value is string {
@@ -136,7 +147,7 @@ export function needsDateField(
   p: SageProposal,
   item?: SageItem | null
 ): boolean {
-  if (p.type !== "calendar_update") return false;
+  if (isCalendarUpdateProposal(p.type)) return false;
   if ((p.chosen_date ?? "").trim()) return false;
   if (resolvedCalendarIso(item)) return false;
   return true;
@@ -439,24 +450,20 @@ export function buildCalendarInitialValues(
 }
 
 function amountFromToolInput(item: SageItem): number | undefined {
-  const amounts = toolInputRecord(item)?.amounts;
-  if (!Array.isArray(amounts)) return undefined;
-  for (const entry of amounts) {
-    if (!entry || typeof entry !== "object") continue;
-    const value = (entry as { value?: unknown }).value;
-    const n = typeof value === "number" ? value : Number(value);
-    if (Number.isFinite(n) && n > 0) return n;
+  const input = toolInputRecord(item);
+  const amounts = input?.amounts;
+  if (Array.isArray(amounts)) {
+    for (const entry of amounts) {
+      if (!entry || typeof entry !== "object") continue;
+      const value = (entry as { value?: unknown }).value;
+      const n = typeof value === "number" ? value : Number(value);
+      if (Number.isFinite(n) && n > 0) return n;
+    }
   }
+  const stored = input?.amount;
+  const storedN = typeof stored === "number" ? stored : Number(stored);
+  if (Number.isFinite(storedN) && storedN > 0) return storedN;
   return undefined;
-}
-
-function amountFromText(text: string): number | undefined {
-  const match = text.match(
-    /\$\s*(\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?)/
-  );
-  if (!match) return undefined;
-  const n = parseFloat(match[1].replace(/,/g, ""));
-  return Number.isFinite(n) && n > 0 ? n : undefined;
 }
 
 /** Expense incurred dates may already have passed this year — do not roll to next year. */
@@ -475,15 +482,11 @@ function resolvedExpenseIso(item: SageItem | null | undefined): string | undefin
 }
 
 function inferExpenseCategory(item: SageItem, proposal?: SageProposal): string {
-  const blob = eventCorpus(item, proposal);
-  if (
-    /dentist|dental|orthodont|doctor|pediatric|physician|clinic|hospital|checkup|vaccine|medical|optometr|ophthalm/.test(
-      blob
-    )
-  ) {
-    return "medical";
+  const stored = toolInputRecord(item)?.expense_category;
+  if (typeof stored === "string" && stored.trim()) {
+    return stored.trim().toLowerCase();
   }
-  return "other";
+  return inferExpenseCategoryFromText(eventCorpus(item, proposal), item.domain);
 }
 
 function expenseDescriptionFromText(text: string): string | null {
@@ -526,7 +529,8 @@ export function buildExpenseInitialValues(
       : proposal.draft) ?? "";
   const summary = (item.summary ?? "").trim();
   const blob = [summary, draftSource].filter(Boolean).join(" ");
-  const amount = amountFromToolInput(item) ?? amountFromText(blob);
+  const amount =
+    amountFromToolInput(item) ?? parseExpenseAmountFromText(blob);
   const description =
     expenseDescriptionFromText(summary) ??
     expenseDescriptionFromText(draftSource) ??

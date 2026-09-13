@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
+import {
+  isCalendarUpdateProposal,
+  isFormExecuteProposal,
+  isLogExpenseProposal,
+} from "@/lib/sage/proposal-kind";
 
 export const runtime = "nodejs";
 
@@ -243,19 +248,19 @@ export async function POST(req: NextRequest) {
         );
       }
       const p = proposals[idx];
-      if (!p || (p.type !== "calendar_update" && p.type !== "log_expense")) {
+      if (!p || !isFormExecuteProposal(p.type)) {
         return NextResponse.json(
           { success: false, error: "Proposal is not executable" },
           { status: 400 }
         );
       }
-      if (p.type === "calendar_update" && !eventId) {
+      if (isCalendarUpdateProposal(p.type) && !eventId) {
         return NextResponse.json(
           { success: false, error: "Invalid event_id" },
           { status: 400 }
         );
       }
-      if (p.type === "log_expense" && !expenseId) {
+      if (isLogExpenseProposal(p.type) && !expenseId) {
         return NextResponse.json(
           { success: false, error: "Invalid expense_id" },
           { status: 400 }
@@ -274,8 +279,8 @@ export async function POST(req: NextRequest) {
         approved_at: p.approved_at ?? nowIso,
         executed: true,
         executed_at: nowIso,
-        ...(p.type === "calendar_update" ? { result_event_id: eventId } : {}),
-        ...(p.type === "log_expense" ? { result_expense_id: expenseId } : {}),
+        ...(isCalendarUpdateProposal(p.type) ? { result_event_id: eventId } : {}),
+        ...(isLogExpenseProposal(p.type) ? { result_expense_id: expenseId } : {}),
       };
       const updatedPlan: SagePlan = { ...plan, proposals };
       const { error: updateError } = await admin
@@ -349,6 +354,8 @@ export async function POST(req: NextRequest) {
       if (action === "agree" && blocked) continue;
 
       if (action === "agree") {
+        // Calendar and expense must go through the form + execute, never record-only approve.
+        if (isFormExecuteProposal(p.type)) continue;
         const chosenDate =
           dates[String(idx)] ?? dates[idx as unknown as string] ?? undefined;
         proposals[idx] = {

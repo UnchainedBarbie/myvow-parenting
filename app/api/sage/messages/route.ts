@@ -271,7 +271,13 @@ export async function POST(request: NextRequest) {
             action_type: intent.action_type,
             urgency: intent.urgency,
             confidence: intent.confidence,
-            tool_input: { ...entities, resolved_dates: result.resolved_dates },
+            tool_input: {
+              ...entities,
+              resolved_dates: result.resolved_dates,
+              ...(result.expense_category
+                ? { expense_category: result.expense_category }
+                : {}),
+            },
             child_ids: result.child_ids,
             plan: result.plan,
             status: "pending",
@@ -339,6 +345,7 @@ export async function POST(request: NextRequest) {
       user_message: userRow as SageMessageRow,
       sage_message: sageMessage,
       sage_item: sageItem,
+      case_id: caseId,
     });
   } catch (e) {
     return NextResponse.json(

@@ -60,6 +60,7 @@ When source_type is "chat" (the parent is speaking to Sage — a USER COMMAND):
 - Frame intent.summary as the user's own request: "You'd like to add Ashley's dentist appointment on Sept 15 at 3 PM to your calendar." For expenses: "You'd like to log a $20 expense for Ashley's dentist visit on Sept 10."
 - Do NOT treat this as an inbound Co-Parent message. Do NOT write "your co-parent is asking", "Co-Parent shared", or "Co-Parent has … in mind."
 - The user is directing Sage to act on their own records (calendar, expenses, notes). They are not relaying a co-parent request unless they explicitly say the co-parent asked.
+- HARD RULE for bills/costs: if they are logging, adding, or recording an expense, receipt, bill, or dollar amount (including a dentist/doctor/medical/dental visit as a cost), item_type MUST be "expense", tool_name MUST be "expense", and domain MUST be "medical" when the bill is medical/dental. Do NOT use item_type "medical_update" for a bill — that type is health news without money. Always extract amounts[].value when a dollar amount is present.
 
 When source_type is email or any inbound co-parent source:
 - Prefer natural phrasing: "It looks like your co-parent is asking whether…", "Your co-parent shared that…", "It sounds like a coordination question about…"
@@ -251,13 +252,22 @@ function parseDates(raw: unknown): { value: string; raw: string }[] {
   return out;
 }
 
+function parseAmountNumber(raw: unknown): number | null {
+  if (typeof raw === "number" && Number.isFinite(raw) && raw > 0) return raw;
+  if (typeof raw === "string") {
+    const n = parseFloat(raw.replace(/[$,\s]/g, ""));
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return null;
+}
+
 function parseAmounts(raw: unknown): { value: number; currency: string }[] {
   if (!Array.isArray(raw)) return [];
   const out: { value: number; currency: string }[] = [];
   for (const item of raw) {
     if (!item || typeof item !== "object") continue;
     const obj = item as Record<string, unknown>;
-    const value = typeof obj.value === "number" && !Number.isNaN(obj.value) ? obj.value : null;
+    const value = parseAmountNumber(obj.value);
     if (value === null) continue;
     const currency = asString(obj.currency, "USD").toUpperCase() || "USD";
     out.push({ value, currency });

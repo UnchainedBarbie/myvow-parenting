@@ -2,6 +2,22 @@ import { getServiceRoleClient } from "@/lib/supabase/server";
 
 export type AllocationStatus = "ALLOCATED" | "NONE" | "MANUAL_REQUIRED";
 
+function normalizeCategory(value: string | null | undefined): string {
+  return (value ?? "").trim().toLowerCase();
+}
+
+/** Dentist bills use medical; dental and medical share the same plan split. */
+function categoriesCompatible(
+  ruleCategory: string | null | undefined,
+  inputCategory: string
+): boolean {
+  const a = normalizeCategory(ruleCategory);
+  const b = normalizeCategory(inputCategory);
+  if (!a || a === b) return true;
+  const medicalish = (c: string) => c === "medical" || c === "dental";
+  return medicalish(a) && medicalish(b);
+}
+
 type RuleType = "SPLIT_PERCENT" | "FIXED_AMOUNT" | "NONE" | "MANUAL";
 
 interface ExpenseRuleRow {
@@ -62,7 +78,7 @@ export async function computeAllocationFromParentingPlan(
     if (planId && r.parenting_plan_id && r.parenting_plan_id !== planId) {
       return false;
     }
-    if (r.category && r.category !== input.category) {
+    if (r.category && !categoriesCompatible(r.category, input.category)) {
       return false;
     }
     if (r.child_scope && r.child_scope !== input.childId) {
@@ -76,7 +92,9 @@ export async function computeAllocationFromParentingPlan(
 
   for (const rule of candidates) {
     let score = 0;
-    if (rule.category === input.category) score += 2;
+    if (rule.category && categoriesCompatible(rule.category, input.category)) {
+      score += 2;
+    }
     if (rule.child_scope && rule.child_scope === input.childId) score += 3;
     if (!rule.child_scope) score += 1;
     if (!rule.category) score += 0;

@@ -7,7 +7,6 @@ import {
   Flag,
   MessageCircle,
   Search,
-  X,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -22,8 +21,12 @@ import {
   childNamesFromItem,
   dateKey,
   isActionable,
+  isCalendarUpdateProposal,
+  isFormExecuteProposal,
+  isLogExpenseProposal,
   needsDateField,
 } from "@/components/sage/proposal-helpers";
+import { SageAgreeFormModal } from "@/components/sage/sage-agree-form-modal";
 import type { SageItem, SageProposal } from "@/components/sage/proposal-types";
 import {
   AddEventForm,
@@ -338,7 +341,7 @@ export function SageInbox({
   ) {
     const proposals = item.plan?.proposals ?? [];
     const p = proposals[proposalIndex];
-    if (!p || p.type !== "calendar_update") return;
+    if (!p || !isCalendarUpdateProposal(p.type)) return;
     const chosen =
       (dates[dateKey(item.id, proposalIndex)] ?? "").trim() ||
       p.chosen_date ||
@@ -359,7 +362,7 @@ export function SageInbox({
   ) {
     const proposals = item.plan?.proposals ?? [];
     const p = proposals[proposalIndex];
-    if (!p || p.type !== "log_expense") return;
+    if (!p || !isLogExpenseProposal(p.type)) return;
     const chosen =
       (dates[dateKey(item.id, proposalIndex)] ?? "").trim() ||
       p.chosen_date ||
@@ -379,9 +382,9 @@ export function SageInbox({
     queue: number[] = []
   ) {
     const p = item.plan?.proposals?.[proposalIndex];
-    if (p?.type === "calendar_update") {
+    if (isCalendarUpdateProposal(p?.type)) {
       openCalendarAgree(item, proposalIndex, queue);
-    } else if (p?.type === "log_expense") {
+    } else if (isLogExpenseProposal(p?.type)) {
       openExpenseAgree(item, proposalIndex, queue);
     }
   }
@@ -396,14 +399,12 @@ export function SageInbox({
     if (missingRequiredDates(item, proposal_indexes)) return;
 
     const proposals = item.plan?.proposals ?? [];
-    const formIdxs = proposal_indexes.filter((i) => {
-      const t = proposals[i]?.type;
-      return t === "calendar_update" || t === "log_expense";
-    });
-    const otherIdxs = proposal_indexes.filter((i) => {
-      const t = proposals[i]?.type;
-      return t !== "calendar_update" && t !== "log_expense";
-    });
+    const formIdxs = proposal_indexes.filter((i) =>
+      isFormExecuteProposal(proposals[i]?.type)
+    );
+    const otherIdxs = proposal_indexes.filter(
+      (i) => !isFormExecuteProposal(proposals[i]?.type)
+    );
 
     if (otherIdxs.length > 0) {
       await postProposalAction(item, "agree", otherIdxs, busyId);
@@ -803,91 +804,40 @@ export function SageInbox({
       />
 
       {calendarAgree && caseId && (
-        <div
-          className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 px-3 py-6"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="sage-add-calendar-title"
-          onClick={() => setCalendarAgree(null)}
+        <SageAgreeFormModal
+          title="Add to calendar"
+          titleId="sage-add-calendar-title"
+          hint="Review the event details, then click Add Event to put it on your calendar."
+          onClose={() => setCalendarAgree(null)}
         >
-          <div
-            className="relative my-4 w-full max-w-md rounded-2xl border border-[#E8E4DC] bg-[#FDFBF7] p-4 shadow-card"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="mb-3 flex items-center justify-between gap-2">
-              <h2
-                id="sage-add-calendar-title"
-                className="font-heading text-base font-semibold text-[#3D3D3D]"
-              >
-                Add to calendar
-              </h2>
-              <button
-                type="button"
-                className="rounded-md p-1.5 text-[#8A8A8A] hover:bg-[#E8E4DC] hover:text-[#3D3D3D]"
-                aria-label="Close"
-                onClick={() => setCalendarAgree(null)}
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-            <p className="mb-3 text-[11px] text-[#8A8A8A]">
-              Review the event details, then click Add Event to put it on your
-              calendar.
-            </p>
-            <AddEventForm
-              caseId={caseId}
-              children={childrenList}
-              initialYear={new Date().getFullYear()}
-              initialMonth={new Date().getMonth() + 1}
-              initialValues={calendarAgree.initialValues}
-              hideHeader
-              onSuccess={(eventId) => void handleCalendarEventCreated(eventId)}
-            />
-          </div>
-        </div>
+          <AddEventForm
+            caseId={caseId}
+            children={childrenList}
+            initialYear={new Date().getFullYear()}
+            initialMonth={new Date().getMonth() + 1}
+            initialValues={calendarAgree.initialValues}
+            hideHeader
+            onSuccess={(eventId) => void handleCalendarEventCreated(eventId)}
+          />
+        </SageAgreeFormModal>
       )}
 
       {expenseAgree && caseId && (
-        <div
-          className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 px-3 py-6"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="sage-add-expense-title"
-          onClick={() => setExpenseAgree(null)}
+        <SageAgreeFormModal
+          title="Add expense"
+          titleId="sage-add-expense-title"
+          hint="Review the expense details, then click Submit expense to add it to your ledger."
+          onClose={() => setExpenseAgree(null)}
         >
-          <div
-            className="relative my-4 w-full max-w-md rounded-2xl border border-[#E8E4DC] bg-[#FDFBF7] p-4 shadow-card"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="mb-3 flex items-center justify-between gap-2">
-              <h2
-                id="sage-add-expense-title"
-                className="font-heading text-base font-semibold text-[#3D3D3D]"
-              >
-                Add expense
-              </h2>
-              <button
-                type="button"
-                className="rounded-md p-1.5 text-[#8A8A8A] hover:bg-[#E8E4DC] hover:text-[#3D3D3D]"
-                aria-label="Close"
-                onClick={() => setExpenseAgree(null)}
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-            <p className="mb-3 text-[11px] text-[#8A8A8A]">
-              Review the expense details, then click Submit expense to add it to
-              your ledger.
-            </p>
-            <ExpenseForm
-              caseId={caseId}
-              children={childrenList}
-              initialValues={expenseAgree.initialValues}
-              hideHeader
-              onSuccess={(expenseId) => void handleExpenseCreated(expenseId)}
-            />
-          </div>
-        </div>
+          <ExpenseForm
+            key={`${expenseAgree.item.id}:${expenseAgree.proposalIndex}`}
+            caseId={caseId}
+            children={childrenList}
+            initialValues={expenseAgree.initialValues}
+            hideHeader
+            onSuccess={(expenseId) => void handleExpenseCreated(expenseId)}
+          />
+        </SageAgreeFormModal>
       )}
 
       <ConfirmModal

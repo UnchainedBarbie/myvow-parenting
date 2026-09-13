@@ -264,7 +264,7 @@ export function SageInbox({
     const out: Record<number, string> = {};
     for (const idx of indexes) {
       const p = proposals[idx];
-      if (!p || !needsDateField(p)) continue;
+      if (!p || !needsDateField(p, item)) continue;
       const val = dates[dateKey(item.id, idx)]?.trim();
       if (val) out[idx] = val;
     }
@@ -275,7 +275,7 @@ export function SageInbox({
     const proposals = item.plan?.proposals ?? [];
     return indexes.some((idx) => {
       const p = proposals[idx];
-      if (!p || !needsDateField(p)) return false;
+      if (!p || !needsDateField(p, item)) return false;
       return !(dates[dateKey(item.id, idx)] ?? "").trim();
     });
   }
@@ -632,6 +632,7 @@ export function SageInbox({
 
                       <ProposalCardList
                         itemId={item.id}
+                        item={item}
                         proposals={proposals}
                         hideActions={itemSelectMode}
                         indent={!itemSelectMode}

@@ -166,7 +166,7 @@ export function SageClient({
     const out: Record<number, string> = {};
     for (const idx of indexes) {
       const p = proposals[idx];
-      if (!p || !needsDateField(p)) continue;
+      if (!p || !needsDateField(p, item)) continue;
       const val = dates[dateKey(item.id, idx)]?.trim();
       if (val) out[idx] = val;
     }
@@ -177,7 +177,7 @@ export function SageClient({
     const proposals = item.plan?.proposals ?? [];
     return indexes.some((idx) => {
       const p = proposals[idx];
-      if (!p || !needsDateField(p)) return false;
+      if (!p || !needsDateField(p, item)) return false;
       return !(dates[dateKey(item.id, idx)] ?? "").trim();
     });
   }
@@ -432,6 +432,7 @@ export function SageClient({
                         <div className="max-w-[90%] rounded-xl border border-[#E8E4DC] bg-white px-2 py-2">
                           <ProposalCardList
                             itemId={item.id}
+                            item={item}
                             proposals={proposals}
                             indent={false}
                             multiSelect={isMulti}

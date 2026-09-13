@@ -178,7 +178,7 @@ export function TalkToSageDrawer({
     if (p.type === "calendar_update") {
       const dKey = dateKey(item.id, idx);
       const chosen = (dates[dKey] ?? "").trim() || p.chosen_date || "";
-      if (needsDateField(p) && !chosen) return;
+      if (needsDateField(p, item) && !chosen) return;
       setCalendarTarget({
         item,
         proposalIndex: idx,
@@ -362,6 +362,7 @@ export function TalkToSageDrawer({
                     <div className="rounded-xl border border-[#E8E4DC] bg-white px-2 py-2">
                       <ProposalCardList
                         itemId={t.item.id}
+                        item={t.item}
                         proposals={t.item.plan!.proposals!}
                         indent={false}
                         dates={dates}
@@ -377,7 +378,7 @@ export function TalkToSageDrawer({
                         missingRequiredDates={(indexes) =>
                           indexes.some((idx) => {
                             const p = t.item!.plan!.proposals![idx];
-                            if (!p || !needsDateField(p)) return false;
+                            if (!p || !needsDateField(p, t.item)) return false;
                             return !(
                               dates[dateKey(t.item!.id, idx)] ?? ""
                             ).trim();

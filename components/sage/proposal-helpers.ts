@@ -56,9 +56,70 @@ export function isActionable(p: SageProposal): boolean {
   );
 }
 
-/** Calendar updates always need an explicit chosen_date before Agree — don't suppress via unrelated resolved_dates. */
-export function needsDateField(p: SageProposal): boolean {
-  return p.type === "calendar_update" && !p.chosen_date;
+function isIsoDate(value: string | null | undefined): value is string {
+  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value.trim());
+}
+
+function toolInputRecord(
+  item: SageItem | null | undefined
+): Record<string, unknown> | null {
+  const input = item?.tool_input;
+  if (!input || typeof input !== "object" || Array.isArray(input)) return null;
+  return input as Record<string, unknown>;
+}
+
+function namedValues(input: Record<string, unknown> | null, key: string): string[] {
+  if (!input) return [];
+  const raw = input[key];
+  if (!Array.isArray(raw)) return [];
+  const names: string[] = [];
+  for (const entry of raw) {
+    if (entry && typeof entry === "object" && typeof (entry as { name?: unknown }).name === "string") {
+      const name = ((entry as { name: string }).name ?? "").trim();
+      if (name) names.push(name);
+    }
+  }
+  return names;
+}
+
+/** First engine-resolved calendar date (YYYY-MM-DD), if any. */
+export function resolvedCalendarIso(
+  item: SageItem | null | undefined
+): string | undefined {
+  const input = toolInputRecord(item);
+  const resolved = input?.resolved_dates;
+  if (Array.isArray(resolved)) {
+    for (const d of resolved) {
+      if (!d || typeof d !== "object") continue;
+      const rec = d as { status?: unknown; iso?: unknown };
+      if (rec.status === "resolved" && isIsoDate(typeof rec.iso === "string" ? rec.iso : null)) {
+        return (rec.iso as string).trim();
+      }
+    }
+  }
+  const dates = input?.dates;
+  if (Array.isArray(dates)) {
+    for (const d of dates) {
+      if (!d || typeof d !== "object") continue;
+      const val = (d as { value?: unknown }).value;
+      if (isIsoDate(typeof val === "string" ? val : null)) return (val as string).trim();
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Show the manual date field only when a calendar_update has no chosen_date
+ * AND the engine did not already resolve a real date.
+ */
+export function needsDateField(
+  p: SageProposal,
+  item?: SageItem | null
+): boolean {
+  if (p.type !== "calendar_update") return false;
+  if ((p.chosen_date ?? "").trim()) return false;
+  if (resolvedCalendarIso(item)) return false;
+  return true;
 }
 
 /** Strip misleading "on YYYY-MM-DD" from drafts when the user must pick the date. */
@@ -168,6 +229,20 @@ export function parseTargetTimeFromDraft(draft: string): string | undefined {
     );
   }
 
+  // "2pm" / "2 PM" without minutes
+  const hourMeridian = [...text.matchAll(/\b(\d{1,2})\s*(a\.?m\.?|p\.?m\.?)\b/gi)];
+  if (hourMeridian.length > 0) {
+    const last = hourMeridian[hourMeridian.length - 1];
+    return to24(
+      {
+        h: parseInt(last[1], 10),
+        min: "00",
+        ampm: (last[2] ?? "").toLowerCase().replace(/\./g, ""),
+      },
+      false
+    );
+  }
+
   // Single bare time only if pickup context allows afternoon PM heuristic
   const bare = [...text.matchAll(/\b(\d{1,2}):(\d{2})\b/g)];
   if (bare.length === 1 && pickupish) {
@@ -180,12 +255,83 @@ export function parseTargetTimeFromDraft(draft: string): string | undefined {
   return undefined;
 }
 
-export function buildCalendarTitle(item: SageItem): string {
-  const names = childNamesFromItem(item);
-  const name = names[0]?.trim();
-  const base = "Pickup change";
-  if (!name) return base;
-  return `${base} – ${name}`.slice(0, 40);
+function toTitleCase(s: string): string {
+  return s
+    .split(/\s+/)
+    .map((w) => (w.length === 0 ? w : w[0].toUpperCase() + w.slice(1).toLowerCase()))
+    .join(" ")
+    .trim();
+}
+
+function eventCorpus(item: SageItem, proposal?: SageProposal): string {
+  const input = toolInputRecord(item);
+  const draft =
+    (typeof proposal?.revised_text === "string" && proposal.revised_text.trim()
+      ? proposal.revised_text
+      : proposal?.draft) ?? "";
+  return [
+    item.summary ?? "",
+    item.domain ?? "",
+    item.item_type ?? "",
+    draft,
+    namedValues(input, "providers").join(" "),
+    namedValues(input, "merchants").join(" "),
+  ]
+    .join(" ")
+    .toLowerCase();
+}
+
+const MEDICAL_RE =
+  /dentist|dental|orthodont|doctor|pediatric|physician|clinic|hospital|checkup|vaccine|medical|optometr|ophthalm/;
+const THERAPY_RE = /therap|counsel/;
+const SCHOOL_RE = /school|teacher|classroom|\bpta\b|parent-teacher/;
+const ACTIVITY_RE = /soccer|practice|dance|sport|recital|\bgame\b|extracurricular/;
+const CUSTODY_RE = /pickup|pick-up|drop.?off|custody|handoff|exchange|visitation/;
+
+/** Map domain / provider / wording → calendar event_type. Never default to custody_exchange. */
+export function inferCalendarEventType(
+  item: SageItem,
+  proposal?: SageProposal
+): string {
+  const domain = (item.domain ?? "").toLowerCase();
+  const blob = eventCorpus(item, proposal);
+
+  if (domain === "medical" || MEDICAL_RE.test(blob)) return "medical";
+  if (domain === "school" || SCHOOL_RE.test(blob)) return "school";
+  if (THERAPY_RE.test(blob)) return "therapy";
+  if (ACTIVITY_RE.test(blob)) return "extracurricular";
+  if (CUSTODY_RE.test(blob)) return "custody_exchange";
+  return "other";
+}
+
+function eventKindLabel(
+  item: SageItem,
+  proposal: SageProposal | undefined,
+  eventType: string
+): string {
+  const providers = namedValues(toolInputRecord(item), "providers");
+  if (providers[0]) return toTitleCase(providers[0]);
+  const blob = eventCorpus(item, proposal);
+  if (/dentist|dental/.test(blob)) return "Dentist";
+  if (/orthodont/.test(blob)) return "Orthodontist";
+  if (/doctor|pediatric|physician/.test(blob)) return "Doctor";
+  if (eventType === "medical") return "Medical appointment";
+  if (eventType === "school") return "School";
+  if (eventType === "therapy") return "Therapy";
+  if (eventType === "extracurricular") return "Activity";
+  if (eventType === "custody_exchange") return "Pickup change";
+  return "Calendar event";
+}
+
+export function buildCalendarTitle(
+  item: SageItem,
+  proposal?: SageProposal
+): string {
+  const name = childNamesFromItem(item)[0]?.trim();
+  const eventType = inferCalendarEventType(item, proposal);
+  const kind = eventKindLabel(item, proposal, eventType);
+  const title = name ? `${kind} – ${name}` : kind;
+  return title.slice(0, 40);
 }
 
 export function buildCalendarInitialValues(
@@ -203,16 +349,18 @@ export function buildCalendarInitialValues(
       : proposal.draft) ?? "";
   const summary = (item.summary ?? "").trim();
   const date =
-    (chosenDate ?? proposal.chosen_date ?? "").trim() || undefined;
+    (chosenDate ?? proposal.chosen_date ?? resolvedCalendarIso(item) ?? "").trim() ||
+    undefined;
   const startTime = parseTargetTimeFromDraft(
     [draftSource, summary].filter(Boolean).join(" ")
   );
+  const eventType = inferCalendarEventType(item, proposal);
   return {
     childId,
     date,
     ...(startTime ? { startTime } : {}),
-    title: buildCalendarTitle(item),
-    eventType: "custody_exchange",
+    title: buildCalendarTitle(item, proposal),
+    eventType,
     description: summary || undefined,
   };
 }

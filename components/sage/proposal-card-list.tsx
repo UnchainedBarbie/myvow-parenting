@@ -2,7 +2,7 @@
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import type { SageProposal } from "./proposal-types";
+import type { SageItem, SageProposal } from "./proposal-types";
 import {
   canUndo,
   dateKey,
@@ -17,6 +17,7 @@ import {
 
 export type ProposalCardListProps = {
   itemId: string;
+  item?: SageItem | null;
   proposals: SageProposal[];
   /** When true, hide left action controls (item bulk-select mode) */
   hideActions?: boolean;
@@ -40,6 +41,7 @@ export type ProposalCardListProps = {
 
 export function ProposalCardList({
   itemId,
+  item,
   proposals,
   hideActions = false,
   indent = true,
@@ -92,7 +94,7 @@ export function ProposalCardList({
           const executed = p.executed === true;
           const noteOnly = p.type === "note_only";
           const actionable = isActionable(p);
-          const showDate = actionable && needsDateField(p);
+          const showDate = actionable && needsDateField(p, item);
           const dKey = dateKey(itemId, idx);
           const isChecked = checked.includes(idx);
           const rowBusy = busyKey === `${itemId}:${idx}` || itemBusy;

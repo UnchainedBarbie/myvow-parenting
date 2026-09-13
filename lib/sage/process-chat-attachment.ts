@@ -137,6 +137,7 @@ export async function loadAndClassifyDocument(opts: {
   const mimeType = (doc.mime_type as string) || "application/octet-stream";
   const fileName = (doc.file_name as string) || "receipt";
   const classify = await runClassify(buf, mimeType, fileName);
+  console.log("[chat-attach] classify result:", JSON.stringify(classify));
   return {
     classify,
     attachment: {

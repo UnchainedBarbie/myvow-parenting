@@ -22,6 +22,11 @@ import {
 import { SageAgreeFormModal } from "@/components/sage/sage-agree-form-modal";
 import type { SageItem, SagePlan, SageProposal } from "@/components/sage/proposal-types";
 import {
+  createSageSession,
+  notifySageSessionsChanged,
+  sageChatHref,
+} from "@/lib/sage-sessions-client";
+import {
   AddEventForm,
   type AddEventFormInitialValues,
 } from "@/components/calendar/add-event-form";
@@ -152,6 +157,11 @@ export function SageClient({
   useEffect(() => {
     void loadMessages(sessionId);
   }, [sessionId, loadMessages]);
+
+  useEffect(() => {
+    const t = window.setTimeout(() => textareaRef.current?.focus(), 80);
+    return () => window.clearTimeout(t);
+  }, [sessionId]);
 
   useEffect(() => {
     if (bottomRef.current) {
@@ -422,10 +432,14 @@ export function SageClient({
   async function handleSend() {
     const content = draft.trim();
     if (!content || sending) return;
-    if (sessionId === null) return;
     const wasFirstMessage = messages.length === 0;
     setSending(true);
     try {
+      let sid = sessionId;
+      if (sid === null) {
+        const created = await createSageSession("private");
+        sid = created.id;
+      }
       const optimisticUser: SageMessage = {
         id: `local-${Date.now()}`,
         user_id: "me",
@@ -439,13 +453,16 @@ export function SageClient({
       const res = await fetch("/api/sage/messages", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content, session_id: sessionId }),
+        body: JSON.stringify({ content, session_id: sid }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         showErrorToast(
           (data as { message?: string }).message ?? "Sage is unavailable right now."
         );
+        if (sessionId === null && sid) {
+          router.replace(sageChatHref(sid));
+        }
         return;
       }
       const payload = data as {
@@ -474,14 +491,19 @@ export function SageClient({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             firstMessage: content,
-            sessionId,
+            sessionId: sid,
           }),
         })
           .then((r) => r.json())
           .then(() => {
             onSessionTitleGenerated?.();
+            notifySageSessionsChanged();
           })
           .catch(() => {});
+      }
+
+      if (sessionId === null && sid) {
+        router.replace(sageChatHref(sid));
       }
     } catch {
       showErrorToast("Something went wrong. Try again.");
@@ -513,7 +535,7 @@ export function SageClient({
               <p className="text-foreground-secondary text-xs">Loading your reflections…</p>
             ) : messages.length === 0 ? (
               <p className="text-foreground-secondary text-xs">
-                This is your private space with Sage. Share a thought, a draft, or a question to begin.
+                Start typing below. This is your private space with Sage.
               </p>
             ) : (
               <>
@@ -635,7 +657,7 @@ export function SageClient({
           placeholder={
             writePrivatelyPlaceholder
               ? "Write what's on your mind. This stays here."
-              : "Write a thought, paste a message, or ask Sage for help."
+              : "Start typing…"
           }
           className="min-h-[72px] max-h-[140px] resize-y rounded-card border-border bg-background text-sm"
         />

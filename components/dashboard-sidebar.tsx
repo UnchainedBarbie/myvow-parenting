@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import Image from "next/image";
-import { usePathname } from "next/navigation";
+import { useCallback, useEffect, useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
 import {
   LayoutDashboard,
   Inbox,
@@ -12,11 +13,12 @@ import {
   Calendar,
   FileBarChart,
   LogOut,
-  Leaf,
   HelpCircle,
   User,
   Settings,
   Feather,
+  MessageCircle,
+  Plus,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
@@ -28,6 +30,19 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  SAGE_SESSIONS_CHANGED_EVENT,
+  createSageSession,
+  fetchSageSessions,
+  isSageChatsPath,
+  isSageInboxPath,
+  sageChatHref,
+  truncateSageSessionTitle,
+  type SageSessionRow,
+} from "@/lib/sage-sessions-client";
+import { showErrorToast } from "@/components/ui/toaster";
+
+const SIDEBAR_CHAT_LIMIT = 10;
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -39,6 +54,12 @@ const navItems = [
   { href: "/calendar", label: "Calendar", icon: Calendar },
   { href: "/reports", label: "Reports", icon: FileBarChart },
 ];
+
+function isNavActive(href: string, pathname: string) {
+  if (href === "/dashboard") return pathname === "/dashboard";
+  if (href === "/sage-inbox") return isSageInboxPath(pathname);
+  return pathname === href || pathname.startsWith(`${href}/`);
+}
 
 type DashboardSidebarProps = {
   displayName?: string;
@@ -52,6 +73,48 @@ export function DashboardSidebar({
   avatarUrl = null,
 }: DashboardSidebarProps) {
   const pathname = usePathname();
+  const router = useRouter();
+  const [sessions, setSessions] = useState<SageSessionRow[]>([]);
+  const [creating, setCreating] = useState<"private" | "incident" | null>(null);
+
+  const loadSessions = useCallback(async () => {
+    try {
+      const list = await fetchSageSessions("all");
+      setSessions(list);
+    } catch {
+      // Sidebar list is best-effort; the Chats page still loads the full set.
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadSessions();
+    function onChanged() {
+      void loadSessions();
+    }
+    window.addEventListener(SAGE_SESSIONS_CHANGED_EVENT, onChanged);
+    return () => window.removeEventListener(SAGE_SESSIONS_CHANGED_EVENT, onChanged);
+  }, [loadSessions]);
+
+  useEffect(() => {
+    if (isSageChatsPath(pathname)) {
+      void loadSessions();
+    }
+  }, [pathname, loadSessions]);
+
+  async function handleCreate(sessionType: "private" | "incident") {
+    if (creating) return;
+    setCreating(sessionType);
+    try {
+      const session = await createSageSession(sessionType);
+      router.push(sageChatHref(session.id));
+    } catch (e) {
+      showErrorToast(
+        e instanceof Error ? e.message : "Could not create session."
+      );
+    } finally {
+      setCreating(null);
+    }
+  }
 
   async function handleSignOut() {
     const supabase = createClient();
@@ -60,6 +123,9 @@ export function DashboardSidebar({
   }
 
   const label = displayName.trim() || "Account";
+  const recentSessions = sessions.slice(0, SIDEBAR_CHAT_LIMIT);
+  const hasMoreSessions = sessions.length > SIDEBAR_CHAT_LIMIT;
+  const chatsActive = isSageChatsPath(pathname);
 
   return (
     <aside className="hidden w-64 flex-col border-r border-border bg-background md:flex">
@@ -77,11 +143,9 @@ export function DashboardSidebar({
           </div>
         </Link>
       </div>
-      <nav className="flex-1 space-y-1 p-3">
+      <nav className="flex-1 min-h-0 space-y-1 overflow-y-auto p-3">
         {navItems.map(({ href, label: navLabel, icon: Icon }) => {
-          const isActive =
-            pathname === href ||
-            (href !== "/dashboard" && pathname.startsWith(href));
+          const isActive = isNavActive(href, pathname);
           return (
             <Link
               key={href}
@@ -98,21 +162,72 @@ export function DashboardSidebar({
             </Link>
           );
         })}
+
+        <div className="pt-1">
+          <Link
+            href="/sage"
+            className={cn(
+              "flex items-center gap-3 rounded-card px-3 py-2 text-sm font-medium transition-colors",
+              chatsActive
+                ? "bg-primary-light text-primary-dark"
+                : "text-foreground-secondary hover:bg-muted hover:text-foreground"
+            )}
+          >
+            <MessageCircle className="h-5 w-5 shrink-0" />
+            Chats
+          </Link>
+          <div className="mt-1 space-y-0.5 pl-2">
+            <button
+              type="button"
+              onClick={() => void handleCreate("private")}
+              disabled={creating !== null}
+              className="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-left text-xs font-medium text-[#5B7A52] hover:bg-[#F2F5EF] disabled:opacity-60"
+            >
+              <Plus className="h-3.5 w-3.5 shrink-0" />
+              {creating === "private" ? "Starting…" : "New chat"}
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleCreate("incident")}
+              disabled={creating !== null}
+              className="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-left text-[11px] text-[#8A8A8A] hover:bg-[#FFF9EC] hover:text-[#3D3D3D] disabled:opacity-60"
+            >
+              {creating === "incident" ? "Starting…" : "New incident report"}
+            </button>
+            {recentSessions.map((s) => {
+              const href = sageChatHref(s.id);
+              const isActive = pathname === href;
+              return (
+                <Link
+                  key={s.id}
+                  href={href}
+                  title={s.title ?? "New chat"}
+                  className={cn(
+                    "block rounded-lg px-3 py-1.5 text-left text-xs transition-colors",
+                    isActive
+                      ? "bg-[#E8EDE3] text-[#3D3D3D]"
+                      : "text-foreground-secondary hover:bg-muted hover:text-foreground"
+                  )}
+                >
+                  <span className="block truncate">
+                    {truncateSageSessionTitle(s.title, 32)}
+                  </span>
+                </Link>
+              );
+            })}
+            {hasMoreSessions ? (
+              <Link
+                href="/sage"
+                className="block rounded-lg px-3 py-1.5 text-[11px] text-[#5B7A52] hover:bg-[#F2F5EF] hover:underline"
+              >
+                View all chats
+              </Link>
+            ) : null}
+          </div>
+        </div>
       </nav>
       <Separator className="mx-3" />
       <div className="space-y-1 p-3">
-        <Link
-          href="/sage"
-          className={cn(
-            "flex items-center gap-3 rounded-card px-3 py-2 text-sm font-medium transition-colors",
-            pathname.startsWith("/sage")
-              ? "bg-primary-light text-primary-dark"
-              : "text-foreground-secondary hover:bg-muted hover:text-foreground"
-          )}
-        >
-          <Leaf className="h-5 w-5 shrink-0" />
-          Sage
-        </Link>
         <Link
           href="/support"
           className={cn(

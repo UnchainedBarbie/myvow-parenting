@@ -10,6 +10,7 @@ import {
 } from "@/lib/sage/observation-builder";
 import { plan, type Plan } from "@/lib/sage/planner";
 import {
+  rawForDateResolver,
   resolveChildren,
   resolveDates,
   type DateResolution,
@@ -78,7 +79,7 @@ export async function processObservation(
     .map((r) => r.name);
 
   const resolved_dates = resolveDates(
-    entities.dates.map((d) => ({ raw: d.raw })),
+    entities.dates.map((d) => ({ raw: rawForDateResolver(d) })),
     context.today ?? new Date(),
     context.timezone
   );

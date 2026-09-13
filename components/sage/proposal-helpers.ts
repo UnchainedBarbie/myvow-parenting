@@ -82,6 +82,23 @@ function namedValues(input: Record<string, unknown> | null, key: string): string
   return names;
 }
 
+/** Never prefill a calendar date in a prior year (invented ISO like 2024-09-15). */
+function upcomingIso(iso: string): string {
+  const m = iso.trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return iso.trim();
+  const y = Number(m[1]);
+  const month = Number(m[2]);
+  const day = Number(m[3]);
+  const now = new Date();
+  const cy = now.getFullYear();
+  const cm = now.getMonth() + 1;
+  const cd = now.getDate();
+  if (y >= cy) return iso.trim();
+  const thisYearStillUpcoming = month > cm || (month === cm && day >= cd);
+  const year = thisYearStillUpcoming ? cy : cy + 1;
+  return `${year}-${m[2]}-${m[3]}`;
+}
+
 /** First engine-resolved calendar date (YYYY-MM-DD), if any. */
 export function resolvedCalendarIso(
   item: SageItem | null | undefined
@@ -93,7 +110,7 @@ export function resolvedCalendarIso(
       if (!d || typeof d !== "object") continue;
       const rec = d as { status?: unknown; iso?: unknown };
       if (rec.status === "resolved" && isIsoDate(typeof rec.iso === "string" ? rec.iso : null)) {
-        return (rec.iso as string).trim();
+        return upcomingIso((rec.iso as string).trim());
       }
     }
   }
@@ -102,7 +119,9 @@ export function resolvedCalendarIso(
     for (const d of dates) {
       if (!d || typeof d !== "object") continue;
       const val = (d as { value?: unknown }).value;
-      if (isIsoDate(typeof val === "string" ? val : null)) return (val as string).trim();
+      if (isIsoDate(typeof val === "string" ? val : null)) {
+        return upcomingIso((val as string).trim());
+      }
     }
   }
   return undefined;
@@ -284,8 +303,10 @@ function eventCorpus(item: SageItem, proposal?: SageProposal): string {
 const MEDICAL_RE =
   /dentist|dental|orthodont|doctor|pediatric|physician|clinic|hospital|checkup|vaccine|medical|optometr|ophthalm/;
 const THERAPY_RE = /therap|counsel/;
-const SCHOOL_RE = /school|teacher|classroom|\bpta\b|parent-teacher/;
-const ACTIVITY_RE = /soccer|practice|dance|sport|recital|\bgame\b|extracurricular/;
+const SCHOOL_RE =
+  /school|teacher|classroom|\bpta\b|parent-?teacher|\bconference\b/;
+const ACTIVITY_RE =
+  /concert|choir|music|\bband\b|recital|rehearsal|tournament|soccer|practice|dance|\bsports?\b|\bgame\b|extracurricular|lesson/;
 const CUSTODY_RE = /pickup|pick-up|drop.?off|custody|handoff|exchange|visitation/;
 
 /** Map domain / provider / wording → calendar event_type. Never default to custody_exchange. */
@@ -297,30 +318,82 @@ export function inferCalendarEventType(
   const blob = eventCorpus(item, proposal);
 
   if (domain === "medical" || MEDICAL_RE.test(blob)) return "medical";
+  if (ACTIVITY_RE.test(blob)) return "extracurricular";
   if (domain === "school" || SCHOOL_RE.test(blob)) return "school";
   if (THERAPY_RE.test(blob)) return "therapy";
-  if (ACTIVITY_RE.test(blob)) return "extracurricular";
   if (CUSTODY_RE.test(blob)) return "custody_exchange";
   return "other";
 }
 
-function eventKindLabel(
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Pull the actual event name from the understood request (e.g. "choir concert").
+ * Returns null when nothing extractable — caller falls back to "Calendar event".
+ */
+export function extractEventName(
   item: SageItem,
-  proposal: SageProposal | undefined,
-  eventType: string
-): string {
+  proposal?: SageProposal
+): string | null {
+  const childNames = childNamesFromItem(item);
   const providers = namedValues(toolInputRecord(item), "providers");
+  const draft =
+    (typeof proposal?.revised_text === "string" && proposal.revised_text.trim()
+      ? proposal.revised_text
+      : proposal?.draft) ?? "";
+  const texts = [item.summary ?? "", draft].filter((t) => t.trim());
+
+  for (const text of texts) {
+    const extracted = eventNameFromText(text, childNames);
+    if (extracted) return extracted;
+  }
+
   if (providers[0]) return toTitleCase(providers[0]);
+
   const blob = eventCorpus(item, proposal);
   if (/dentist|dental/.test(blob)) return "Dentist";
   if (/orthodont/.test(blob)) return "Orthodontist";
   if (/doctor|pediatric|physician/.test(blob)) return "Doctor";
-  if (eventType === "medical") return "Medical appointment";
-  if (eventType === "school") return "School";
-  if (eventType === "therapy") return "Therapy";
-  if (eventType === "extracurricular") return "Activity";
-  if (eventType === "custody_exchange") return "Pickup change";
-  return "Calendar event";
+  return null;
+}
+
+function eventNameFromText(text: string, childNames: string[]): string | null {
+  let s = text.trim();
+  if (!s) return null;
+
+  s = s.replace(/\b(at|@)\s+\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?)?/gi, " ");
+  s = s.replace(/\b\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?)\b/gi, " ");
+  s = s.replace(/\bon\s+\d{4}-\d{2}-\d{2}\b/gi, " ");
+  s = s.replace(/\bon\s+\d{1,2}[\/\-]\d{1,2}(?:[\/\-]\d{2,4})?\b/gi, " ");
+  s = s.replace(
+    /\bon\s+(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+\d{1,2}(?:st|nd|rd|th)?(?:,?\s+\d{4})?/gi,
+    " "
+  );
+  s = s.replace(/\b(?:to|on|in)\s+your\s+calendar\b/gi, " ");
+  s = s.replace(/\bcalendar\s+event\b/gi, " ");
+
+  for (const n of childNames) {
+    const e = escapeRegExp(n);
+    s = s.replace(new RegExp(`\\b${e}(?:'s)?\\b`, "gi"), " ");
+  }
+
+  s = s.replace(
+    /\b(you['’]d like to|you would like to|please|create|add|schedule|make|put|set up|include)\b/gi,
+    " "
+  );
+  s = s.replace(
+    /\b(a|an|the|your|their|this|that|for|to|from|with|about)\b/gi,
+    " "
+  );
+  s = s.replace(/\b(event|appointment|calendar)\b/gi, " ");
+  s = s.replace(/[.,;:!?]+/g, " ");
+  s = s.replace(/\s+/g, " ").trim();
+
+  if (s.length < 3) return null;
+  if (/^(other|update|change|item|something)$/i.test(s)) return null;
+  return toTitleCase(s);
 }
 
 export function buildCalendarTitle(
@@ -328,10 +401,9 @@ export function buildCalendarTitle(
   proposal?: SageProposal
 ): string {
   const name = childNamesFromItem(item)[0]?.trim();
-  const eventType = inferCalendarEventType(item, proposal);
-  const kind = eventKindLabel(item, proposal, eventType);
-  const title = name ? `${kind} – ${name}` : kind;
-  return title.slice(0, 40);
+  const eventName = extractEventName(item, proposal) ?? "Calendar event";
+  const title = name ? `${eventName} – ${name}` : eventName;
+  return title.slice(0, 60);
 }
 
 export function buildCalendarInitialValues(

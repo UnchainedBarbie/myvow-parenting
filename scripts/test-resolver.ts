@@ -6,6 +6,11 @@
 
 import { config } from "dotenv";
 import { resolve } from "path";
+import {
+  buildCalendarTitle,
+  inferCalendarEventType,
+} from "../components/sage/proposal-helpers";
+import type { SageItem } from "../components/sage/proposal-types";
 import { resolveChildren, resolveDate } from "../lib/sage/resolver";
 
 config({ path: resolve(process.cwd(), ".env.local") });
@@ -28,6 +33,10 @@ const DATE_CASES = [
   "tomorrow",
   "Jun 26",
   "Dec 25",
+  "9/15",
+  "on 9/15 at 6pm",
+  "2024-09-15",
+  "9/15/2024",
   "6/26/2026",
   "Thursday",
   "next Friday",
@@ -56,6 +65,36 @@ async function main() {
       `"${input}" → ${r.status} | ${r.iso ?? "null"} | ${r.reason}`
     );
   }
+
+  const choirItem: SageItem = {
+    id: "test",
+    item_type: "calendar_update",
+    domain: "calendar",
+    summary:
+      "You'd like to add a choir concert for Avery on 9/15 at 6pm to your calendar.",
+    evidence_excerpt: "choir concert",
+    urgency: "normal",
+    action_required: true,
+    child_ids: ["child-1"],
+    tool_input: {
+      children: [{ name: "Avery", confidence: 1 }],
+      dates: [{ raw: "9/15", value: "2024-09-15" }],
+    },
+    plan: null,
+    status: "open",
+    created_at: new Date().toISOString(),
+  };
+  console.log("\n========== Calendar pre-fill ==========");
+  console.log("title:", buildCalendarTitle(choirItem));
+  console.log("category:", inferCalendarEventType(choirItem));
+
+  const rawAsk: SageItem = {
+    ...choirItem,
+    summary:
+      "create a calendar event for avery for choir concert on 9/15 at 6pm",
+  };
+  console.log("title (raw ask):", buildCalendarTitle(rawAsk));
+  console.log("category (raw ask):", inferCalendarEventType(rawAsk));
 }
 
 main().catch((e) => {

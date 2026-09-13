@@ -245,6 +245,65 @@ function resolveWeekdayToken(token: string): string | null {
   return WEEKDAY_ALIASES[token] ?? null;
 }
 
+function containsFourDigitYear(s: string): boolean {
+  return /\b(?:19|20)\d{2}\b/.test(s);
+}
+
+/** Current year, or next year if that month/day already passed. Never a prior year. */
+function rollForwardMonthDay(m: number, d: number, todayYmd: Ymd): Ymd | null {
+  const tryYear = (y: number): Ymd | null =>
+    isValidYmd(y, m, d) ? { y, m, d } : null;
+  const thisYear = tryYear(todayYmd.y);
+  if (thisYear && compareYmd(thisYear, todayYmd) >= 0) return thisYear;
+  return tryYear(todayYmd.y + 1);
+}
+
+function resolved(
+  raw: string,
+  ymd: Ymd,
+  reason: string
+): DateResolution {
+  return {
+    raw,
+    status: "resolved",
+    iso: formatIso(ymd),
+    reason,
+  };
+}
+
+/**
+ * If a parsed date landed in a past year (LLM-invented ISO, etc.), keep the
+ * month/day and roll to this year or next — never emit a prior year.
+ */
+function coerceUpcomingYear(
+  ymd: Ymd,
+  todayYmd: Ymd,
+  yearExplicit: boolean
+): { ymd: Ymd; reasonSuffix: string } {
+  if (ymd.y < todayYmd.y) {
+    const rolled = rollForwardMonthDay(ymd.m, ymd.d, todayYmd);
+    if (rolled) {
+      return {
+        ymd: rolled,
+        reasonSuffix:
+          rolled.y === todayYmd.y
+            ? " (past year ignored — current year)"
+            : " (past year ignored — rolled to next year)",
+      };
+    }
+  }
+  if (!yearExplicit && compareYmd(ymd, todayYmd) < 0) {
+    const rolled = rollForwardMonthDay(ymd.m, ymd.d, todayYmd);
+    if (rolled) {
+      return {
+        ymd: rolled,
+        reasonSuffix: " (already passed — rolled to next year)",
+      };
+    }
+  }
+  return { ymd, reasonSuffix: "" };
+}
+
 function weekdayNeedsClarification(raw: string, weekday: string): DateResolution {
   const label = weekday.charAt(0).toUpperCase() + weekday.slice(1);
   return {
@@ -253,6 +312,45 @@ function weekdayNeedsClarification(raw: string, weekday: string): DateResolution
     iso: null,
     reason: `Which ${label}? Please confirm the date.`,
   };
+}
+
+function resolveMonthDayNoYear(
+  m: number,
+  d: number,
+  todayYmd: Ymd,
+  original: string
+): DateResolution | null {
+  const rolled = rollForwardMonthDay(m, d, todayYmd);
+  if (!rolled) return null;
+  return resolved(
+    original,
+    rolled,
+    rolled.y === todayYmd.y
+      ? "Month/day in current year"
+      : "Month/day already passed — rolled to next year"
+  );
+}
+
+function finishWithYear(
+  original: string,
+  ymd: Ymd,
+  todayYmd: Ymd,
+  yearExplicit: boolean,
+  reason: string
+): DateResolution {
+  const coerced = coerceUpcomingYear(ymd, todayYmd, yearExplicit);
+  return resolved(original, coerced.ymd, reason + coerced.reasonSuffix);
+}
+
+/**
+ * Prefer the user-written date (e.g. "9/15") over an LLM ISO that invented a year.
+ */
+export function rawForDateResolver(d: { raw?: string; value?: string }): string {
+  const raw = (d.raw ?? "").trim();
+  const value = (d.value ?? "").trim();
+  if (raw && !containsFourDigitYear(raw)) return raw;
+  if (raw) return raw;
+  return value;
 }
 
 /**
@@ -348,19 +446,20 @@ export function resolveDate(
     return weekdayNeedsClarification(original, bareWd);
   }
 
-  // ISO YYYY-MM-DD
-  const isoMatch = lower.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  // ISO YYYY-MM-DD (full string). Past years are treated as month/day — never keep 2024 when today is 2026.
+  const isoMatch = lower.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:[t\s].*)?$/);
   if (isoMatch) {
     const y = Number(isoMatch[1]);
     const m = Number(isoMatch[2]);
     const d = Number(isoMatch[3]);
     if (isValidYmd(y, m, d)) {
-      return {
-        raw: original,
-        status: "resolved",
-        iso: formatIso({ y, m, d }),
-        reason: "Explicit ISO date with year",
-      };
+      return finishWithYear(
+        original,
+        { y, m, d },
+        todayYmd,
+        true,
+        "Explicit ISO date with year"
+      );
     }
   }
 
@@ -371,12 +470,13 @@ export function resolveDate(
     const d = Number(numericYear[2]);
     const y = Number(numericYear[3]);
     if (isValidYmd(y, m, d)) {
-      return {
-        raw: original,
-        status: "resolved",
-        iso: formatIso({ y, m, d }),
-        reason: "Explicit date with year",
-      };
+      return finishWithYear(
+        original,
+        { y, m, d },
+        todayYmd,
+        true,
+        "Explicit date with year"
+      );
     }
   }
 
@@ -389,12 +489,13 @@ export function resolveDate(
     const d = Number(monthDayYear[2]);
     const y = Number(monthDayYear[3]);
     if (m && isValidYmd(y, m, d)) {
-      return {
-        raw: original,
-        status: "resolved",
-        iso: formatIso({ y, m, d }),
-        reason: "Explicit date with year",
-      };
+      return finishWithYear(
+        original,
+        { y, m, d },
+        todayYmd,
+        true,
+        "Explicit date with year"
+      );
     }
   }
 
@@ -403,42 +504,40 @@ export function resolveDate(
   if (monthDay) {
     const m = MONTHS[monthDay[1]];
     const d = Number(monthDay[2]);
-    if (m && isValidYmd(todayYmd.y, m, d)) {
-      let candidate: Ymd = { y: todayYmd.y, m, d };
-      if (compareYmd(candidate, todayYmd) < 0) {
-        candidate = { y: todayYmd.y + 1, m, d };
-      }
-      return {
-        raw: original,
-        status: "resolved",
-        iso: formatIso(candidate),
-        reason:
-          candidate.y === todayYmd.y
-            ? "Month/day in current year"
-            : "Month/day already passed — rolled to next year",
-      };
+    if (m) {
+      const hit = resolveMonthDayNoYear(m, d, todayYmd, original);
+      if (hit) return hit;
     }
   }
 
-  // Numeric without year: M/D or M-D
+  // Numeric without year: M/D or M-D (exact)
   const numericNoYear = lower.match(/^(\d{1,2})[\/\-](\d{1,2})$/);
   if (numericNoYear) {
     const m = Number(numericNoYear[1]);
     const d = Number(numericNoYear[2]);
-    if (isValidYmd(todayYmd.y, m, d)) {
-      let candidate: Ymd = { y: todayYmd.y, m, d };
-      if (compareYmd(candidate, todayYmd) < 0) {
-        candidate = { y: todayYmd.y + 1, m, d };
+    const hit = resolveMonthDayNoYear(m, d, todayYmd, original);
+    if (hit) return hit;
+  }
+
+  // Same yearless rules when the date is embedded ("on 9/15 at 6pm", "Jun 26 at 6pm")
+  if (!containsFourDigitYear(lower)) {
+    const embeddedNumeric = lower.match(/\b(\d{1,2})[\/\-](\d{1,2})\b/);
+    if (embeddedNumeric) {
+      const m = Number(embeddedNumeric[1]);
+      const d = Number(embeddedNumeric[2]);
+      const hit = resolveMonthDayNoYear(m, d, todayYmd, original);
+      if (hit) return hit;
+    }
+    const embeddedMonth = lower.match(
+      /\b([a-z]+)\s+(\d{1,2})(?:st|nd|rd|th)?\b/
+    );
+    if (embeddedMonth) {
+      const m = MONTHS[embeddedMonth[1]];
+      const d = Number(embeddedMonth[2]);
+      if (m) {
+        const hit = resolveMonthDayNoYear(m, d, todayYmd, original);
+        if (hit) return hit;
       }
-      return {
-        raw: original,
-        status: "resolved",
-        iso: formatIso(candidate),
-        reason:
-          candidate.y === todayYmd.y
-            ? "Month/day in current year"
-            : "Month/day already passed — rolled to next year",
-      };
     }
   }
 

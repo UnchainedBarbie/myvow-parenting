@@ -80,7 +80,7 @@ reasoning.signals: short observable rationale strings for the classification (au
 Entities — extract names and values only, NEVER database IDs:
 - children: child first names mentioned
 - people: other people mentioned (not Co-Parent label)
-- dates: value as ISO YYYY-MM-DD when possible, raw as written
+- dates: raw MUST be the date as the user wrote it (e.g. "9/15", "Jun 26") — do NOT rewrite raw as ISO. If the user omitted a year, do NOT invent one in value (leave value empty). Downstream resolution assigns the year. Only put a year in value when the user actually supplied one.
 - amounts: numeric value and currency code (default USD)
 - merchants, providers, documents: names only
 

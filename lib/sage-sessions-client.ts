@@ -75,6 +75,42 @@ export async function fetchSageSessions(
   return (data as { sessions?: SageSessionRow[] }).sessions ?? [];
 }
 
+export async function patchSageSession(
+  id: string,
+  updates: { flagged?: boolean; archived?: boolean; title?: string }
+): Promise<SageSessionRow> {
+  const res = await fetch(`/api/sage/sessions/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(updates),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(
+      (data as { message?: string }).message ?? "Could not update session."
+    );
+  }
+  notifySageSessionsChanged();
+  const session = (data as { session?: SageSessionRow }).session;
+  if (!session) {
+    throw new Error("Could not update session.");
+  }
+  return session;
+}
+
+export async function deleteSageSession(id: string): Promise<void> {
+  const res = await fetch(`/api/sage/sessions/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(
+      (data as { message?: string }).message ?? "Could not delete conversation."
+    );
+  }
+  notifySageSessionsChanged();
+}
+
 export async function fetchSageSession(
   id: string
 ): Promise<SageSessionRow | null> {

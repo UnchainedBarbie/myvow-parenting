@@ -9,11 +9,8 @@ import {
   PenLine,
   Trash2,
   Flag,
-  Archive,
-  ArchiveRestore,
   Search,
   FileText,
-  MoreVertical,
   ArrowLeft,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -25,13 +22,16 @@ import { IncidentSessionView } from "./IncidentSessionView";
 import { showErrorToast } from "@/components/ui/toaster";
 import {
   createSageSession,
+  deleteSageSession,
   fetchSageSession,
   fetchSageSessions,
   notifySageSessionsChanged,
+  patchSageSession,
   sageChatHref,
   truncateSageSessionTitle,
   type SageSessionRow,
 } from "@/lib/sage-sessions-client";
+import { SageSessionOverflowMenu } from "@/components/sage/sage-session-overflow-menu";
 
 type ListFilter = "all" | "incident" | "flagged" | "archived";
 
@@ -74,7 +74,6 @@ export function SageSplitView() {
 
   const [listFilter, setListFilter] = useState<ListFilter>("all");
   const [searchQuery, setSearchQuery] = useState("");
-  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
@@ -90,22 +89,6 @@ export function SageSplitView() {
     activeSession ??
     sessions.find((s) => s.id === urlSessionId) ??
     null;
-
-  useEffect(() => {
-    if (!menuOpenId) return;
-    function handleClickOutside(e: MouseEvent) {
-      const target = e.target as HTMLElement | null;
-      if (
-        !target?.closest("[data-sage-session-menu]") &&
-        !target?.closest("[data-sage-session-menu-button]")
-      ) {
-        setMenuOpenId(null);
-        setDeleteConfirmId(null);
-      }
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [menuOpenId]);
 
   useEffect(() => {
     if (renamingId && renameInputRef.current) {
@@ -238,39 +221,18 @@ export function SageSplitView() {
 
   async function handleFlag(sessionId: string, currentFlagged: boolean) {
     try {
-      const res = await fetch(`/api/sage/sessions/${sessionId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ flagged: !currentFlagged }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        showErrorToast(
-          (data as { message?: string }).message ?? "Could not update session."
-        );
-        return;
-      }
+      await patchSageSession(sessionId, { flagged: !currentFlagged });
       patchSession(sessionId, { flagged: !currentFlagged });
-      notifySageSessionsChanged();
-    } catch {
-      showErrorToast("Something went wrong.");
+    } catch (e) {
+      showErrorToast(
+        e instanceof Error ? e.message : "Could not update session."
+      );
     }
   }
 
   async function handleArchive(sessionId: string, archived: boolean) {
     try {
-      const res = await fetch(`/api/sage/sessions/${sessionId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ archived }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        showErrorToast(
-          (data as { message?: string }).message ?? "Could not update session."
-        );
-        return;
-      }
+      await patchSageSession(sessionId, { archived });
       setSessions((prev) =>
         prev
           .map((s) => (s.id === sessionId ? { ...s, archived } : s))
@@ -279,32 +241,24 @@ export function SageSplitView() {
       setActiveSession((prev) =>
         prev && prev.id === sessionId ? { ...prev, archived } : prev
       );
-      notifySageSessionsChanged();
       if (urlSessionId === sessionId && archived) router.push("/sage");
-    } catch {
-      showErrorToast("Something went wrong.");
+    } catch (e) {
+      showErrorToast(
+        e instanceof Error ? e.message : "Could not update session."
+      );
     }
   }
 
   async function handleDelete(sessionId: string) {
     try {
-      const res = await fetch(`/api/sage/sessions/${sessionId}`, {
-        method: "DELETE",
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        showErrorToast(
-          (data as { message?: string }).message ?? "Could not delete conversation."
-        );
-        return;
-      }
+      await deleteSageSession(sessionId);
       setSessions((prev) => prev.filter((s) => s.id !== sessionId));
-      setDeleteConfirmId(null);
       setMenuOpenId(null);
-      notifySageSessionsChanged();
       if (urlSessionId === sessionId) router.push("/sage");
-    } catch {
-      showErrorToast("Something went wrong.");
+    } catch (e) {
+      showErrorToast(
+        e instanceof Error ? e.message : "Could not delete conversation."
+      );
     }
   }
 
@@ -316,26 +270,16 @@ export function SageSplitView() {
       return;
     }
     try {
-      const res = await fetch(`/api/sage/sessions/${sessionId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title: next }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        showErrorToast(
-          (data as { message?: string }).message ?? "Could not rename session."
-        );
-        setRenameValue(currentTitle ?? "");
-        return;
-      }
+      await patchSageSession(sessionId, { title: next });
       patchSession(sessionId, { title: next });
       setRenamingId(null);
       setRenameValue("");
       setMenuOpenId(null);
-      notifySageSessionsChanged();
-    } catch {
-      showErrorToast("Something went wrong.");
+    } catch (e) {
+      showErrorToast(
+        e instanceof Error ? e.message : "Could not rename session."
+      );
+      setRenameValue(currentTitle ?? "");
     }
   }
 
@@ -376,150 +320,21 @@ export function SageSplitView() {
     setDraftAssistantInput("");
   }
 
-  function renderArchiveButton(
-    s: SageSessionRow,
-    opts?: { alwaysVisible?: boolean }
-  ) {
-    const archived = !!s.archived;
+  function sessionOverflowMenu(s: SageSessionRow, alwaysVisible = false) {
     return (
-      <button
-        type="button"
-        title={archived ? "Unarchive" : "Archive"}
-        aria-label={archived ? "Unarchive chat" : "Archive chat"}
-        onClick={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          void handleArchive(s.id, !archived);
-          setMenuOpenId(null);
+      <SageSessionOverflowMenu
+        session={s}
+        open={menuOpenId === s.id}
+        onOpenChange={(open) => setMenuOpenId(open ? s.id : null)}
+        onArchive={() => void handleArchive(s.id, !s.archived)}
+        onFlag={() => void handleFlag(s.id, !!s.flagged)}
+        onRename={() => {
+          setRenamingId(s.id);
+          setRenameValue(s.title ?? "");
         }}
-        className={cn(
-          "inline-flex h-7 w-7 items-center justify-center rounded-md text-[#B0A899] transition-colors hover:bg-[#E8E4DC] hover:text-[#6A7A6E]",
-          !opts?.alwaysVisible && "opacity-0 group-hover:opacity-100"
-        )}
-      >
-        {archived ? (
-          <ArchiveRestore className="h-3.5 w-3.5" />
-        ) : (
-          <Archive className="h-3.5 w-3.5" />
-        )}
-      </button>
-    );
-  }
-
-  function renderSessionMenu(s: SageSessionRow) {
-    return (
-      <>
-        <button
-          type="button"
-          data-sage-session-menu-button
-          onClick={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            setMenuOpenId(menuOpenId === s.id ? null : s.id);
-            setDeleteConfirmId(null);
-          }}
-          className="p-0.5 rounded hover:bg-[#E8E4DC] text-[#B0A899] hover:text-[#6A7A6E]"
-          aria-label="Session options"
-          aria-expanded={menuOpenId === s.id}
-        >
-          <MoreVertical className="h-4 w-4" />
-        </button>
-        {menuOpenId === s.id && (
-          <div
-            data-sage-session-menu
-            className="absolute right-0 top-9 z-20 min-w-[180px] rounded-lg border border-[#E8E4DC] bg-white py-1 shadow-lg"
-          >
-            <button
-              type="button"
-              className="flex w-full items-center gap-2 px-3 py-2 text-sm font-medium text-[#5B7A52] hover:bg-[#F2F5EF] text-left"
-              onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                void handleArchive(s.id, !s.archived);
-                setMenuOpenId(null);
-              }}
-            >
-              {s.archived ? (
-                <>
-                  <ArchiveRestore className="h-4 w-4" /> Unarchive
-                </>
-              ) : (
-                <>
-                  <Archive className="h-4 w-4" /> Archive
-                </>
-              )}
-            </button>
-            <button
-              type="button"
-              className="flex w-full items-center gap-2 px-3 py-2 text-sm text-[#3D3D3D] hover:bg-[#F2F5EF] text-left"
-              onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                setRenamingId(s.id);
-                setRenameValue(s.title ?? "");
-              }}
-            >
-              Rename
-            </button>
-            <button
-              type="button"
-              className="flex w-full items-center gap-2 px-3 py-2 text-sm text-[#3D3D3D] hover:bg-[#F2F5EF] text-left"
-              onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                void handleFlag(s.id, !!s.flagged);
-                setMenuOpenId(null);
-              }}
-            >
-              <Flag className="h-3.5 w-3.5" />{" "}
-              {s.flagged ? "Unflag" : "Flag"}
-            </button>
-            <div className="border-t border-[#F2F5EF] mt-1 pt-1">
-              {deleteConfirmId === s.id ? (
-                <div className="px-3 py-2 text-[12px] text-[#6B6B6B] space-y-1">
-                  <p>Delete this conversation?</p>
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      className="rounded px-2 py-1 text-[12px] font-medium text-[#A85C5C] hover:bg-[#FDF2F2]"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        void handleDelete(s.id);
-                      }}
-                    >
-                      Yes
-                    </button>
-                    <button
-                      type="button"
-                      className="rounded px-2 py-1 text-[12px] font-medium text-[#6B6B6B] hover:bg-[#F2F5EF]"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        setDeleteConfirmId(null);
-                      }}
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <button
-                  type="button"
-                  className="flex w-full items-center gap-2 px-3 py-2 text-sm text-[#C3442D] hover:bg-[#FDF2F0] text-left"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    setDeleteConfirmId(s.id);
-                  }}
-                >
-                  <Trash2 className="h-3.5 w-3.5" /> Delete conversation
-                </button>
-              )}
-            </div>
-          </div>
-        )}
-      </>
+        onDelete={() => void handleDelete(s.id)}
+        alwaysVisible={alwaysVisible}
+      />
     );
   }
 
@@ -610,86 +425,88 @@ export function SageSplitView() {
                   visibleSessions.map((s) => (
                     <div
                       key={s.id}
+                      data-sage-session-card={s.id}
+                      onClick={() => {
+                        if (renamingId === s.id) return;
+                        router.push(sageChatHref(s.id));
+                      }}
+                      onMouseLeave={() => {
+                        if (menuOpenId === s.id) setMenuOpenId(null);
+                      }}
                       className={cn(
-                        "group relative w-full rounded-lg border transition-colors",
+                        "group relative w-full cursor-pointer rounded-xl px-2.5 py-2 text-left transition-colors",
                         urlSessionId === s.id
-                          ? "bg-[#F2F5EF] border-[#E8EDE3]"
-                          : "border-transparent hover:bg-[#F9FAF8]"
+                          ? "bg-[#F2F5EF]"
+                          : "bg-white hover:bg-[#FDFBF7]"
                       )}
                     >
-                      <div className="flex items-start gap-1 px-2.5 py-2">
-                        <button
-                          type="button"
-                          onClick={() => router.push(sageChatHref(s.id))}
-                          className="min-w-0 flex-1 rounded-lg text-left"
-                        >
-                          <p className="text-sm font-medium text-[#3D3D3D] truncate flex items-center gap-1.5">
-                            {s.flagged && (
-                              <span
-                                className="shrink-0 text-[#5B7A52]"
-                                title="Flagged"
-                              >
-                                <Flag className="h-3 w-3 fill-current" />
-                              </span>
-                            )}
-                            {s.documented && (
-                              <span
-                                className="shrink-0 text-[#5B7A52]"
-                                title="Documented interaction"
-                              >
-                                <FileText className="h-3 w-3" />
-                              </span>
-                            )}
-                            {renamingId === s.id ? (
-                              <input
-                                ref={renameInputRef}
-                                value={renameValue}
-                                onChange={(e) => setRenameValue(e.target.value)}
-                                onClick={(e) => e.stopPropagation()}
-                                onKeyDown={(e) => {
-                                  if (e.key === "Enter") {
-                                    e.preventDefault();
-                                    void handleRename(s.id, s.title);
-                                  } else if (e.key === "Escape") {
-                                    e.preventDefault();
-                                    setRenamingId(null);
-                                    setRenameValue("");
-                                  }
-                                }}
-                                onBlur={() => {
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="min-w-0 truncate text-sm font-medium text-[#3D3D3D] flex items-center gap-1.5">
+                          {s.flagged && (
+                            <span
+                              className="shrink-0 text-[#B45309]"
+                              title="Flagged"
+                            >
+                              <Flag className="h-3.5 w-3.5 fill-current" />
+                            </span>
+                          )}
+                          {s.documented && (
+                            <span
+                              className="shrink-0 text-[#5B7A52]"
+                              title="Documented interaction"
+                            >
+                              <FileText className="h-3 w-3" />
+                            </span>
+                          )}
+                          {renamingId === s.id ? (
+                            <input
+                              ref={renameInputRef}
+                              value={renameValue}
+                              onChange={(e) => setRenameValue(e.target.value)}
+                              onClick={(e) => e.stopPropagation()}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  e.preventDefault();
+                                  void handleRename(s.id, s.title);
+                                } else if (e.key === "Escape") {
+                                  e.preventDefault();
                                   setRenamingId(null);
                                   setRenameValue("");
-                                }}
-                                className="w-full rounded border border-[#E8E4DC] bg-[#FDFBF7] px-2 py-1 text-sm text-[#3D3D3D] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E]"
-                              />
-                            ) : (
-                              <span className="min-w-0 truncate">
-                                {truncateSageSessionTitle(s.title)}
-                              </span>
-                            )}
-                          </p>
-                          <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                            <span className="text-[10px] text-[#8A8A8A]">
-                              {formatSessionDate(s.updated_at)}
+                                }
+                              }}
+                              onBlur={() => {
+                                setRenamingId(null);
+                                setRenameValue("");
+                              }}
+                              className="w-full rounded border border-[#E8E4DC] bg-[#FDFBF7] px-2 py-1 text-sm text-[#3D3D3D] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E]"
+                            />
+                          ) : (
+                            <span className="min-w-0 truncate">
+                              {truncateSageSessionTitle(s.title)}
                             </span>
-                            <span className="inline-flex items-center rounded-full bg-[#F2F5EF] px-1.5 py-0.5 text-[9px] text-[#5B7A52]">
-                              {s.session_type === "incident"
-                                ? "Incident"
-                                : "Private"}
-                            </span>
-                            {s.category ? (
-                              <span className="inline-flex items-center rounded-full bg-[#E8E4DC] px-1.5 py-0.5 text-[9px] text-[#6B6B6B]">
-                                {s.category}
-                              </span>
-                            ) : null}
-                          </div>
-                        </button>
-                        <div className="relative shrink-0 flex items-center">
-                          {renderArchiveButton(s)}
-                          <span className="opacity-0 group-hover:opacity-100 transition-opacity">
-                            {renderSessionMenu(s)}
-                          </span>
+                          )}
+                        </p>
+                        <div
+                          className="flex shrink-0 items-center"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {sessionOverflowMenu(s)}
                         </div>
+                      </div>
+                      <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                        <span className="text-[10px] text-[#8A8A8A]">
+                          {formatSessionDate(s.updated_at)}
+                        </span>
+                        <span className="inline-flex items-center rounded-full bg-[#F2F5EF] px-1.5 py-0.5 text-[9px] text-[#5B7A52]">
+                          {s.session_type === "incident"
+                            ? "Incident"
+                            : "Private"}
+                        </span>
+                        {s.category ? (
+                          <span className="inline-flex items-center rounded-full bg-[#E8E4DC] px-1.5 py-0.5 text-[9px] text-[#6B6B6B]">
+                            {s.category}
+                          </span>
+                        ) : null}
                       </div>
                     </div>
                   ))
@@ -797,9 +614,8 @@ export function SageSplitView() {
                   ? "Incident"
                   : "Private"}
               </span>
-              <div className="relative ml-auto flex items-center gap-0.5">
-                {renderArchiveButton(selectedSession, { alwaysVisible: true })}
-                {renderSessionMenu(selectedSession)}
+              <div className="relative ml-auto flex items-center">
+                {sessionOverflowMenu(selectedSession, true)}
               </div>
             </div>
           </div>

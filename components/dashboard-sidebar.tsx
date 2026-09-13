@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import Image from "next/image";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import {
   LayoutDashboard,
@@ -19,6 +19,7 @@ import {
   Feather,
   MessageCircle,
   Plus,
+  Flag,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
@@ -33,13 +34,16 @@ import {
 import {
   SAGE_SESSIONS_CHANGED_EVENT,
   createSageSession,
+  deleteSageSession,
   fetchSageSessions,
   isSageChatsPath,
   isSageInboxPath,
+  patchSageSession,
   sageChatHref,
   truncateSageSessionTitle,
   type SageSessionRow,
 } from "@/lib/sage-sessions-client";
+import { SageSessionOverflowMenu } from "@/components/sage/sage-session-overflow-menu";
 import { showErrorToast } from "@/components/ui/toaster";
 
 const SIDEBAR_CHAT_LIMIT = 10;
@@ -76,6 +80,10 @@ export function DashboardSidebar({
   const router = useRouter();
   const [sessions, setSessions] = useState<SageSessionRow[]>([]);
   const [creating, setCreating] = useState<"private" | "incident" | null>(null);
+  const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+  const renameInputRef = useRef<HTMLInputElement | null>(null);
 
   const loadSessions = useCallback(async () => {
     try {
@@ -101,6 +109,13 @@ export function DashboardSidebar({
     }
   }, [pathname, loadSessions]);
 
+  useEffect(() => {
+    if (renamingId && renameInputRef.current) {
+      renameInputRef.current.focus();
+      renameInputRef.current.select();
+    }
+  }, [renamingId]);
+
   async function handleCreate(sessionType: "private" | "incident") {
     if (creating) return;
     setCreating(sessionType);
@@ -113,6 +128,76 @@ export function DashboardSidebar({
       );
     } finally {
       setCreating(null);
+    }
+  }
+
+  async function handleArchive(session: SageSessionRow) {
+    const archived = !session.archived;
+    try {
+      await patchSageSession(session.id, { archived });
+      setSessions((prev) =>
+        prev
+          .map((s) => (s.id === session.id ? { ...s, archived } : s))
+          .filter((s) => !s.archived)
+      );
+      if (archived && pathname === sageChatHref(session.id)) {
+        router.push("/sage");
+      }
+    } catch (e) {
+      showErrorToast(
+        e instanceof Error ? e.message : "Could not update session."
+      );
+    }
+  }
+
+  async function handleFlag(session: SageSessionRow) {
+    const flagged = !session.flagged;
+    try {
+      await patchSageSession(session.id, { flagged });
+      setSessions((prev) =>
+        prev.map((s) => (s.id === session.id ? { ...s, flagged } : s))
+      );
+    } catch (e) {
+      showErrorToast(
+        e instanceof Error ? e.message : "Could not update session."
+      );
+    }
+  }
+
+  async function handleRename(session: SageSessionRow) {
+    const next = renameValue.trim();
+    if (!next) {
+      setRenamingId(null);
+      setRenameValue("");
+      return;
+    }
+    try {
+      await patchSageSession(session.id, { title: next });
+      setSessions((prev) =>
+        prev.map((s) => (s.id === session.id ? { ...s, title: next } : s))
+      );
+      setRenamingId(null);
+      setRenameValue("");
+    } catch (e) {
+      showErrorToast(
+        e instanceof Error ? e.message : "Could not rename session."
+      );
+      setRenameValue(session.title ?? "");
+    }
+  }
+
+  async function handleDelete(session: SageSessionRow) {
+    try {
+      await deleteSageSession(session.id);
+      setSessions((prev) => prev.filter((s) => s.id !== session.id));
+      setMenuOpenId(null);
+      if (pathname === sageChatHref(session.id)) {
+        router.push("/sage");
+      }
+    } catch (e) {
+      showErrorToast(
+        e instanceof Error ? e.message : "Could not delete conversation."
+      );
     }
   }
 
@@ -198,21 +283,68 @@ export function DashboardSidebar({
               const href = sageChatHref(s.id);
               const isActive = pathname === href;
               return (
-                <Link
+                <div
                   key={s.id}
-                  href={href}
-                  title={s.title ?? "New chat"}
+                  data-sage-session-card={s.id}
+                  onMouseLeave={() => {
+                    if (menuOpenId === s.id) setMenuOpenId(null);
+                  }}
                   className={cn(
-                    "block rounded-lg px-3 py-1.5 text-left text-sm transition-colors",
+                    "group relative rounded-lg transition-colors",
                     isActive
                       ? "bg-[#E8EDE3] text-[#3D3D3D]"
                       : "text-foreground-secondary hover:bg-muted hover:text-foreground"
                   )}
                 >
-                  <span className="block truncate">
-                    {truncateSageSessionTitle(s.title, 32)}
-                  </span>
-                </Link>
+                  <div className="flex items-center gap-1 py-1.5 pl-3 pr-1">
+                    {s.flagged ? (
+                      <Flag className="h-3 w-3 shrink-0 fill-current text-[#B45309]" />
+                    ) : null}
+                    {renamingId === s.id ? (
+                      <input
+                        ref={renameInputRef}
+                        value={renameValue}
+                        onChange={(e) => setRenameValue(e.target.value)}
+                        onClick={(e) => e.stopPropagation()}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            void handleRename(s);
+                          } else if (e.key === "Escape") {
+                            e.preventDefault();
+                            setRenamingId(null);
+                            setRenameValue("");
+                          }
+                        }}
+                        onBlur={() => {
+                          setRenamingId(null);
+                          setRenameValue("");
+                        }}
+                        className="min-w-0 flex-1 rounded border border-[#E8E4DC] bg-[#FDFBF7] px-1.5 py-0.5 text-sm text-[#3D3D3D] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E]"
+                      />
+                    ) : (
+                      <Link
+                        href={href}
+                        title={s.title ?? "New chat"}
+                        className="min-w-0 flex-1 truncate text-left text-sm"
+                      >
+                        {truncateSageSessionTitle(s.title, 32)}
+                      </Link>
+                    )}
+                    <SageSessionOverflowMenu
+                      session={s}
+                      open={menuOpenId === s.id}
+                      onOpenChange={(open) => setMenuOpenId(open ? s.id : null)}
+                      onArchive={() => void handleArchive(s)}
+                      onFlag={() => void handleFlag(s)}
+                      onRename={() => {
+                        setRenamingId(s.id);
+                        setRenameValue(s.title ?? "");
+                      }}
+                      onDelete={() => void handleDelete(s)}
+                    />
+                  </div>
+                </div>
               );
             })}
             {hasMoreSessions ? (

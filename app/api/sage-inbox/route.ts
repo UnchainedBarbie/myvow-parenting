@@ -31,6 +31,7 @@ type SagePlan = {
  * GET /api/sage-inbox?status=open|flagged|archived|all
  * Authenticated parent user.
  * Returns sage_items for the user's case that are visible to them.
+ * Chat-sourced rows (source_type = 'chat') stay in the conversation UI, not here.
  * Default status=open (status ≠ archived).
  * flagged = flagged = true (any archive status).
  */
@@ -78,6 +79,7 @@ export async function GET(req: NextRequest) {
       )
       .eq("case_id", caseId)
       .eq("visible_to", user.id)
+      .neq("source_type", "chat")
       .order("created_at", { ascending: false });
 
     if (statusFilter === "archived") {

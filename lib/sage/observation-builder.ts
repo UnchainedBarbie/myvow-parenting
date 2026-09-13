@@ -109,3 +109,27 @@ export function formatObservationForUnderstanding(obs: Observation): string {
     })
     .join("\n");
 }
+
+/**
+ * Build a single-message Observation from a typed chat message.
+ * Routes through the same Observation Builder as email (source "chat").
+ */
+export function buildObservationFromChat(
+  message: string,
+  options?: { id?: string; timestamp?: string }
+): Observation {
+  const text = message.trim();
+  if (!text) {
+    throw new Error("Chat message is empty");
+  }
+  const id = options?.id?.trim() || `chat-${Date.now()}`;
+  const rawItem: RawItem = {
+    id,
+    reply_to_id: null,
+    from: "You",
+    timestamp: options?.timestamp ?? new Date().toISOString(),
+    text,
+    source: "chat",
+  };
+  return buildObservation(id, [rawItem]);
+}

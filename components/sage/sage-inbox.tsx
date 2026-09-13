@@ -1,55 +1,33 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Archive, ArchiveRestore, Flag, Search, X } from "lucide-react";
+import {
+  Archive,
+  ArchiveRestore,
+  Flag,
+  MessageCircle,
+  Search,
+  X,
+} from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { cn } from "@/lib/utils";
 import { ReviseProposalModal } from "@/components/sage/revise-proposal-modal";
+import { ProposalCardList } from "@/components/sage/proposal-card-list";
+import { TalkToSageDrawer } from "@/components/sage/talk-to-sage-drawer";
+import {
+  buildCalendarInitialValues,
+  childNamesFromItem,
+  dateKey,
+  isActionable,
+  needsDateField,
+} from "@/components/sage/proposal-helpers";
+import type { SageItem, SageProposal } from "@/components/sage/proposal-types";
 import {
   AddEventForm,
   type AddEventFormInitialValues,
 } from "@/components/calendar/add-event-form";
-
-type SageProposal = {
-  type: string;
-  draft: string;
-  revised_text?: string | null;
-  depends_on: string | null;
-  requires_approval?: boolean;
-  approved?: boolean;
-  approved_at?: string;
-  chosen_date?: string;
-  status?: string;
-  waived_at?: string;
-  unblocked?: boolean;
-  executed?: boolean;
-  executed_at?: string;
-  result_event_id?: string;
-};
-
-type SagePlan = {
-  status?: string;
-  proposals?: SageProposal[];
-  reasoning?: string;
-};
-
-type SageItem = {
-  id: string;
-  item_type: string | null;
-  domain: string | null;
-  summary: string | null;
-  evidence_excerpt: string | null;
-  urgency: string | null;
-  action_required: boolean | null;
-  child_ids: string[] | null;
-  tool_input: unknown;
-  plan: SagePlan | null;
-  status: string | null;
-  flagged?: boolean | null;
-  created_at: string;
-};
 
 function formatRelativeTime(iso: string): string {
   if (!iso) return "";
@@ -79,91 +57,6 @@ function domainIcon(domain: string | null, itemType: string | null): string {
   if (d === "legal" || t === "document_summary") return "D";
   if (t === "needs_review") return "?";
   return "•";
-}
-
-function proposalTypeLabel(type: string): string {
-  switch (type) {
-    case "ask_clarification":
-      return "Ask Co-Parent";
-    case "reply_coparent":
-      return "Reply to Co-Parent";
-    case "calendar_update":
-      return "Update calendar";
-    case "log_expense":
-      return "Log expense";
-    case "note_only":
-      return "Note";
-    default:
-      return type;
-  }
-}
-
-function childNamesFromItem(item: SageItem): string[] {
-  const names: string[] = [];
-  const input = item.tool_input;
-  if (input && typeof input === "object" && input !== null) {
-    const children = (input as { children?: unknown }).children;
-    if (Array.isArray(children)) {
-      for (const c of children) {
-        if (c && typeof c === "object" && typeof (c as { name?: unknown }).name === "string") {
-          const name = ((c as { name: string }).name ?? "").trim();
-          if (name) names.push(name);
-        }
-      }
-    }
-  }
-  return names;
-}
-
-function isWaived(p: SageProposal): boolean {
-  return p.status === "waived_by_user";
-}
-
-function isBlocked(p: SageProposal): boolean {
-  return (
-    p.depends_on != null &&
-    String(p.depends_on).trim() !== "" &&
-    p.unblocked !== true
-  );
-}
-
-function isActionable(p: SageProposal): boolean {
-  return (
-    p.type !== "note_only" &&
-    p.approved !== true &&
-    !isWaived(p) &&
-    !isBlocked(p)
-  );
-}
-
-/** Calendar updates always need an explicit chosen_date before Agree — don't suppress via unrelated resolved_dates. */
-function needsDateField(p: SageProposal): boolean {
-  return p.type === "calendar_update" && !p.chosen_date;
-}
-
-/** Strip misleading "on YYYY-MM-DD" from drafts when the user must pick the date. */
-function displayDraft(p: SageProposal, showDateField: boolean): string {
-  const source =
-    typeof p.revised_text === "string" && p.revised_text.trim()
-      ? p.revised_text.trim()
-      : (p.draft ?? "").trim();
-  let text = source;
-  if (showDateField && !p.chosen_date) {
-    text = text.replace(/\s+on\s+\d{4}-\d{2}-\d{2}/gi, "").trim();
-  }
-  return text;
-}
-
-function canUndo(p: SageProposal): boolean {
-  if (p.executed === true) return false;
-  return p.approved === true || p.status === "waived_by_user";
-}
-
-function isRevisable(p: SageProposal): boolean {
-  return (
-    (p.type === "reply_coparent" || p.type === "ask_clarification") &&
-    isActionable(p)
-  );
 }
 
 type Section = {
@@ -201,137 +94,6 @@ function groupItems(items: SageItem[]): Section[] {
     { key: "needs_review", title: "Needs Review", items: needsReview },
     { key: "updated", title: "Updated by Sage", items: updatedBySage },
   ].filter((s) => s.items.length > 0);
-}
-
-function dateKey(itemId: string, index: number): string {
-  return `${itemId}:${index}`;
-}
-
-/**
- * Extract the TARGET time from a schedule/pickup proposal draft (HH:MM 24h).
- * Prefers "to 5:30" / "from … to …"; avoids the "from" time. Returns undefined if unsure.
- */
-function parseTargetTimeFromDraft(draft: string): string | undefined {
-  const text = draft.trim();
-  if (!text) return undefined;
-
-  type Hit = { h: number; min: string; ampm: string };
-
-  const to24 = (hit: Hit, assumeAfternoonPm: boolean): string | undefined => {
-    let h = hit.h;
-    if (Number.isNaN(h) || h < 0 || h > 23) return undefined;
-    const ampm = hit.ampm;
-    if (ampm.startsWith("p")) {
-      if (h < 12) h += 12;
-    } else if (ampm.startsWith("a")) {
-      if (h === 12) h = 0;
-    } else if (h >= 1 && h <= 7 && assumeAfternoonPm) {
-      // Ambiguous 1–7 in pickup/afternoon context → PM
-      h += 12;
-    } else if (!ampm && h >= 1 && h <= 12) {
-      // Ambiguous without meridian — don't guess
-      return undefined;
-    }
-    if (h > 23) return undefined;
-    return `${String(h).padStart(2, "0")}:${hit.min}`;
-  };
-
-  const pickupish =
-    /pickup|pick-up|drop.?off|schedule|exchange|custody|afternoon/i.test(text);
-
-  // "from 4:00 … to 5:30 PM" — take the "to" time only
-  const fromTo = text.match(
-    /\bfrom\s+\d{1,2}:\d{2}\s*(?:a\.?m\.?|p\.?m\.?)?\s+.*?to\s+(\d{1,2}):(\d{2})\s*(a\.?m\.?|p\.?m\.?)?\b/i
-  );
-  if (fromTo) {
-    return to24(
-      {
-        h: parseInt(fromTo[1], 10),
-        min: fromTo[2],
-        ampm: (fromTo[3] ?? "").toLowerCase().replace(/\./g, ""),
-      },
-      pickupish
-    );
-  }
-
-  // "to 5:30" / "to 5:30 PM"
-  const toOnly = text.match(
-    /\bto\s+(\d{1,2}):(\d{2})\s*(a\.?m\.?|p\.?m\.?)?\b/i
-  );
-  if (toOnly) {
-    return to24(
-      {
-        h: parseInt(toOnly[1], 10),
-        min: toOnly[2],
-        ampm: (toOnly[3] ?? "").toLowerCase().replace(/\./g, ""),
-      },
-      pickupish
-    );
-  }
-
-  // Explicit times with AM/PM — prefer the last one (often the target)
-  const withMeridian = [
-    ...text.matchAll(/\b(\d{1,2}):(\d{2})\s*(a\.?m\.?|p\.?m\.?)\b/gi),
-  ];
-  if (withMeridian.length > 0) {
-    const last = withMeridian[withMeridian.length - 1];
-    return to24(
-      {
-        h: parseInt(last[1], 10),
-        min: last[2],
-        ampm: (last[3] ?? "").toLowerCase().replace(/\./g, ""),
-      },
-      false
-    );
-  }
-
-  // Single bare time only if pickup context allows afternoon PM heuristic
-  const bare = [...text.matchAll(/\b(\d{1,2}):(\d{2})\b/g)];
-  if (bare.length === 1 && pickupish) {
-    return to24(
-      { h: parseInt(bare[0][1], 10), min: bare[0][2], ampm: "" },
-      true
-    );
-  }
-
-  return undefined;
-}
-
-function buildCalendarTitle(item: SageItem): string {
-  const names = childNamesFromItem(item);
-  const name = names[0]?.trim();
-  const base = "Pickup change";
-  if (!name) return base;
-  return `${base} – ${name}`.slice(0, 40);
-}
-
-function buildCalendarInitialValues(
-  item: SageItem,
-  proposal: SageProposal,
-  chosenDate?: string
-): AddEventFormInitialValues {
-  const childId =
-    Array.isArray(item.child_ids) && item.child_ids[0]
-      ? item.child_ids[0]
-      : undefined;
-  const draftSource =
-    (typeof proposal.revised_text === "string" && proposal.revised_text.trim()
-      ? proposal.revised_text
-      : proposal.draft) ?? "";
-  const summary = (item.summary ?? "").trim();
-  const date =
-    (chosenDate ?? proposal.chosen_date ?? "").trim() || undefined;
-  const startTime = parseTargetTimeFromDraft(
-    [draftSource, summary].filter(Boolean).join(" ")
-  );
-  return {
-    childId,
-    date,
-    ...(startTime ? { startTime } : {}),
-    title: buildCalendarTitle(item),
-    eventType: "custody_exchange",
-    description: summary || undefined,
-  };
 }
 
 type CalendarAgreeTarget = {
@@ -373,6 +135,7 @@ export function SageInbox({
     originalDraft: string;
     initialText: string;
   } | null>(null);
+  const [talkOpen, setTalkOpen] = useState(false);
 
   function exitItemSelectMode() {
     setItemSelectMode(false);
@@ -644,6 +407,7 @@ export function SageInbox({
           : "Sage hasn't flagged anything yet.";
 
   return (
+    <>
     <Card className="shadow-card border-border rounded-card">
       <CardContent className="px-4 pt-4 pb-4 space-y-4">
         <div className="flex flex-wrap items-center gap-2">
@@ -866,278 +630,75 @@ export function SageInbox({
                         </div>
                       </div>
 
-                      {proposals.length > 0 && (
-                        <div
-                          className={cn(
-                            "mt-3 space-y-2 border-t border-[#E8E4DC] pt-2",
-                            itemSelectMode ? "ml-0" : "ml-9"
-                          )}
-                        >
-                          <div className="flex flex-wrap items-center gap-2">
-                            <p className="text-[11px] font-medium text-[#5B7A52]">
-                              Sage suggests
-                            </p>
-                            {!itemSelectMode && actionableCount > 1 && (
-                              <button
-                                type="button"
-                                className="text-[11px] text-[#5B7A52] hover:underline"
-                                onClick={() =>
-                                  setMultiSelect((prev) => ({
-                                    ...prev,
-                                    [item.id]: !isMulti,
-                                  }))
-                                }
-                              >
-                                {isMulti ? "Single actions" : "Select multiple"}
-                              </button>
-                            )}
-                          </div>
-
-                          <ul className="space-y-2">
-                            {proposals.map((p, idx) => {
-                              const blocked = isBlocked(p);
-                              const approved = p.approved === true;
-                              const waived = isWaived(p);
-                              const executed = p.executed === true;
-                              const noteOnly = p.type === "note_only";
-                              const actionable = isActionable(p);
-                              const showDate = actionable && needsDateField(p);
-                              const dKey = dateKey(item.id, idx);
-                              const isChecked = checked.includes(idx);
-                              const rowBusy =
-                                busyKey === `${item.id}:${idx}` || itemBusy;
-
-                              return (
-                                <li
-                                  key={`${item.id}-p-${idx}`}
-                                  className={cn(
-                                    "flex items-start gap-2 rounded-md px-2 py-1.5",
-                                    blocked && "bg-[#F7F5F0] opacity-80"
-                                  )}
-                                >
-                                  {/* Left controls — hidden in item bulk-select mode */}
-                                  {itemSelectMode ? null : noteOnly ||
-                                    blocked ? (
-                                    <span
-                                      className="mt-0.5 w-12 shrink-0"
-                                      aria-hidden
-                                    />
-                                  ) : canUndo(p) ? (
-                                    <button
-                                      type="button"
-                                      className="mt-0.5 shrink-0 text-[10px] text-[#5B7A52] hover:underline disabled:opacity-40"
-                                      disabled={rowBusy}
-                                      onClick={() =>
-                                        postProposalAction(
-                                          item,
-                                          "undo",
-                                          [idx],
-                                          `${item.id}:${idx}`
-                                        )
-                                      }
-                                    >
-                                      Undo
-                                    </button>
-                                  ) : isMulti ? (
-                                    <input
-                                      type="checkbox"
-                                      className="mt-1 h-4 w-4 shrink-0 rounded border-[#C5D0C0] accent-[#7B9E87]"
-                                      checked={isChecked}
-                                      disabled={rowBusy}
-                                      onChange={() =>
-                                        toggleProposal(item.id, idx)
-                                      }
-                                      aria-label={`Select: ${proposalTypeLabel(p.type)}`}
-                                    />
-                                  ) : (
-                                    <div className="flex shrink-0 items-start gap-1">
-                                      <button
-                                        type="button"
-                                        title="Agree"
-                                        disabled={
-                                          rowBusy ||
-                                          (showDate &&
-                                            !(dates[dKey] ?? "").trim())
-                                        }
-                                        className={cn(
-                                          "inline-flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-medium",
-                                          "bg-[#7B9E87] text-white hover:bg-[#6A8A78]",
-                                          "disabled:opacity-40 disabled:cursor-not-allowed"
-                                        )}
-                                        onClick={() =>
-                                          handleAgree(
-                                            item,
-                                            [idx],
-                                            `${item.id}:${idx}`
-                                          )
-                                        }
-                                      >
-                                        ✓
-                                      </button>
-                                      {isRevisable(p) && (
-                                        <button
-                                          type="button"
-                                          title="Revise"
-                                          disabled={rowBusy}
-                                          className={cn(
-                                            "inline-flex h-6 w-6 items-center justify-center rounded-full text-[11px]",
-                                            "border border-[#D5D0C6] bg-white text-foreground-secondary hover:bg-[#F2F5EF]",
-                                            "disabled:opacity-40 disabled:cursor-not-allowed"
-                                          )}
-                                          onClick={() =>
-                                            setReviseTarget({
-                                              itemId: item.id,
-                                              proposalIndex: idx,
-                                              proposalType: p.type as
-                                                | "reply_coparent"
-                                                | "ask_clarification",
-                                              originalDraft: p.draft,
-                                              initialText:
-                                                typeof p.revised_text ===
-                                                  "string" &&
-                                                p.revised_text.trim()
-                                                  ? p.revised_text.trim()
-                                                  : p.draft,
-                                            })
-                                          }
-                                        >
-                                          ✏️
-                                        </button>
-                                      )}
-                                      <button
-                                        type="button"
-                                        title="Dismiss"
-                                        disabled={rowBusy}
-                                        className={cn(
-                                          "inline-flex h-6 w-6 items-center justify-center rounded-full text-[11px]",
-                                          "border border-[#D5D0C6] bg-white text-foreground-secondary hover:bg-[#F2F5EF]",
-                                          "disabled:opacity-40 disabled:cursor-not-allowed"
-                                        )}
-                                        onClick={() =>
-                                          postProposalAction(
-                                            item,
-                                            "dismiss",
-                                            [idx],
-                                            `${item.id}:${idx}`
-                                          )
-                                        }
-                                      >
-                                        ✗
-                                      </button>
-                                    </div>
-                                  )}
-
-                                  <div className="min-w-0 flex-1 space-y-1">
-                                    <div className="flex flex-wrap items-center gap-2">
-                                      <span className="inline-flex items-center rounded-full bg-[#EEF2E9] px-2 py-0.5 text-[10px] font-medium text-[#5B7A52]">
-                                        {proposalTypeLabel(p.type)}
-                                      </span>
-                                      {executed ? (
-                                        <span className="text-[10px] font-medium text-[#5B7A52]">
-                                          ✓ done · added to calendar
-                                        </span>
-                                      ) : approved ? (
-                                        <span className="text-[10px] font-medium text-[#5B7A52]">
-                                          ✓ approved
-                                        </span>
-                                      ) : null}
-                                      {typeof p.revised_text === "string" &&
-                                        p.revised_text.trim() &&
-                                        !approved &&
-                                        !waived && (
-                                          <span className="text-[10px] text-[#5B7A52]">
-                                            revised
-                                          </span>
-                                        )}
-                                      {waived && (
-                                        <span className="text-[10px] text-foreground-secondary">
-                                          dismissed
-                                        </span>
-                                      )}
-                                      {blocked && !approved && !waived && (
-                                        <span className="text-[10px] text-foreground-secondary">
-                                          waiting on: {p.depends_on}
-                                        </span>
-                                      )}
-                                    </div>
-                                    <p
-                                      className={cn(
-                                        "text-[12px] leading-snug text-foreground",
-                                        (blocked || waived) &&
-                                          "text-foreground-secondary"
-                                      )}
-                                    >
-                                      {displayDraft(p, showDate)}
-                                    </p>
-                                    {!itemSelectMode && showDate && (
-                                      <input
-                                        type="date"
-                                        className="mt-1 h-7 rounded-md border border-[#E8E4DC] bg-white px-2 text-[11px] text-foreground"
-                                        value={dates[dKey] ?? ""}
-                                        onChange={(e) =>
-                                          setDates((prev) => ({
-                                            ...prev,
-                                            [dKey]: e.target.value,
-                                          }))
-                                        }
-                                        aria-label="Choose date for calendar update"
-                                      />
-                                    )}
-                                    {p.chosen_date && (
-                                      <span className="text-[10px] text-foreground-secondary">
-                                        date: {p.chosen_date}
-                                      </span>
-                                    )}
-                                  </div>
-                                </li>
-                              );
-                            })}
-                          </ul>
-
-                          {!itemSelectMode &&
-                            isMulti &&
-                            actionableCount > 1 && (
-                              <div className="flex flex-wrap items-center gap-2 pt-1">
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  className="h-7 rounded-full px-3 text-[11px] bg-[#7B9E87] text-white hover:bg-[#6A8A78] disabled:opacity-50"
-                                  disabled={
-                                    checked.length === 0 ||
-                                    itemBusy ||
-                                    missingRequiredDates(item, checked)
-                                  }
-                                  onClick={() =>
-                                    handleAgree(
-                                      item,
-                                      checked,
-                                      `${item.id}:multi`
-                                    )
-                                  }
-                                >
-                                  Agree
-                                </Button>
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  variant="outline"
-                                  className="h-7 rounded-full px-3 text-[11px] disabled:opacity-50"
-                                  disabled={checked.length === 0 || itemBusy}
-                                  onClick={() =>
-                                    postProposalAction(
-                                      item,
-                                      "dismiss",
-                                      checked,
-                                      `${item.id}:multi`
-                                    )
-                                  }
-                                >
-                                  Dismiss
-                                </Button>
-                              </div>
-                            )}
-                        </div>
-                      )}
+                      <ProposalCardList
+                        itemId={item.id}
+                        proposals={proposals}
+                        hideActions={itemSelectMode}
+                        indent={!itemSelectMode}
+                        multiSelect={isMulti}
+                        onToggleMultiSelect={() =>
+                          setMultiSelect((prev) => ({
+                            ...prev,
+                            [item.id]: !isMulti,
+                          }))
+                        }
+                        selectedIndexes={checked}
+                        onToggleSelected={(idx) =>
+                          toggleProposal(item.id, idx)
+                        }
+                        dates={dates}
+                        onDateChange={(key, value) =>
+                          setDates((prev) => ({ ...prev, [key]: value }))
+                        }
+                        busyKey={busyKey}
+                        itemBusy={itemBusy}
+                        onAgree={(indexes) => {
+                          const busyId =
+                            indexes.length === 1
+                              ? `${item.id}:${indexes[0]}`
+                              : `${item.id}:multi`;
+                          void handleAgree(item, indexes, busyId);
+                        }}
+                        onDismiss={(indexes) => {
+                          const busyId =
+                            indexes.length === 1
+                              ? `${item.id}:${indexes[0]}`
+                              : `${item.id}:multi`;
+                          void postProposalAction(
+                            item,
+                            "dismiss",
+                            indexes,
+                            busyId
+                          );
+                        }}
+                        onUndo={(idx) =>
+                          void postProposalAction(
+                            item,
+                            "undo",
+                            [idx],
+                            `${item.id}:${idx}`
+                          )
+                        }
+                        onRevise={(idx, p: SageProposal) =>
+                          setReviseTarget({
+                            itemId: item.id,
+                            proposalIndex: idx,
+                            proposalType: p.type as
+                              | "reply_coparent"
+                              | "ask_clarification",
+                            originalDraft: p.draft,
+                            initialText:
+                              typeof p.revised_text === "string" &&
+                              p.revised_text.trim()
+                                ? p.revised_text.trim()
+                                : p.draft,
+                          })
+                        }
+                        missingRequiredDates={(indexes) =>
+                          missingRequiredDates(item, indexes)
+                        }
+                        className="mt-3 border-t border-[#E8E4DC] pt-2"
+                      />
                     </li>
                   );
                 })}
@@ -1250,5 +811,20 @@ export function SageInbox({
         onConfirm={() => void bulkArchiveSelected()}
       />
     </Card>
+    <button
+      type="button"
+      onClick={() => setTalkOpen(true)}
+      className="fixed bottom-6 right-6 z-40 inline-flex h-12 items-center gap-2 rounded-full bg-[#5B7A52] px-4 text-sm font-medium text-white shadow-lg hover:bg-[#476242]"
+    >
+      <MessageCircle className="h-4 w-4" />
+      Talk to Sage
+    </button>
+    <TalkToSageDrawer
+      open={talkOpen}
+      onClose={() => setTalkOpen(false)}
+      caseId={caseId}
+      children={childrenList}
+    />
+    </>
   );
 }

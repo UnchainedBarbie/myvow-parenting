@@ -1,106 +1,96 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
+import { processChatMessage } from "@/lib/sage/chat";
 
-export async function POST(request: NextRequest) {
+export const runtime = "nodejs";
+
+/**
+ * POST /api/sage/chat
+ * Body: { message: string, conversation_context?: unknown }
+ * Propose-only: runs chat message through the shared Sage engine and returns
+ * reply + canonical plan.proposals. Does not execute tools or write sage_items.
+ */
+export async function POST(req: NextRequest) {
   try {
-    const supabase = await createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const body = (await req.json().catch(() => null)) as {
+      message?: unknown;
+      conversation_context?: unknown;
+    } | null;
 
-    const body = await request.json().catch(() => ({}));
-    const { conversation_id, content } = body as {
-      conversation_id?: string;
-      content?: string;
-      context?: unknown;
-    };
-
-    if (!conversation_id || !content || typeof content !== "string") {
+    const message =
+      typeof body?.message === "string" ? body.message.trim() : "";
+    if (!message) {
       return NextResponse.json(
-        { error: "conversation_id and content are required" },
+        { error: "message is required" },
         { status: 400 }
       );
     }
 
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const admin = getServiceRoleClient();
-
-    // Verify the user belongs to the case for this conversation
-    const { data: conv, error: convError } = await admin
-      .from("conversations")
-      .select("id, case_id")
-      .eq("id", conversation_id)
-      .maybeSingle();
-
-    if (convError) {
-      return NextResponse.json({ error: convError.message }, { status: 500 });
-    }
-    if (!conv) {
-      return NextResponse.json({ error: "Conversation not found" }, { status: 404 });
-    }
-
-    const { data: membership } = await admin
+    const { data: membership, error: membershipError } = await admin
       .from("case_members")
-      .select("id")
-      .eq("case_id", conv.case_id)
+      .select("case_id")
       .eq("user_id", user.id)
+      .limit(1)
       .maybeSingle();
 
-    if (!membership) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    if (membershipError) {
+      console.error("[sage/chat] membership error:", membershipError);
+      return NextResponse.json({ error: "Internal server error" }, { status: 500 });
     }
 
-    const userMessageContent = content.trim();
-    if (!userMessageContent) {
-      return NextResponse.json({ error: "Content is empty" }, { status: 400 });
+    if (!membership?.case_id) {
+      return NextResponse.json({ error: "No case found" }, { status: 403 });
     }
 
-    // Insert user sage message
-    const { data: userMsg, error: userMsgError } = await admin
-      .from("sage_messages")
-      .insert({
-        conversation_id,
-        user_id: user.id,
-        role: "user",
-        content: userMessageContent,
-      })
-      .select("id, role, content, created_at")
-      .single();
+    const caseId = membership.case_id as string;
 
-    if (userMsgError) {
-      return NextResponse.json({ error: userMsgError.message }, { status: 500 });
-    }
+    const { data: profile } = await admin
+      .from("users")
+      .select("timezone")
+      .eq("id", user.id)
+      .maybeSingle();
 
-    // Placeholder Sage response - AI wiring can come later
-    const sageReply =
-      "I hear you. Let me think about how to help with this.";
+    const timezone =
+      profile && typeof (profile as { timezone?: string }).timezone === "string"
+        ? (profile as { timezone: string }).timezone.trim() || "America/Denver"
+        : "America/Denver";
 
-    const { data: sageMsg, error: sageMsgError } = await admin
-      .from("sage_messages")
-      .insert({
-        conversation_id,
-        user_id: user.id,
-        role: "sage",
-        content: sageReply,
-      })
-      .select("id, role, content, created_at")
-      .single();
-
-    if (sageMsgError) {
-      return NextResponse.json({ error: sageMsgError.message }, { status: 500 });
-    }
+    const { reply, actions, result } = await processChatMessage({
+      message,
+      case_id: caseId,
+      timezone,
+      conversation_context: body?.conversation_context,
+    });
 
     return NextResponse.json({
-      user_message: userMsg,
-      sage_message: sageMsg,
+      reply,
+      actions,
+      // Helpful for debugging / clients; not required by the contract
+      meta: {
+        item_type: result.interpretation.intent.item_type,
+        domain: result.interpretation.intent.domain,
+        summary: result.interpretation.intent.summary,
+        child_ids: result.child_ids,
+        unresolved_children: result.unresolved_children,
+        resolved_dates: result.resolved_dates,
+        plan_status: result.plan.status,
+      },
     });
   } catch (e) {
+    console.error("[sage/chat] Unhandled error:", e);
     return NextResponse.json(
-      { error: e instanceof Error ? e.message : "Sage chat failed" },
+      { error: e instanceof Error ? e.message : "Internal server error" },
       { status: 500 }
     );
   }
 }
-

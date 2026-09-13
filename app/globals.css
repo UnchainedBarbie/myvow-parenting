@@ -36,3 +36,14 @@
     @apply font-heading;
   }
 }
+
+@keyframes sageDrawer {
+  from {
+    transform: translateX(100%);
+    opacity: 0.96;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}

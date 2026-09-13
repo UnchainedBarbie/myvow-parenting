@@ -12,7 +12,8 @@
     "test:ingest": "tsx scripts/test-ingest.ts",
     "test:categories": "tsx lib/categoryColors.test.ts",
     "test:documents": "tsx lib/documents/validation.test.ts",
-    "test:sage": "npx tsx scripts/run-cases.ts"
+    "test:sage": "npx tsx scripts/run-cases.ts",
+    "test:sage-chat": "npx tsx scripts/test-sage-chat.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.78.0",

@@ -1,18 +1,15 @@
 /**
- * Email adapter — runs Observation Builder + Understanding on a stored inbox_items row
- * and writes a sage_items row. No webhook changes; no entity resolution yet.
+ * Email adapter — runs Observation Builder + shared processObservation on a stored
+ * inbox_items row and writes a sage_items row. No webhook changes.
  */
 
 import { extractPdfText } from "@/lib/pdf-extract";
 import { getServiceRoleClient } from "@/lib/supabase/server";
 import {
   buildObservation,
-  formatObservationForUnderstanding,
   type RawItem,
 } from "@/lib/sage/observation-builder";
-import { plan } from "@/lib/sage/planner";
-import { resolveChildren, resolveDates } from "@/lib/sage/resolver";
-import { interpret } from "@/lib/sage/understanding";
+import { processObservation } from "@/lib/sage/process-observation";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 const INBOX_BUCKET = "inbox";
@@ -261,55 +258,23 @@ export async function processInboxItem(
     };
 
     const observation = buildObservation(inboxRow.id, [rawItem]);
-    const observationText = formatObservationForUnderstanding(observation);
-
-    const interpretation = await interpret({
-      source_type: "email",
-      source_id: inboxItemId,
-      case_id: inboxRow.case_id,
-      sender,
-      text: observationText,
-      attachments: extracted.attachments.length > 0 ? extracted.attachments : undefined,
-    });
 
     const visibleTo = await resolveVisibleTo(inboxRow.case_id);
     if (typeof visibleTo !== "string") {
       return visibleTo;
     }
 
-    const { intent, entities } = interpretation;
-
-    const childNames = entities.children
-      .map((c) => c.name)
-      .filter((n) => typeof n === "string" && n.trim().length > 0);
-    const { child_ids, resolved: childResolutions } = await resolveChildren(
-      inboxRow.case_id,
-      childNames
-    );
-    const unresolved_children = childResolutions
-      .filter((r) => r.child_id === null)
-      .map((r) => r.name);
-
-    const resolved_dates = resolveDates(
-      entities.dates.map((d) => ({ raw: d.raw })),
-      new Date(),
-      "America/Denver"
-    );
-
-    const itemPlan = await plan({
-      item_type: intent.item_type,
-      domain: intent.domain,
-      action_required: intent.action_required,
-      summary: intent.summary,
-      child_ids,
-      unresolved_children,
-      resolved_dates: resolved_dates.map((d) => ({
-        raw: d.raw,
-        status: d.status,
-        iso: d.iso,
-      })),
-      sender: "Co-Parent",
+    const processed = await processObservation(observation, {
+      case_id: inboxRow.case_id,
+      timezone: "America/Denver",
+      source_type: "email",
+      source_id: inboxItemId,
+      sender,
+      plan_sender: "Co-Parent",
     });
+
+    const { intent, entities } = processed.interpretation;
+    const { child_ids, resolved_dates, plan: itemPlan } = processed;
 
     const { data: sageRow, error: insertError } = await admin
       .from("sage_items")

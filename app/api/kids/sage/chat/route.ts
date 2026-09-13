@@ -139,7 +139,7 @@ ${toneAddition}`;
             "anthropic-version": "2023-06-01",
           },
           body: JSON.stringify({
-            model: "claude-sonnet-4-20250514",
+            model: "claude-sonnet-4-6",
             max_tokens: 200,
             system: crisisSystemPrompt,
             messages: [
@@ -284,7 +284,7 @@ ${toneAddition}`;
             "anthropic-version": "2023-06-01",
           },
           body: JSON.stringify({
-            model: "claude-sonnet-4-20250514",
+            model: "claude-sonnet-4-6",
             max_tokens: 500,
             system: systemPrompt,
             messages: messagesForModel,

@@ -239,7 +239,7 @@ export async function POST(request: NextRequest) {
       const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
       let text = "";
       console.log("[classify] ANTHROPIC_API_KEY exists:", !!process.env.ANTHROPIC_API_KEY);
-      console.log("[classify] About to call Anthropic with model claude-sonnet-4-20250514");
+      console.log("[classify] About to call Anthropic with model claude-sonnet-4-6");
 
       try {
         console.log("[classify] Calling Anthropic...");
@@ -247,7 +247,7 @@ export async function POST(request: NextRequest) {
           const base64FileData = buf.toString("base64");
           const mimeType = contentType as "image/jpeg" | "image/png" | "image/gif" | "image/webp";
           const response = await anthropic.messages.create({
-            model: "claude-sonnet-4-20250514",
+            model: "claude-sonnet-4-6",
             max_tokens: 4096,
             messages: [
               {
@@ -277,7 +277,7 @@ export async function POST(request: NextRequest) {
             const truncated = extracted.slice(0, 8000);
             const textPrompt = `PDF Content:\n${truncated}\n\n${CLASSIFY_PROMPT}`;
             const response = await anthropic.messages.create({
-              model: "claude-sonnet-4-20250514",
+              model: "claude-sonnet-4-6",
               max_tokens: 4096,
               messages: [{ role: "user", content: textPrompt }],
             });
@@ -289,7 +289,7 @@ export async function POST(request: NextRequest) {
           } else {
             const base64FileData = buf.toString("base64");
             const response = await anthropic.messages.create({
-              model: "claude-sonnet-4-20250514",
+              model: "claude-sonnet-4-6",
               max_tokens: 4096,
               messages: [
                 {
@@ -317,7 +317,7 @@ export async function POST(request: NextRequest) {
         } else {
           const textPrompt = `Filename: ${file.name}. File type: ${contentType}. Infer classification and suggested fields from the filename. ${CLASSIFY_PROMPT}`;
           const response = await anthropic.messages.create({
-            model: "claude-sonnet-4-20250514",
+            model: "claude-sonnet-4-6",
             max_tokens: 4096,
             messages: [{ role: "user", content: textPrompt }],
           });

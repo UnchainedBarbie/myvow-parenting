@@ -308,7 +308,7 @@ async function classifyFileWithAnthropic(buf: Buffer, fileName: string, contentT
       const base64FileData = buf.toString("base64");
       const mimeType = contentType as "image/jpeg" | "image/png" | "image/gif" | "image/webp";
       const response = await anthropic.messages.create({
-        model: "claude-sonnet-4-20250514",
+        model: "claude-sonnet-4-6",
         max_tokens: 4096,
         messages: [
           {
@@ -344,7 +344,7 @@ async function classifyFileWithAnthropic(buf: Buffer, fileName: string, contentT
           const truncated = extracted.slice(0, 8000);
           const textPrompt = `PDF Content:\n${truncated}\n\n${CLASSIFY_PROMPT}`;
           const response = await anthropic.messages.create({
-            model: "claude-sonnet-4-20250514",
+            model: "claude-sonnet-4-6",
             max_tokens: 4096,
             messages: [{ role: "user", content: textPrompt }],
           });
@@ -361,7 +361,7 @@ async function classifyFileWithAnthropic(buf: Buffer, fileName: string, contentT
         try {
           const base64FileData = buf.toString("base64");
           const response = await anthropic.messages.create({
-            model: "claude-sonnet-4-20250514",
+            model: "claude-sonnet-4-6",
             max_tokens: 4096,
             messages: [
               {
@@ -391,7 +391,7 @@ async function classifyFileWithAnthropic(buf: Buffer, fileName: string, contentT
     } else {
       const textPrompt = `Filename: ${fileName}. File type: ${contentType}. Infer classification and suggested fields from the filename. ${CLASSIFY_PROMPT}`;
       const response = await anthropic.messages.create({
-        model: "claude-sonnet-4-20250514",
+        model: "claude-sonnet-4-6",
         max_tokens: 4096,
         messages: [{ role: "user", content: textPrompt }],
       });
@@ -482,7 +482,7 @@ async function classifyEmailBody(subject: string, textBody: string | null): Prom
 
   try {
     const response = await anthropic.messages.create({
-      model: "claude-sonnet-4-20250514",
+      model: "claude-sonnet-4-6",
       max_tokens: 512,
       system: EMAIL_BODY_SYSTEM,
       messages: [{ role: "user", content: userContent }],

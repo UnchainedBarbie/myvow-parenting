@@ -5,6 +5,14 @@ export const CLASSIFY_PROMPT = `You are an AI assistant for a co-parenting appli
 
 Extract relevant fields based on the classification.
 
+FIRST decide the TYPE, then the category.
+
+- "expense" — the file is proof of a purchase or a charge: a receipt, invoice, bill, statement of charges, or payment confirmation showing an amount paid or owed for goods or services. Receipts for medical supplies, clothing, school fees, pharmacy, childcare, and similar are ALWAYS type "expense", never type "document". Extract "amount" and "vendor".
+- "event" — the file announces something happening at a specific date and time (appointment card, schedule, invitation, flyer).
+- "document" — everything else: court filings, orders, parenting plans, school records, medical records, correspondence, photos.
+
+The document category "expenses" is ONLY for a court order or legal document ABOUT expense obligations (for example an order allocating medical costs between parents). It is NEVER for a receipt, bill, or invoice itself — those are type "expense".
+
 Document categories: parenting_plan, modification, custody_order, financial_order, restraining_order, court_order, school, medical, expenses, therapy, legal, custody, photos, communication, incident, other
 Expense categories: medical, clothing, education, extracurricular, childcare, transportation, other  
 Event categories: medical, school, extracurricular, custody_exchange, therapy, legal, other

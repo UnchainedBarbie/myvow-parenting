@@ -80,6 +80,20 @@ function formatDate(createdAt: string) {
   });
 }
 
+/** Postgres DATE as "YYYY-MM-DD" — parse as local calendar day, not UTC midnight. */
+function formatDateOnly(isoDate: string) {
+  const m = isoDate.trim().match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return formatDate(isoDate);
+  const year = Number(m[1]);
+  const monthIndex = Number(m[2]) - 1;
+  const day = Number(m[3]);
+  return new Date(year, monthIndex, day).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
 function coparentShareForRow(
   exp: ExpenseRow,
   currentUserId: string
@@ -1014,7 +1028,9 @@ const dateFilterValue: DateFilterValue = {
                         )}
                       </td>
                       <td className="px-3 py-1.5 text-foreground-secondary whitespace-nowrap align-middle">
-                        {formatDate(exp.incurred_date || exp.created_at)}
+                        {exp.incurred_date
+                          ? formatDateOnly(exp.incurred_date)
+                          : formatDate(exp.created_at)}
                       </td>
                       <td className="px-3 py-1.5 align-middle whitespace-nowrap">
                         {Number.isNaN(amountNum) ? "—" : `$${amountNum.toFixed(2)}`}

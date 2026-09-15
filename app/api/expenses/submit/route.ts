@@ -24,6 +24,7 @@ export async function POST(request: NextRequest) {
       child_id,
       receipt_file_id,
       notify_coparent,
+      incurred_date,
     } = body as {
       case_id?: string;
       description?: string;
@@ -32,6 +33,7 @@ export async function POST(request: NextRequest) {
       child_id?: string;
       receipt_file_id?: string;
       notify_coparent?: boolean;
+      incurred_date?: string | null;
     };
     const descTrimmed = (description ?? "").trim();
     if (!case_id || !descTrimmed || amount == null) {
@@ -76,6 +78,7 @@ export async function POST(request: NextRequest) {
         other_parent_share: allocation.other_parent_share,
         split_label: allocation.split_label,
         receipt_file_id: receipt_file_id ?? null,
+        incurred_date: incurred_date || null,
         status,
       })
       .select("id")

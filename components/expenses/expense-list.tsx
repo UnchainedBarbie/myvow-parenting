@@ -52,6 +52,7 @@ export type ExpenseRow = {
   amount_owed: string | null;
   status: string;
   created_at: string;
+  incurred_date: string | null;
   submitted_by: string;
   receipt_file_id: string | null;
   receipt_file_name: string | null;
@@ -1013,7 +1014,7 @@ const dateFilterValue: DateFilterValue = {
                         )}
                       </td>
                       <td className="px-3 py-1.5 text-foreground-secondary whitespace-nowrap align-middle">
-                        {formatDate(exp.created_at)}
+                        {formatDate(exp.incurred_date || exp.created_at)}
                       </td>
                       <td className="px-3 py-1.5 align-middle whitespace-nowrap">
                         {Number.isNaN(amountNum) ? "—" : `$${amountNum.toFixed(2)}`}

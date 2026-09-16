@@ -50,7 +50,7 @@ export default async function ExpensesPage() {
   const { data: expensesRaw } = await admin
     .from("expenses")
     .select(
-      "id, description, amount, category, child_id, amount_owed, status, created_at, incurred_date, expense_number, submitted_by, receipt_file_id, dispute_reason, paid_at, payment_method, payment_reference, payment_notes, deleted_at, allocation_status, split_label"
+      "id, description, amount, category, category_description, child_id, amount_owed, status, created_at, incurred_date, expense_number, submitted_by, receipt_file_id, dispute_reason, paid_at, payment_method, payment_reference, payment_notes, deleted_at, allocation_status, split_label"
     )
     .eq("case_id", caseId)
     .is("deleted_at", null)
@@ -103,6 +103,8 @@ export default async function ExpensesPage() {
     description: e.description,
     amount: String(e.amount),
     category: e.category,
+    category_description:
+      (e as { category_description?: string | null }).category_description ?? null,
     child_id: e.child_id,
     child_name: e.child_id ? childMap[e.child_id]?.first_name ?? null : null,
     amount_owed: e.amount_owed != null ? String(e.amount_owed) : null,

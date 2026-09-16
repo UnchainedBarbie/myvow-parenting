@@ -47,6 +47,7 @@ export type ExpenseRow = {
   description: string;
   amount: string;
   category: string;
+  category_description?: string | null;
   child_id: string | null;
   child_name: string | null;
   amount_owed: string | null;
@@ -315,6 +316,7 @@ export function ExpenseList({
     amount: "",
     category: "other",
     child_id: "",
+    incurred_date: "",
     status: "submitted",
     dispute_reason: "",
     paid_at: "",
@@ -331,6 +333,11 @@ export function ExpenseList({
       amount: exp.amount ?? "",
       category: exp.category ?? "other",
       child_id: exp.child_id ?? "",
+      incurred_date: (() => {
+        const raw = (exp.incurred_date ?? "").trim();
+        const m = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+        return m ? `${m[1]}-${m[2]}-${m[3]}` : "";
+      })(),
       status: exp.status ?? "submitted",
       dispute_reason: exp.dispute_reason ?? "",
       paid_at: (exp as { paid_at?: string | null }).paid_at
@@ -372,6 +379,7 @@ export function ExpenseList({
           amount: editForm.amount.trim() ? amountNum : undefined,
           category: editForm.category || undefined,
           child_id: editForm.child_id || null,
+          incurred_date: editForm.incurred_date || null,
           status: editForm.status || undefined,
           dispute_reason: editForm.dispute_reason.trim() || null,
           paid_at: editForm.paid_at || null,
@@ -1142,6 +1150,10 @@ const dateFilterValue: DateFilterValue = {
                   const theirShare = coparentShareForRow(exp, currentUserId);
                   const involved = coparentShareInvolves(theirShare);
                   const catColors = getCategoryColor(exp.category);
+                  const otherCategoryNote =
+                    exp.category === "other"
+                      ? (exp.category_description ?? "").trim()
+                      : "";
                   const statusLabel = displayExpenseStatus(exp, involved);
                   const statusClasses =
                     !involved &&
@@ -1213,15 +1225,25 @@ const dateFilterValue: DateFilterValue = {
                         </div>
                       </td>
                       <td className="px-3 py-1.5 align-middle whitespace-nowrap">
-                        <span className="inline-flex items-center gap-2">
-                          <span
-                            className={cn("h-2.5 w-2.5 shrink-0 rounded-full", catColors.dotClass)}
-                            aria-hidden
-                          />
-                          <span className="text-xs text-foreground-secondary">
-                            {CATEGORY_LABELS[exp.category] ?? exp.category}
+                        <div className="flex flex-col gap-0.5 min-w-0">
+                          <span className="inline-flex items-center gap-2">
+                            <span
+                              className={cn(
+                                "h-2.5 w-2.5 shrink-0 rounded-full",
+                                catColors.dotClass
+                              )}
+                              aria-hidden
+                            />
+                            <span className="text-xs text-foreground-secondary">
+                              {CATEGORY_LABELS[exp.category] ?? exp.category}
+                            </span>
                           </span>
-                        </span>
+                          {otherCategoryNote ? (
+                            <span className="text-[11px] text-foreground-secondary overflow-hidden text-ellipsis whitespace-nowrap block max-w-[160px]">
+                              {otherCategoryNote}
+                            </span>
+                          ) : null}
+                        </div>
                       </td>
                       <td className="px-3 py-1.5 text-foreground-secondary align-middle">
                     {exp.child_id && exp.child_name ? (
@@ -1703,6 +1725,31 @@ const dateFilterValue: DateFilterValue = {
               ) : (
                 <p className="text-sm text-foreground-secondary py-1.5">
                   ${Number(editExpense.amount).toFixed(2)}
+                </p>
+              )}
+            </div>
+
+            <div className="space-y-1">
+              <Label className="text-xs font-medium text-[#3D3D3D] flex items-center gap-1">
+                Date incurred
+                {editExpense.submitted_by !== currentUserId && (
+                  <Lock className="h-3 w-3 text-foreground-secondary" aria-hidden />
+                )}
+              </Label>
+              {editExpense.submitted_by === currentUserId ? (
+                <input
+                  type="date"
+                  value={editForm.incurred_date}
+                  onChange={(e) =>
+                    setEditForm((f) => ({ ...f, incurred_date: e.target.value }))
+                  }
+                  className="h-8 w-full rounded-md border border-[#E8E4DC] bg-white px-2 text-sm text-[#3D3D3D] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E]"
+                />
+              ) : (
+                <p className="text-sm text-foreground-secondary py-1.5">
+                  {editExpense.incurred_date
+                    ? formatDateOnly(editExpense.incurred_date)
+                    : formatDate(editExpense.created_at)}
                 </p>
               )}
             </div>

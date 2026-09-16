@@ -57,6 +57,8 @@ export async function PATCH(
       amount?: number;
       category?: string;
       child_id?: string | null;
+      category_description?: string | null;
+      incurred_date?: string | null;
       status?: string;
       dispute_reason?: string | null;
       paid_at?: string | null;
@@ -75,6 +77,12 @@ export async function PATCH(
       if (body.amount !== undefined) updates.amount = body.amount;
       if (body.category !== undefined) updates.category = body.category;
       if (body.child_id !== undefined) updates.child_id = body.child_id;
+      if (body.incurred_date !== undefined) {
+        updates.incurred_date = body.incurred_date || null;
+      }
+      if (body.category_description !== undefined) {
+        updates.category_description = body.category_description || null;
+      }
     }
 
     if (body.status !== undefined) updates.status = body.status;

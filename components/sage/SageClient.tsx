@@ -339,6 +339,64 @@ export function SageClient({
     }
   }
 
+  async function reenterForcedAttachment(
+    item: SageItem,
+    proposalIndex: number,
+    proposal: SageProposal
+  ) {
+    const sid = sessionId;
+    if (!sid) {
+      showErrorToast("Couldn't continue with that file.");
+      return;
+    }
+    const caption = (proposal.draft ?? "").trim() || "Log this file";
+    setSending(true);
+    try {
+      const res = await fetch("/api/sage/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          content: caption,
+          session_id: sid,
+          sage_item_id: item.id,
+          proposal_index: proposalIndex,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showErrorToast(
+          (data as { message?: string }).message ??
+            "Sage is unavailable right now."
+        );
+        return;
+      }
+      const payload = data as {
+        user_message?: SageMessage;
+        sage_message?: SageMessage;
+        sage_item?: SageItem | null;
+        case_id?: string | null;
+      };
+      if (payload.case_id) setCaseId(payload.case_id);
+      const userMsg = payload.user_message;
+      const sageMsg = payload.sage_message
+        ? {
+            ...payload.sage_message,
+            sage_item:
+              payload.sage_message.sage_item ?? payload.sage_item ?? null,
+          }
+        : undefined;
+      setMessages((prev) => [
+        ...prev,
+        ...(userMsg ? [userMsg] : []),
+        ...(sageMsg ? [sageMsg] : []),
+      ]);
+    } catch {
+      showErrorToast("Something went wrong. Try again.");
+    } finally {
+      setSending(false);
+    }
+  }
+
   async function handleAgree(
     item: SageItem,
     proposal_indexes: number[],
@@ -348,6 +406,21 @@ export function SageClient({
     if (missingRequiredDates(item, proposal_indexes)) return;
 
     const proposals = item.plan?.proposals ?? [];
+    const chosenIndex = proposal_indexes[0];
+    const chosen = proposals[chosenIndex];
+    const forceType = (chosen as SageProposal & { force_type?: unknown } | undefined)
+      ?.force_type;
+    if (
+      chosen &&
+      (forceType === "expense" ||
+        forceType === "event" ||
+        forceType === "document")
+    ) {
+      await postProposalAction(item, "agree", proposal_indexes, busyId);
+      await reenterForcedAttachment(item, chosenIndex, chosen);
+      return;
+    }
+
     const formIdxs = proposal_indexes.filter((i) =>
       isFormExecuteProposal(proposals[i]?.type)
     );

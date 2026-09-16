@@ -7,8 +7,10 @@
 import { runClassify, type ClassifyPayload } from "@/lib/ai-classify";
 import { mapExpenseCategoryFromClassify } from "@/lib/expenses-share";
 import { processChatMessage } from "@/lib/sage/chat";
+import { buildObservationFromChat } from "@/lib/sage/observation-builder";
 import type { ProcessObservationResult } from "@/lib/sage/process-observation";
 import { isLogExpenseProposal } from "@/lib/sage/proposal-kind";
+import type { Proposal } from "@/lib/sage/planner";
 import type { getServiceRoleClient } from "@/lib/supabase/server";
 
 export type ChatAttachmentMeta = {
@@ -16,6 +18,8 @@ export type ChatAttachmentMeta = {
   file_name: string;
   url: string;
 };
+
+export type ForcedAttachType = "expense" | "event" | "document";
 
 export type ChatAttachmentProcessResult =
   | {
@@ -31,6 +35,13 @@ export type ChatAttachmentProcessResult =
       attachment: ChatAttachmentMeta;
       reply: string;
       result: null;
+    }
+  | {
+      kind: "disambiguate";
+      classify: ClassifyPayload;
+      attachment: ChatAttachmentMeta;
+      reply: string;
+      result: ProcessObservationResult;
     };
 
 type AdminClient = ReturnType<typeof getServiceRoleClient>;
@@ -137,13 +148,101 @@ export async function loadAndClassifyDocument(opts: {
   const mimeType = (doc.mime_type as string) || "application/octet-stream";
   const fileName = (doc.file_name as string) || "receipt";
   const classify = await runClassify(buf, mimeType, fileName);
-  console.log("[chat-attach] classify result:", JSON.stringify(classify));
+  console.log("[chat-attach] type:", classify.type, "confidence:", classify.confidence);
   return {
     classify,
     attachment: {
       document_id: doc.id as string,
       file_name: fileName,
       url: `/api/documents/${doc.id}/download`,
+    },
+  };
+}
+
+export function isForcedAttachType(value: unknown): value is ForcedAttachType {
+  return value === "expense" || value === "event" || value === "document";
+}
+
+export function forcedTypeFromProposal(p: {
+  force_type?: unknown;
+}): ForcedAttachType | null {
+  return isForcedAttachType(p.force_type) ? p.force_type : null;
+}
+
+const DISAMBIGUATE_CHOICES: {
+  forceType: ForcedAttachType;
+  draft: string;
+  proposalType: string;
+}[] = [
+  {
+    forceType: "expense",
+    draft: "Log as expense",
+    proposalType: "force_expense",
+  },
+  {
+    forceType: "event",
+    draft: "Add to calendar",
+    proposalType: "force_event",
+  },
+  {
+    forceType: "document",
+    draft: "File as document",
+    proposalType: "force_document",
+  },
+];
+
+function buildDisambiguateResult(
+  attachment: ChatAttachmentMeta,
+  sourceId?: string
+): ProcessObservationResult {
+  const observation = buildObservationFromChat("What would you like to log?", {
+    id: sourceId,
+  });
+  const stamp = {
+    attached_document_id: attachment.document_id,
+    attached_file_name: attachment.file_name,
+    attached_file_url: attachment.url,
+  };
+  const proposals = DISAMBIGUATE_CHOICES.map((choice) => ({
+    type: choice.proposalType as Proposal["type"],
+    draft: choice.draft,
+    depends_on: null,
+    requires_approval: true as const,
+    force_type: choice.forceType,
+    ...stamp,
+  }));
+  return {
+    observation,
+    interpretation: {
+      intent: {
+        item_type: "needs_review",
+        domain: "general",
+        summary: "What would you like to log?",
+        evidence_excerpt: attachment.file_name || "file",
+        tool_name: null,
+        action_required: true,
+        action_type: "review",
+        urgency: "normal",
+        confidence: 0,
+      },
+      entities: {
+        children: [],
+        people: [],
+        dates: [],
+        amounts: [],
+        merchants: [],
+        providers: [],
+        documents: [{ name: attachment.file_name }],
+      },
+      reasoning: { signals: ["classify.confidence === 0"] },
+    },
+    child_ids: [],
+    unresolved_children: [],
+    resolved_dates: [],
+    plan: {
+      status: "ready",
+      reasoning: "classify.confidence === 0 — ask how to log the attachment",
+      proposals: proposals as ProcessObservationResult["plan"]["proposals"],
     },
   };
 }
@@ -155,8 +254,19 @@ export async function processChatAttachment(opts: {
   caption: string;
   classify: ClassifyPayload;
   attachment: ChatAttachmentMeta;
+  /** When set, skip the confidence === 0 ask and follow this type's existing path. */
+  forcedType?: ForcedAttachType;
 }): Promise<ChatAttachmentProcessResult> {
-  const type = opts.classify.type;
+  const type = opts.forcedType ?? opts.classify.type;
+  if (opts.forcedType == null && opts.classify.confidence === 0) {
+    return {
+      kind: "disambiguate",
+      classify: opts.classify,
+      attachment: opts.attachment,
+      reply: "What would you like to log?",
+      result: buildDisambiguateResult(opts.attachment, opts.sourceId),
+    };
+  }
   if (type === "event") {
     return {
       kind: "event",

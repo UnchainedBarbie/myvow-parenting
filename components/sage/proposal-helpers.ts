@@ -24,6 +24,12 @@ export function proposalTypeLabel(type: string): string {
     case "expense":
     case "log_expense":
       return "Log expense";
+    case "force_expense":
+      return "Log as expense";
+    case "force_event":
+      return "Add to calendar";
+    case "force_document":
+      return "File as document";
     case "note_only":
       return "Note";
     default:
@@ -147,6 +153,14 @@ export function needsDateField(
   p: SageProposal,
   item?: SageItem | null
 ): boolean {
+  const forceType = (p as SageProposal & { force_type?: unknown }).force_type;
+  if (
+    forceType === "expense" ||
+    forceType === "event" ||
+    forceType === "document"
+  ) {
+    return false;
+  }
   if (isCalendarUpdateProposal(p.type)) return false;
   if ((p.chosen_date ?? "").trim()) return false;
   if (resolvedCalendarIso(item)) return false;

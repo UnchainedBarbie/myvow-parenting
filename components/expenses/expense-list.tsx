@@ -53,6 +53,7 @@ export type ExpenseRow = {
   status: string;
   created_at: string;
   incurred_date: string | null;
+  expense_number: number | null;
   submitted_by: string;
   receipt_file_id: string | null;
   receipt_file_name: string | null;
@@ -146,6 +147,11 @@ function displayExpenseStatus(exp: ExpenseRow, involved: boolean): string {
 
 function expenseIdFromIndex(idx: number) {
   return `EXP-${String(idx + 1).padStart(3, "0")}`;
+}
+
+function formatStoredExpenseNumber(n: number | null | undefined): string {
+  if (n == null || !Number.isFinite(Number(n))) return "—";
+  return `EXP-${String(Math.trunc(Number(n))).padStart(3, "0")}`;
 }
 
 function csvEscape(value: string): string {
@@ -1002,12 +1008,12 @@ const dateFilterValue: DateFilterValue = {
                           type="checkbox"
                           checked={selectedIds.has(exp.id)}
                           onChange={() => toggleSelect(exp.id)}
-                          aria-label={`Select expense ${expenseIdFromIndex(idx)}`}
+                          aria-label={`Select expense ${formatStoredExpenseNumber(exp.expense_number)}`}
                           className="rounded border-border"
                         />
                       </td>
                       <td className="px-3 py-1.5 text-xs align-middle whitespace-nowrap">
-                        {expenseIdFromIndex(idx)}
+                        {formatStoredExpenseNumber(exp.expense_number)}
                       </td>
                       <td className="px-3 py-1.5 align-middle min-w-0">
                         <div className="flex flex-col gap-0.5 min-w-0">

@@ -130,6 +130,27 @@ export default async function ExpensesPage() {
     split_label: (e as { split_label?: string | null }).split_label ?? null,
   }));
 
+  expenses.sort((a, b) => {
+    const keyOf = (exp: ExpenseRow) => {
+      if (exp.incurred_date) {
+        const m = exp.incurred_date.trim().match(/^(\d{4})-(\d{2})-(\d{2})/);
+        if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+      }
+      const d = new Date(exp.created_at);
+      const y = d.getFullYear();
+      const mo = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      return `${y}-${mo}-${day}`;
+    };
+    const ka = keyOf(a);
+    const kb = keyOf(b);
+    if (ka !== kb) return ka < kb ? 1 : -1;
+    if (a.created_at !== b.created_at) {
+      return a.created_at < b.created_at ? 1 : -1;
+    }
+    return 0;
+  });
+
   return (
     <div className="px-3 pt-3 pb-1 md:px-4 md:pt-4 md:pb-2">
       <div className="mb-4">

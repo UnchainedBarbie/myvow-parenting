@@ -94,6 +94,34 @@ function formatDateOnly(isoDate: string) {
   });
 }
 
+/** Calendar day shown in the Date column: incurred_date, else local day of created_at. */
+function ledgerDateKey(exp: ExpenseRow): string {
+  if (exp.incurred_date) {
+    const m = exp.incurred_date.trim().match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  }
+  const d = new Date(exp.created_at);
+  const y = d.getFullYear();
+  const mo = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${mo}-${day}`;
+}
+
+function csvIncurredDate(exp: ExpenseRow): string {
+  if (!exp.incurred_date) return "";
+  const m = exp.incurred_date.trim().match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? `${m[1]}-${m[2]}-${m[3]}` : "";
+}
+
+function csvEnteredDate(createdAt: string): string {
+  const d = new Date(createdAt);
+  if (Number.isNaN(d.getTime())) return "";
+  const y = d.getFullYear();
+  const mo = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${mo}-${day}`;
+}
+
 function coparentShareForRow(
   exp: ExpenseRow,
   currentUserId: string
@@ -291,16 +319,9 @@ export function ExpenseList({
       if (filterStatuses.length && !filterStatuses.includes(exp.status)) return false;
 
       if (startDate || endDate) {
-        const d = new Date(exp.created_at);
-        if (startDate) {
-          const s = new Date(startDate);
-          if (d < s) return false;
-        }
-        if (endDate) {
-          const e = new Date(endDate);
-          e.setHours(23, 59, 59, 999);
-          if (d > e) return false;
-        }
+        const key = ledgerDateKey(exp);
+        if (startDate && key < startDate) return false;
+        if (endDate && key > endDate) return false;
       }
 
       const amountNum = Number(exp.amount);
@@ -320,6 +341,16 @@ export function ExpenseList({
       }
 
       return true;
+    });
+
+    result.sort((a, b) => {
+      const ka = ledgerDateKey(a);
+      const kb = ledgerDateKey(b);
+      if (ka !== kb) return ka < kb ? 1 : -1;
+      if (a.created_at !== b.created_at) {
+        return a.created_at < b.created_at ? 1 : -1;
+      }
+      return 0;
     });
 
     const net = totalOwedToYou - totalYouOwe;
@@ -363,6 +394,7 @@ export function ExpenseList({
       "Category",
       "Child",
       "Date",
+      "Date entered",
       "Total",
       "Split",
       "Their share",
@@ -381,7 +413,8 @@ export function ExpenseList({
         exp.description ?? "",
         CATEGORY_LABELS[exp.category] ?? exp.category,
         exp.child_name ?? "—",
-        formatDate(exp.created_at),
+        csvIncurredDate(exp),
+        csvEnteredDate(exp.created_at),
         Number.isNaN(amountNum) ? "" : amountNum.toFixed(2),
         exp.split_label ?? "",
         theirShare != null ? theirShare.toFixed(2) : "",
@@ -411,6 +444,7 @@ export function ExpenseList({
         "Category",
         "Child",
         "Date",
+        "Date entered",
         "Total",
         "Split",
         "Their share",
@@ -439,7 +473,8 @@ export function ExpenseList({
           exp.description ?? "",
           CATEGORY_LABELS[exp.category] ?? exp.category,
           exp.child_name ?? "—",
-          formatDate(exp.created_at),
+          csvIncurredDate(exp),
+          csvEnteredDate(exp.created_at),
           Number.isNaN(amountNum) ? "" : amountNum.toFixed(2),
           splitLabel,
           theirShare != null ? theirShare.toFixed(2) : "",

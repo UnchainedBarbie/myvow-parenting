@@ -408,8 +408,9 @@ export function DocumentList({ documents, children = [] }: DocumentListProps) {
 
   function handleExportCSV() {
     const headers = ["Doc ID", "Title", "File name", "Category", "Child", "Date uploaded", "Visibility", "Description"];
-    const rows = filteredAndSorted.map((doc, idx) => {
-      const docId = doc.document_number != null ? docIdFromNumber(doc.document_number) : docIdFromNumber(idx + 1);
+    const rows = filteredAndSorted.map((doc) => {
+      const docId =
+        doc.document_number != null ? docIdFromNumber(doc.document_number) : "";
       return [
         docId,
         doc.title?.trim() ?? doc.file_name ?? "",
@@ -653,7 +654,10 @@ export function DocumentList({ documents, children = [] }: DocumentListProps) {
                   </tr>
                 ) : (
                 filteredAndSorted.map((doc, idx) => {
-                  const docIdLabel = doc.document_number != null ? docIdFromNumber(doc.document_number) : docIdFromNumber(idx + 1);
+                  const docIdLabel =
+                    doc.document_number != null
+                      ? docIdFromNumber(doc.document_number)
+                      : "—";
                   const isDeleted = !!doc.deleted_at;
                   const categoryColors = getCategoryColor(doc.category);
                   const rowBg = isDeleted

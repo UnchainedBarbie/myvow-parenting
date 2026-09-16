@@ -48,7 +48,7 @@ export default async function DocumentsPage() {
 
   const { data: docsRaw } = await admin
     .from("documents")
-    .select("id, title, file_name, file_size_bytes, mime_type, category, child_id, description, created_at, visibility")
+    .select("id, title, file_name, file_size_bytes, mime_type, category, child_id, description, created_at, visibility, document_number")
     .eq("case_id", caseId)
     .is("deleted_at", null)
     .order("created_at", { ascending: false });
@@ -96,7 +96,7 @@ export default async function DocumentsPage() {
     {} as Record<string, string>
   );
 
-  const documents: DocumentRow[] = (docsRaw ?? []).map((d, index) => {
+  const documents: DocumentRow[] = (docsRaw ?? []).map((d) => {
   const row = d as {
     id: string;
     title?: string | null;
@@ -132,7 +132,8 @@ export default async function DocumentsPage() {
     visibility: row.visibility ?? "private",
     related_comm_id: row.related_comm_id ?? null,
     deleted_at: row.deleted_at ?? null,
-    document_number: row.document_number ?? index + 1,
+    document_number:
+      typeof row.document_number === "number" ? row.document_number : undefined,
   };
 });
 

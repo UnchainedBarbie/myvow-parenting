@@ -9,7 +9,7 @@ import { cn } from "@/lib/utils";
 import { ColumnFilterPopover } from "@/components/documents/column-filter-popover";
 import { DateFilterPopover, type DateFilterValue } from "@/components/documents/date-filter-popover";
 import { getCategoryColor } from "@/lib/categoryColors";
-import { Download, Trash2, Check, XCircle, Filter, Paperclip, Pencil, Lock } from "lucide-react";
+import { Download, Trash2, Check, XCircle, Filter, Paperclip, Pencil, Lock, ChevronUp, ChevronDown } from "lucide-react";
 import { showErrorToast, showSuccessToast } from "@/components/ui/toaster";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { coparentShareInvolves } from "@/lib/expenses-share";
@@ -65,6 +65,14 @@ export type ExpenseRow = {
   allocation_status?: "ALLOCATED" | "NONE" | "MANUAL_REQUIRED" | "pending" | null;
   split_label?: string | null;
 };
+
+type ExpenseSortKey =
+  | "expense_id"
+  | "description"
+  | "date"
+  | "total"
+  | "their_share";
+type SortDir = "asc" | "desc";
 
 interface ExpenseListProps {
   expenses: ExpenseRow[];
@@ -135,6 +143,103 @@ function coparentShareForRow(
   return Number.isFinite(theirShare) ? theirShare : 0;
 }
 
+function dateTiebreak(a: ExpenseRow, b: ExpenseRow): number {
+  const ka = ledgerDateKey(a);
+  const kb = ledgerDateKey(b);
+  if (ka !== kb) return ka < kb ? 1 : -1;
+  if (a.created_at !== b.created_at) {
+    return a.created_at < b.created_at ? 1 : -1;
+  }
+  return 0;
+}
+
+function compareExpenses(
+  a: ExpenseRow,
+  b: ExpenseRow,
+  sortKey: ExpenseSortKey,
+  sortDir: SortDir,
+  currentUserId: string
+): number {
+  let c = 0;
+  switch (sortKey) {
+    case "expense_id": {
+      const na = a.expense_number;
+      const nb = b.expense_number;
+      if (na == null && nb == null) c = 0;
+      else if (na == null) return 1;
+      else if (nb == null) return -1;
+      else c = na - nb;
+      break;
+    }
+    case "description":
+      c = (a.description ?? "").localeCompare(b.description ?? "", undefined, {
+        sensitivity: "base",
+      });
+      break;
+    case "date":
+      c = ledgerDateKey(a).localeCompare(ledgerDateKey(b));
+      if (c === 0) {
+        c = a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0;
+      }
+      break;
+    case "total": {
+      const aa = Number(a.amount);
+      const bb = Number(b.amount);
+      const aOk = Number.isFinite(aa);
+      const bOk = Number.isFinite(bb);
+      if (!aOk && !bOk) c = 0;
+      else if (!aOk) return 1;
+      else if (!bOk) return -1;
+      else c = aa - bb;
+      break;
+    }
+    case "their_share":
+      c =
+        coparentShareForRow(a, currentUserId) -
+        coparentShareForRow(b, currentUserId);
+      break;
+  }
+  if (c === 0 && sortKey !== "date") {
+    return dateTiebreak(a, b);
+  }
+  return sortDir === "desc" ? -c : c;
+}
+
+function SortHeaderButton({
+  label,
+  column,
+  sortKey,
+  sortDir,
+  onSort,
+}: {
+  label: string;
+  column: ExpenseSortKey;
+  sortKey: ExpenseSortKey;
+  sortDir: SortDir;
+  onSort: (key: ExpenseSortKey) => void;
+}) {
+  const active = sortKey === column;
+  return (
+    <button
+      type="button"
+      className="inline-flex items-center gap-0.5 font-medium hover:text-foreground"
+      onClick={() => onSort(column)}
+      aria-label={`Sort by ${label}${
+        active ? `, ${sortDir === "desc" ? "descending" : "ascending"}` : ""
+      }`}
+    >
+      <span>{label}</span>
+      {active ? (
+        sortDir === "desc" ? (
+          <ChevronDown className="h-3 w-3 shrink-0" aria-hidden />
+        ) : (
+          <ChevronUp className="h-3 w-3 shrink-0" aria-hidden />
+        )
+      ) : null}
+    </button>
+  );
+}
+
 function displayExpenseStatus(exp: ExpenseRow, involved: boolean): string {
   if (
     !involved &&
@@ -188,6 +293,8 @@ export function ExpenseList({
   const [categoryFilterOpen, setCategoryFilterOpen] = useState(false);
   const [childFilterOpen, setChildFilterOpen] = useState(false);
   const [statusFilterOpen, setStatusFilterOpen] = useState(false);
+  const [sortKey, setSortKey] = useState<ExpenseSortKey>("date");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [summaryOpen, setSummaryOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -300,6 +407,15 @@ export function ExpenseList({
     statusFilterActive ||
     dateFilterActive;
 
+  function handleSortClick(key: ExpenseSortKey) {
+    if (sortKey === key) {
+      setSortDir((d) => (d === "desc" ? "asc" : "desc"));
+    } else {
+      setSortKey(key);
+      setSortDir("desc");
+    }
+  }
+
   const { filtered, totals } = useMemo(() => {
     const parts = debouncedSearch.split(/\s+/).filter(Boolean);
 
@@ -349,15 +465,7 @@ export function ExpenseList({
       return true;
     });
 
-    result.sort((a, b) => {
-      const ka = ledgerDateKey(a);
-      const kb = ledgerDateKey(b);
-      if (ka !== kb) return ka < kb ? 1 : -1;
-      if (a.created_at !== b.created_at) {
-        return a.created_at < b.created_at ? 1 : -1;
-      }
-      return 0;
-    });
+    result.sort((a, b) => compareExpenses(a, b, sortKey, sortDir, currentUserId));
 
     const net = totalOwedToYou - totalYouOwe;
 
@@ -369,7 +477,7 @@ export function ExpenseList({
         net,
       },
     };
-  }, [debouncedSearch, expenses, filterCategories, filterChildren, filterStatuses, startDate, endDate, currentUserId]);
+  }, [debouncedSearch, expenses, filterCategories, filterChildren, filterStatuses, startDate, endDate, currentUserId, sortKey, sortDir]);
 
   const allVisibleSelected = filtered.length > 0 && filtered.every((e) => selectedIds.has(e.id));
 
@@ -875,13 +983,41 @@ const dateFilterValue: DateFilterValue = {
                       className="rounded border-border"
                     />
                   </th>
-                  <th className="px-3 py-2 font-medium whitespace-nowrap min-w-[90px]">
-                    Expense ID
+                  <th
+                    className="px-3 py-2 font-medium whitespace-nowrap min-w-[90px]"
+                    aria-sort={
+                      sortKey === "expense_id"
+                        ? sortDir === "asc"
+                          ? "ascending"
+                          : "descending"
+                        : "none"
+                    }
+                  >
+                    <SortHeaderButton
+                      label="Expense ID"
+                      column="expense_id"
+                      sortKey={sortKey}
+                      sortDir={sortDir}
+                      onSort={handleSortClick}
+                    />
                   </th>
-                  <th className="px-3 py-2 font-medium">
-                    <span className="inline-flex items-center gap-1">
-                      <span>Description</span>
-                    </span>
+                  <th
+                    className="px-3 py-2 font-medium"
+                    aria-sort={
+                      sortKey === "description"
+                        ? sortDir === "asc"
+                          ? "ascending"
+                          : "descending"
+                        : "none"
+                    }
+                  >
+                    <SortHeaderButton
+                      label="Description"
+                      column="description"
+                      sortKey={sortKey}
+                      sortDir={sortDir}
+                      onSort={handleSortClick}
+                    />
                   </th>
                   <th className="px-3 py-2 font-medium whitespace-nowrap">
                     <span className="inline-flex items-center gap-1">
@@ -914,9 +1050,24 @@ const dateFilterValue: DateFilterValue = {
                       />
                     </span>
                   </th>
-                  <th className="px-3 py-2 font-medium whitespace-nowrap">
+                  <th
+                    className="px-3 py-2 font-medium whitespace-nowrap"
+                    aria-sort={
+                      sortKey === "date"
+                        ? sortDir === "asc"
+                          ? "ascending"
+                          : "descending"
+                        : "none"
+                    }
+                  >
                     <span className="inline-flex items-center gap-1">
-                      <span>Date</span>
+                      <SortHeaderButton
+                        label="Date"
+                        column="date"
+                        sortKey={sortKey}
+                        sortDir={sortDir}
+                        onSort={handleSortClick}
+                      />
                       <span data-date-filter-trigger className="shrink-0">
                         <DateFilterPopover
                           open={dateFilterOpen}
@@ -930,12 +1081,42 @@ const dateFilterValue: DateFilterValue = {
                       </span>
                     </span>
                   </th>
-                  <th className="px-3 py-2 font-medium whitespace-nowrap">Total</th>
+                  <th
+                    className="px-3 py-2 font-medium whitespace-nowrap"
+                    aria-sort={
+                      sortKey === "total"
+                        ? sortDir === "asc"
+                          ? "ascending"
+                          : "descending"
+                        : "none"
+                    }
+                  >
+                    <SortHeaderButton
+                      label="Total"
+                      column="total"
+                      sortKey={sortKey}
+                      sortDir={sortDir}
+                      onSort={handleSortClick}
+                    />
+                  </th>
                   <th className="px-2 py-2 font-medium whitespace-nowrap">Split</th>
-                  <th className="px-2 py-2 font-medium whitespace-nowrap">
-                    <span className="inline-flex items-center gap-1">
-                      <span>Their share</span>
-                    </span>
+                  <th
+                    className="px-2 py-2 font-medium whitespace-nowrap"
+                    aria-sort={
+                      sortKey === "their_share"
+                        ? sortDir === "asc"
+                          ? "ascending"
+                          : "descending"
+                        : "none"
+                    }
+                  >
+                    <SortHeaderButton
+                      label="Their share"
+                      column="their_share"
+                      sortKey={sortKey}
+                      sortDir={sortDir}
+                      onSort={handleSortClick}
+                    />
                   </th>
                   <th className="px-3 py-2 font-medium whitespace-nowrap">
                     <span className="inline-flex items-center gap-1">

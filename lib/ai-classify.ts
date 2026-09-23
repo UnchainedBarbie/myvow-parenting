@@ -8,8 +8,10 @@ Extract relevant fields based on the classification.
 FIRST decide the TYPE, then the category.
 
 - "expense" — the file is proof of a purchase or a charge: a receipt, invoice, bill, statement of charges, or payment confirmation showing an amount paid or owed for goods or services. Receipts for medical supplies, clothing, school fees, pharmacy, childcare, and similar are ALWAYS type "expense", never type "document". Extract "amount" and "vendor".
-- "event" — the file announces something happening at a specific date and time (appointment card, schedule, invitation, flyer).
+- "event" — the file states a SPECIFIC scheduled date AND time for something the family must attend: an appointment confirmation with a time, a game or practice schedule, a class timetable, an invitation with a start time. A date merely PRINTED on a document (issue date, letter date, filing date, expiry date) does NOT make it an event. A document that implies a future errand without giving a scheduled time is NOT an event.
 - "document" — everything else: court filings, orders, parenting plans, school records, medical records, correspondence, photos.
+
+If a document shows an amount paid or owed, classify it as "expense" even if it also contains dates or describes a future action.
 
 The document category "expenses" is ONLY for a court order or legal document ABOUT expense obligations (for example an order allocating medical costs between parents). It is NEVER for a receipt, bill, or invoice itself — those are type "expense".
 

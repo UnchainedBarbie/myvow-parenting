@@ -317,6 +317,7 @@ export function ExpenseList({
     category: "other",
     child_id: "",
     incurred_date: "",
+    category_description: "",
     status: "submitted",
     dispute_reason: "",
     paid_at: "",
@@ -338,6 +339,7 @@ export function ExpenseList({
         const m = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
         return m ? `${m[1]}-${m[2]}-${m[3]}` : "";
       })(),
+      category_description: (exp.category_description ?? "").slice(0, 100),
       status: exp.status ?? "submitted",
       dispute_reason: exp.dispute_reason ?? "",
       paid_at: (exp as { paid_at?: string | null }).paid_at
@@ -378,6 +380,10 @@ export function ExpenseList({
           description: editForm.description.trim() || undefined,
           amount: editForm.amount.trim() ? amountNum : undefined,
           category: editForm.category || undefined,
+          category_description:
+            editForm.category === "other"
+              ? editForm.category_description.trim() || null
+              : null,
           child_id: editForm.child_id || null,
           incurred_date: editForm.incurred_date || null,
           status: editForm.status || undefined,
@@ -1764,7 +1770,14 @@ const dateFilterValue: DateFilterValue = {
               {editExpense.submitted_by === currentUserId ? (
                 <select
                   value={editForm.category}
-                  onChange={(e) => setEditForm((f) => ({ ...f, category: e.target.value }))}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    setEditForm((f) => ({
+                      ...f,
+                      category: next,
+                      ...(next !== "other" ? { category_description: "" } : {}),
+                    }));
+                  }}
                   className="h-8 w-full rounded-md border border-[#E8E4DC] bg-white px-2 text-sm text-[#3D3D3D] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E]"
                 >
                   {Object.entries(CATEGORY_LABELS).map(([value, label]) => (
@@ -1777,6 +1790,36 @@ const dateFilterValue: DateFilterValue = {
                 </p>
               )}
             </div>
+
+            {editForm.category === "other" && (
+              <div className="space-y-1">
+                <Label className="text-xs font-medium text-[#3D3D3D] flex items-center gap-1">
+                  Category description
+                  {editExpense.submitted_by !== currentUserId && (
+                    <Lock className="h-3 w-3 text-foreground-secondary" aria-hidden />
+                  )}
+                </Label>
+                {editExpense.submitted_by === currentUserId ? (
+                  <input
+                    type="text"
+                    value={editForm.category_description}
+                    onChange={(e) =>
+                      setEditForm((f) => ({
+                        ...f,
+                        category_description: e.target.value.slice(0, 100),
+                      }))
+                    }
+                    placeholder="e.g., School supplies, Birthday party"
+                    maxLength={100}
+                    className="h-8 w-full rounded-md border border-[#E8E4DC] bg-white px-2 text-sm text-[#3D3D3D] placeholder:text-[#B0A899] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E]"
+                  />
+                ) : (
+                  <p className="text-sm text-foreground-secondary py-1.5">
+                    {(editExpense.category_description ?? "").trim() || "—"}
+                  </p>
+                )}
+              </div>
+            )}
 
             <div className="space-y-1">
               <Label className="text-xs font-medium text-[#3D3D3D] flex items-center gap-1">

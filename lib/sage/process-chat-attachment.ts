@@ -149,6 +149,29 @@ export async function loadAndClassifyDocument(opts: {
   const fileName = (doc.file_name as string) || "receipt";
   const classify = await runClassify(buf, mimeType, fileName);
   console.log("[chat-attach] type:", classify.type, "confidence:", classify.confidence);
+
+  if (classify.confidence > 0) {
+    const updates: Record<string, unknown> = {};
+    const title = classify.title?.trim();
+    if (title) updates.title = title;
+    const description = classify.description?.trim();
+    if (description) updates.description = description;
+    const category = classify.category?.trim();
+    if (category) updates.category = category;
+    if (Object.keys(updates).length > 0) {
+      const { error: updateError } = await admin
+        .from("documents")
+        .update(updates)
+        .eq("id", documentId);
+      if (updateError) {
+        console.warn(
+          "[chat-attach] documents metadata update failed:",
+          updateError.message
+        );
+      }
+    }
+  }
+
   return {
     classify,
     attachment: {

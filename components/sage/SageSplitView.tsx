@@ -430,9 +430,6 @@ export function SageSplitView() {
                         if (renamingId === s.id) return;
                         router.push(sageChatHref(s.id));
                       }}
-                      onMouseLeave={() => {
-                        if (menuOpenId === s.id) setMenuOpenId(null);
-                      }}
                       className={cn(
                         "group relative w-full cursor-pointer rounded-xl px-2.5 py-2 text-left transition-colors",
                         urlSessionId === s.id

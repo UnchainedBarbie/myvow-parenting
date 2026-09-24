@@ -485,19 +485,30 @@ function amountFromToolInput(item: SageItem): number | undefined {
   return undefined;
 }
 
-/** Expense incurred dates may already have passed this year — do not roll to next year. */
-function incurredIso(iso: string): string {
-  const m = iso.trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (!m) return iso.trim();
-  const y = Number(m[1]);
-  const cy = new Date().getFullYear();
-  if (y >= cy) return iso.trim();
-  return `${cy}-${m[2]}-${m[3]}`;
-}
-
+/** First engine-resolved date (YYYY-MM-DD) as stored — no roll-forward. */
 function resolvedExpenseIso(item: SageItem | null | undefined): string | undefined {
-  const iso = resolvedCalendarIso(item);
-  return iso ? incurredIso(iso) : undefined;
+  const input = toolInputRecord(item);
+  const resolved = input?.resolved_dates;
+  if (Array.isArray(resolved)) {
+    for (const d of resolved) {
+      if (!d || typeof d !== "object") continue;
+      const rec = d as { status?: unknown; iso?: unknown };
+      if (rec.status === "resolved" && isIsoDate(typeof rec.iso === "string" ? rec.iso : null)) {
+        return (rec.iso as string).trim();
+      }
+    }
+  }
+  const dates = input?.dates;
+  if (Array.isArray(dates)) {
+    for (const d of dates) {
+      if (!d || typeof d !== "object") continue;
+      const val = (d as { value?: unknown }).value;
+      if (isIsoDate(typeof val === "string" ? val : null)) {
+        return (val as string).trim();
+      }
+    }
+  }
+  return undefined;
 }
 
 function inferExpenseCategory(item: SageItem, proposal?: SageProposal): string {

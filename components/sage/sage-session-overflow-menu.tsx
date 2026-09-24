@@ -82,7 +82,8 @@ export function SageSessionOverflowMenu({
         <MoreVertical className="h-4 w-4" />
       </button>
       {open && (
-        <div className="absolute right-0 top-9 z-20 min-w-[180px] rounded-lg border border-[#E8E4DC] bg-white py-1 shadow-lg">
+        <div className="absolute right-0 top-full z-20 pt-1">
+          <div className="min-w-[180px] rounded-lg border border-[#E8E4DC] bg-white py-1 shadow-lg">
           <button
             type="button"
             className={MENU_ITEM}
@@ -170,6 +171,7 @@ export function SageSessionOverflowMenu({
               <Trash2 className="h-3.5 w-3.5" /> Delete conversation
             </button>
           )}
+          </div>
         </div>
       )}
     </div>

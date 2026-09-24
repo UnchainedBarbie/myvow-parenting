@@ -272,14 +272,17 @@ function resolved(
 }
 
 /**
- * If a parsed date landed in a past year (LLM-invented ISO, etc.), keep the
- * month/day and roll to this year or next — never emit a prior year.
+ * Yearless dates only: roll a past month/day to this year or next.
+ * Explicit years are returned unchanged.
  */
 function coerceUpcomingYear(
   ymd: Ymd,
   todayYmd: Ymd,
   yearExplicit: boolean
 ): { ymd: Ymd; reasonSuffix: string } {
+  if (yearExplicit) {
+    return { ymd, reasonSuffix: "" };
+  }
   if (ymd.y < todayYmd.y) {
     const rolled = rollForwardMonthDay(ymd.m, ymd.d, todayYmd);
     if (rolled) {
@@ -292,7 +295,7 @@ function coerceUpcomingYear(
       };
     }
   }
-  if (!yearExplicit && compareYmd(ymd, todayYmd) < 0) {
+  if (compareYmd(ymd, todayYmd) < 0) {
     const rolled = rollForwardMonthDay(ymd.m, ymd.d, todayYmd);
     if (rolled) {
       return {
@@ -338,6 +341,9 @@ function finishWithYear(
   yearExplicit: boolean,
   reason: string
 ): DateResolution {
+  if (yearExplicit) {
+    return resolved(original, ymd, reason);
+  }
   const coerced = coerceUpcomingYear(ymd, todayYmd, yearExplicit);
   return resolved(original, coerced.ymd, reason + coerced.reasonSuffix);
 }
@@ -446,7 +452,8 @@ export function resolveDate(
     return weekdayNeedsClarification(original, bareWd);
   }
 
-  // ISO YYYY-MM-DD (full string). Past years are treated as month/day — never keep 2024 when today is 2026.
+  // ISO YYYY-MM-DD (full string). Keep the stated year as-is.
+  const isoMatch = lower.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:[t\s].*)?$/);
   const isoMatch = lower.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:[t\s].*)?$/);
   if (isoMatch) {
     const y = Number(isoMatch[1]);

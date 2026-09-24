@@ -103,10 +103,7 @@ async function persistProcessedPlan(opts: {
   processed: ChatAttachmentProcessResult;
 }): Promise<Record<string, unknown> | null> {
   const { processed } = opts;
-  if (
-    (processed.kind !== "expense" && processed.kind !== "disambiguate") ||
-    !processed.result
-  ) {
+  if (!processed.result) {
     return null;
   }
   const { intent, entities } = processed.result.interpretation;

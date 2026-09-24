@@ -38,7 +38,7 @@ export async function GET() {
 
     const { data, error } = await admin
       .from("documents")
-      .select("id, file_name, category, created_at")
+      .select("id, file_name, category, created_at, document_number")
       .eq("case_id", caseId)
       .eq("status", "active")
       .is("deleted_at", null)

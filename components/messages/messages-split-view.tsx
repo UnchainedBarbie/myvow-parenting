@@ -174,7 +174,13 @@ export function MessagesSplitView({
   const [attachSelectedExpenseId, setAttachSelectedExpenseId] = useState<string | null>(null);
 
   const [attachDocuments, setAttachDocuments] = useState<
-    { id: string; file_name: string; category: string; created_at: string }[]
+    {
+      id: string;
+      file_name: string;
+      category: string;
+      created_at: string;
+      document_number: number | null;
+    }[]
   >([]);
   const [attachDocumentsLoading, setAttachDocumentsLoading] = useState(false);
   const [attachDocumentsSearch, setAttachDocumentsSearch] = useState("");
@@ -427,6 +433,10 @@ export function MessagesSplitView({
               file_name: (doc.file_name as string) ?? "",
               category: (doc.category as string) ?? "",
               created_at: doc.created_at as string,
+              document_number:
+                typeof doc.document_number === "number"
+                  ? doc.document_number
+                  : null,
             }))
           );
         } else {
@@ -2217,6 +2227,9 @@ export function MessagesSplitView({
                               </div>
                               <div className="min-w-0 flex-1">
                                 <p className="truncate text-[12px] font-medium text-[#3D3D3D]">
+                                  {d.document_number != null
+                                    ? `DOC-${String(d.document_number).padStart(3, "0")}`
+                                    : "—"}{" "}
                                   {d.file_name}
                                 </p>
                                 <p className="mt-0.5 text-[10px] text-[#8A8A8A]">

@@ -18,6 +18,10 @@ export type SageProposal = {
   attached_document_id?: string | null;
   attached_file_name?: string | null;
   attached_file_url?: string | null;
+  title?: string | null;
+  description?: string | null;
+  category?: string | null;
+  date?: string | null;
 };
 
 export type SagePlan = {

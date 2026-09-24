@@ -264,6 +264,8 @@ export function SageClient({
       const data = (await res.json().catch(() => ({}))) as {
         success?: boolean;
         plan?: SagePlan;
+        sage_message?: SageMessage;
+        sage_messages?: SageMessage[];
       };
       if (!res.ok) return;
       setSelected((prev) => {
@@ -272,6 +274,20 @@ export function SageClient({
         return next;
       });
       if (data.plan) patchItemPlan(item.id, data.plan);
+      const extras = data.sage_messages?.length
+        ? data.sage_messages
+        : data.sage_message
+          ? [data.sage_message]
+          : [];
+      if (extras.length > 0) {
+        setMessages((prev) => [
+          ...prev,
+          ...extras.map((m) => ({
+            ...m,
+            sage_item: m.sage_item ?? null,
+          })),
+        ]);
+      }
     } catch (e) {
       console.error("[SageClient] proposal action failed:", e);
     } finally {
@@ -563,6 +579,7 @@ export function SageClient({
       "Receipt";
     formData.set("title", base.slice(0, 120));
     formData.set("description", "Receipt attached in Sage chat.");
+    formData.set("status", "pending");
     const res = await fetch("/api/documents/upload", {
       method: "POST",
       body: formData,

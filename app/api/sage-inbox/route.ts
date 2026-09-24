@@ -1,8 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
+import type { ClassifyPayload } from "@/lib/ai-classify";
+import {
+  buildAlternateTypeResult,
+  mergeClassifyIntoToolInput,
+  type ChatAttachmentMeta,
+} from "@/lib/sage/process-chat-attachment";
 import {
   isCalendarUpdateProposal,
   isFormExecuteProposal,
+  isLogDocumentProposal,
   isLogExpenseProposal,
 } from "@/lib/sage/proposal-kind";
 
@@ -24,6 +31,13 @@ type PlanProposal = {
   executed_at?: string;
   result_event_id?: string;
   result_expense_id?: string;
+  attached_document_id?: string;
+  attached_file_name?: string;
+  attached_file_url?: string;
+  title?: string;
+  description?: string;
+  category?: string;
+  date?: string | null;
 };
 
 type SagePlan = {
@@ -32,6 +46,54 @@ type SagePlan = {
   reasoning?: string;
   [key: string]: unknown;
 };
+
+const SAGE_ITEM_SELECT =
+  "id, item_type, domain, summary, evidence_excerpt, urgency, action_required, child_ids, tool_input, plan, status, flagged, created_at";
+
+function asClassifyPayload(value: unknown): ClassifyPayload | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const o = value as Record<string, unknown>;
+  if (o.type !== "document" && o.type !== "expense" && o.type !== "event") {
+    return null;
+  }
+  if (typeof o.confidence !== "number") return null;
+  return value as ClassifyPayload;
+}
+
+function toolInputRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+function attachmentFromProposal(
+  p: PlanProposal,
+  input: Record<string, unknown> | null
+): ChatAttachmentMeta | null {
+  const fromProposal =
+    typeof p.attached_document_id === "string" ? p.attached_document_id.trim() : "";
+  const fromInput =
+    typeof input?.attached_document_id === "string"
+      ? input.attached_document_id.trim()
+      : "";
+  const document_id = fromProposal || fromInput;
+  if (!document_id) return null;
+  const file_name =
+    (typeof p.attached_file_name === "string" && p.attached_file_name.trim()) ||
+    (typeof input?.attached_file_name === "string" &&
+      String(input.attached_file_name).trim()) ||
+    "file";
+  const url =
+    (typeof p.attached_file_url === "string" && p.attached_file_url.trim()) ||
+    (typeof input?.attached_file_url === "string" &&
+      String(input.attached_file_url).trim()) ||
+    `/api/documents/${document_id}/download`;
+  return { document_id, file_name, url };
+}
+
+function filedTitle(p: PlanProposal, attachment: ChatAttachmentMeta | null): string {
+  const fromProposal = typeof p.title === "string" ? p.title.trim() : "";
+  return fromProposal || attachment?.file_name || "document";
+}
 
 /**
  * GET /api/sage-inbox?status=open|flagged|archived|all
@@ -163,7 +225,7 @@ export async function POST(req: NextRequest) {
     const admin = getServiceRoleClient();
     const { data: row, error: fetchError } = await admin
       .from("sage_items")
-      .select("id, plan")
+      .select("id, plan, case_id, source_id, source_type, tool_input, visible_to")
       .eq("id", id)
       .eq("visible_to", user.id)
       .maybeSingle();
@@ -318,6 +380,18 @@ export async function POST(req: NextRequest) {
     const now = new Date().toISOString();
     let waivedAskClarification = false;
     let undidWaivedAskClarification = false;
+    const toolInput = toolInputRecord(
+      (row as { tool_input?: unknown }).tool_input
+    );
+    const classify = asClassifyPayload(toolInput?.classify);
+    type ChatFollowUp =
+      | { kind: "filed"; title: string }
+      | {
+          kind: "alternates";
+          attachment: ChatAttachmentMeta;
+          classify: ClassifyPayload | null;
+        };
+    const chatFollowUps: ChatFollowUp[] = [];
 
     for (const idx of indexes) {
       if (idx >= proposals.length) continue;
@@ -356,6 +430,40 @@ export async function POST(req: NextRequest) {
       if (action === "agree") {
         // Calendar and expense must go through the form + execute, never record-only approve.
         if (isFormExecuteProposal(p.type)) continue;
+        if (isLogDocumentProposal(p.type)) {
+          const attachment = attachmentFromProposal(p, toolInput);
+          if (attachment) {
+            const title = filedTitle(p, attachment);
+            const description =
+              typeof p.description === "string" ? p.description.trim() : "";
+            const category =
+              typeof p.category === "string" ? p.category.trim() : "";
+            const docUpdates: Record<string, unknown> = { status: "active" };
+            if (title) docUpdates.title = title;
+            if (description) docUpdates.description = description;
+            if (category) docUpdates.category = category;
+            const { error: docErr } = await admin
+              .from("documents")
+              .update(docUpdates)
+              .eq("id", attachment.document_id);
+            if (docErr) {
+              console.error("[sage-inbox/POST] document activate failed:", docErr);
+              return NextResponse.json(
+                { success: false, error: "Failed to file the document." },
+                { status: 500 }
+              );
+            }
+            chatFollowUps.push({ kind: "filed", title });
+          }
+          proposals[idx] = {
+            ...p,
+            approved: true,
+            approved_at: now,
+            executed: true,
+            executed_at: now,
+          };
+          continue;
+        }
         const chosenDate =
           dates[String(idx)] ?? dates[idx as unknown as string] ?? undefined;
         proposals[idx] = {
@@ -367,6 +475,27 @@ export async function POST(req: NextRequest) {
             : {}),
         };
       } else {
+        if (isLogDocumentProposal(p.type)) {
+          const attachment = attachmentFromProposal(p, toolInput);
+          if (attachment) {
+            const { error: docErr } = await admin
+              .from("documents")
+              .update({ status: "dismissed" })
+              .eq("id", attachment.document_id);
+            if (docErr) {
+              console.error("[sage-inbox/POST] document dismiss failed:", docErr);
+              return NextResponse.json(
+                { success: false, error: "Failed to dismiss the document." },
+                { status: 500 }
+              );
+            }
+            chatFollowUps.push({
+              kind: "alternates",
+              attachment,
+              classify,
+            });
+          }
+        }
         proposals[idx] = {
           ...p,
           status: "waived_by_user",
@@ -424,7 +553,140 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    return NextResponse.json({ success: true, plan: updatedPlan });
+    const sageMessages: Record<string, unknown>[] = [];
+    const sourceId = (row as { source_id?: string | null }).source_id ?? null;
+    const caseId = (row as { case_id?: string | null }).case_id ?? null;
+    let sessionId: string | null = null;
+    if (sourceId) {
+      const { data: sourceMsg } = await admin
+        .from("sage_journal_messages")
+        .select("session_id")
+        .eq("id", sourceId)
+        .maybeSingle();
+      sessionId =
+        typeof sourceMsg?.session_id === "string" ? sourceMsg.session_id : null;
+    }
+
+    for (const follow of chatFollowUps) {
+      if (follow.kind === "filed") {
+        const content = `Filed “${follow.title}” in your documents.`;
+        const sagePayload: Record<string, unknown> = {
+          user_id: user.id,
+          role: "sage",
+          content,
+          created_at: new Date().toISOString(),
+          ...(sessionId ? { session_id: sessionId } : {}),
+        };
+        const { data: sageRow, error: sageErr } = await admin
+          .from("sage_journal_messages")
+          .insert(sagePayload)
+          .select("id, user_id, role, content, created_at, session_id")
+          .single();
+        if (sageErr) {
+          console.warn("[sage-inbox/POST] filed confirmation insert failed:", sageErr.message);
+          continue;
+        }
+        sageMessages.push({
+          ...(sageRow as Record<string, unknown>),
+          sage_item: null,
+        });
+        continue;
+      }
+
+      if (!caseId) continue;
+      const alternate = buildAlternateTypeResult(
+        follow.attachment,
+        "document",
+        sourceId ?? undefined
+      );
+      const followClassify = follow.classify;
+      const followToolInput = followClassify
+        ? {
+            ...mergeClassifyIntoToolInput(
+              alternate.interpretation.entities as unknown as Record<string, unknown>,
+              alternate,
+              followClassify,
+              follow.attachment
+            ),
+            classify: followClassify,
+          }
+        : {
+            attached_document_id: follow.attachment.document_id,
+            attached_file_name: follow.attachment.file_name,
+            attached_file_url: follow.attachment.url,
+          };
+      const { intent } = alternate.interpretation;
+      const { data: itemRow, error: insertItemError } = await admin
+        .from("sage_items")
+        .insert({
+          case_id: caseId,
+          source_type: "chat",
+          source_id: sourceId,
+          visible_to: user.id,
+          item_type: intent.item_type,
+          domain: intent.domain,
+          summary: intent.summary,
+          evidence_excerpt: intent.evidence_excerpt,
+          tool_name: intent.tool_name,
+          action_required: intent.action_required,
+          action_type: intent.action_type,
+          urgency: intent.urgency,
+          confidence: intent.confidence,
+          tool_input: followToolInput,
+          child_ids: alternate.child_ids,
+          plan: alternate.plan,
+          status: "pending",
+        })
+        .select(SAGE_ITEM_SELECT)
+        .single();
+      if (insertItemError || !itemRow) {
+        console.error(
+          "[sage-inbox/POST] alternate-type sage_items insert failed:",
+          insertItemError
+        );
+        continue;
+      }
+      const content = intent.summary;
+      const sagePayload: Record<string, unknown> = {
+        user_id: user.id,
+        role: "sage",
+        content,
+        created_at: new Date().toISOString(),
+        ...(sessionId ? { session_id: sessionId } : {}),
+        sage_item_id: itemRow.id,
+      };
+      const { data: sageRow, error: sageErr } = await admin
+        .from("sage_journal_messages")
+        .insert(sagePayload)
+        .select("id, user_id, role, content, created_at, session_id, sage_item_id")
+        .single();
+      if (sageErr || !sageRow) {
+        console.warn(
+          "[sage-inbox/POST] alternate-type journal insert failed:",
+          sageErr?.message
+        );
+        continue;
+      }
+      sageMessages.push({
+        ...(sageRow as Record<string, unknown>),
+        sage_item: itemRow,
+      });
+    }
+
+    if (sessionId && sageMessages.length > 0) {
+      await admin
+        .from("sage_sessions")
+        .update({ updated_at: new Date().toISOString() })
+        .eq("id", sessionId)
+        .eq("user_id", user.id);
+    }
+
+    return NextResponse.json({
+      success: true,
+      plan: updatedPlan,
+      ...(sageMessages[0] ? { sage_message: sageMessages[0] } : {}),
+      ...(sageMessages.length > 0 ? { sage_messages: sageMessages } : {}),
+    });
   } catch (e) {
     console.error("[sage-inbox/POST] Unhandled error:", e);
     return NextResponse.json({ success: false, error: "Internal server error" }, { status: 500 });

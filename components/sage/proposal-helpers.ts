@@ -4,13 +4,14 @@ import {
   inferExpenseCategoryFromText,
   parseExpenseAmountFromText,
 } from "@/lib/expenses-share";
-import { isCalendarUpdateProposal, isFormExecuteProposal } from "@/lib/sage/proposal-kind";
+import { isCalendarUpdateProposal, isFormExecuteProposal, isLogDocumentProposal } from "@/lib/sage/proposal-kind";
 import type { SageItem, SageProposal } from "./proposal-types";
 
 export {
   isCalendarUpdateProposal,
   isFormExecuteProposal,
   isLogExpenseProposal,
+  isLogDocumentProposal,
 } from "@/lib/sage/proposal-kind";
 
 export function proposalTypeLabel(type: string): string {
@@ -24,6 +25,9 @@ export function proposalTypeLabel(type: string): string {
     case "expense":
     case "log_expense":
       return "Log expense";
+    case "log_document":
+    case "file_document":
+      return "File document";
     case "force_expense":
       return "Log as expense";
     case "force_event":
@@ -162,6 +166,7 @@ export function needsDateField(
     return false;
   }
   if (isCalendarUpdateProposal(p.type)) return false;
+  if (isLogDocumentProposal(p.type)) return false;
   if ((p.chosen_date ?? "").trim()) return false;
   if (resolvedCalendarIso(item)) return false;
   return true;

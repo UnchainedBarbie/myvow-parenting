@@ -13,6 +13,11 @@ export function isLogExpenseProposal(type?: string | null): boolean {
   return t === "log_expense" || t === "expense" || t === "logexpense";
 }
 
+export function isLogDocumentProposal(type?: string | null): boolean {
+  const t = normalizeProposalType(type);
+  return t === "log_document" || t === "file_document";
+}
+
 /** Types that must open a real form and execute — never record-only "approved". */
 export function isFormExecuteProposal(type?: string | null): boolean {
   return isCalendarUpdateProposal(type) || isLogExpenseProposal(type);

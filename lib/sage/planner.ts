@@ -34,6 +34,7 @@ export type Proposal = {
     | "reply_coparent"
     | "calendar_update"
     | "log_expense"
+    | "log_document"
     | "note_only";
   draft: string;
   depends_on: string | null;
@@ -42,6 +43,11 @@ export type Proposal = {
   attached_document_id?: string;
   attached_file_name?: string;
   attached_file_url?: string;
+  /** Classify fields carried on a log_document proposal. */
+  title?: string;
+  description?: string;
+  category?: string;
+  date?: string | null;
 };
 
 export type Plan = {

@@ -5,6 +5,7 @@ import { getServiceRoleClient } from "@/lib/supabase/server";
 const TITLE_MAX = 120;
 const DESCRIPTION_MAX = 250;
 const VISIBILITY_VALUES = ["family", "parents_only", "private"] as const;
+const STATUS_VALUES = ["pending", "active", "dismissed"] as const;
 
 /**
  * Upload to Supabase Storage + create document metadata. Court-ready vault.
@@ -24,6 +25,7 @@ export async function POST(request: NextRequest) {
     const child_ids = Array.isArray(childIdsRaw) ? (childIdsRaw as string[]).filter(Boolean) : [];
     const description = formData.get("description") as string | null;
     const visibility = formData.get("visibility") as string | null;
+    const statusRaw = (formData.get("status") as string | null)?.trim() ?? "";
 
     if (!file || !case_id) {
       return NextResponse.json({ message: "Missing file or case_id" }, { status: 400 });
@@ -55,6 +57,11 @@ export async function POST(request: NextRequest) {
       visibility && VISIBILITY_VALUES.includes(visibility as (typeof VISIBILITY_VALUES)[number])
         ? visibility
         : "family";
+    const statusValue = STATUS_VALUES.includes(
+      statusRaw as (typeof STATUS_VALUES)[number]
+    )
+      ? statusRaw
+      : "active";
 
     const admin = getServiceRoleClient();
     const path = `${case_id}/${user.id}/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9.-]/g, "_")}`;
@@ -80,6 +87,7 @@ export async function POST(request: NextRequest) {
       content_hash: "pending",
       visibility: visibilityValue,
       ai_processed: false,
+      status: statusValue,
     };
 
     const { data: doc, error: docError } = await admin

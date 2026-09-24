@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils";
 import {
   isCalendarUpdateProposal,
   isFormExecuteProposal,
+  isLogDocumentProposal,
   isLogExpenseProposal,
 } from "@/lib/sage/proposal-kind";
 import type { SageItem, SageProposal } from "./proposal-types";
@@ -195,7 +196,9 @@ export function ProposalCardList({
                         ? "✓ done"
                         : isCalendarUpdateProposal(p.type)
                           ? "✓ done · added to calendar"
-                          : "✓ done"}
+                          : isLogDocumentProposal(p.type)
+                            ? "✓ filed"
+                            : "✓ done"}
                     </span>
                   ) : approved && !formPending ? (
                     <span className="text-[10px] font-medium text-[#5B7A52]">

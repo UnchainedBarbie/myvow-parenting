@@ -36,6 +36,7 @@ export async function GET(request: NextRequest) {
       .select("id, title, category, created_at, visibility, deleted_at, case_id")
       .eq("case_id", caseId)
       .eq("visibility", "family")
+      .eq("status", "active")
       .is("deleted_at", null)
       .order("created_at", { ascending: false });
 

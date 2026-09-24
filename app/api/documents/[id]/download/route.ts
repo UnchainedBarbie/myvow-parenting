@@ -22,6 +22,8 @@ export async function GET(
       .from("documents")
       .select("id, case_id, storage_path, file_name")
       .eq("id", id)
+      .eq("status", "active")
+      .is("deleted_at", null)
       .single();
     if (docErr || !doc) return NextResponse.json({ error: "Document not found" }, { status: 404 });
 

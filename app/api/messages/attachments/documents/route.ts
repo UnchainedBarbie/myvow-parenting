@@ -40,6 +40,7 @@ export async function GET() {
       .from("documents")
       .select("id, file_name, category, created_at")
       .eq("case_id", caseId)
+      .eq("status", "active")
       .is("deleted_at", null)
       .order("created_at", { ascending: false });
 

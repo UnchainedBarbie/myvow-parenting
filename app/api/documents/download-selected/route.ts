@@ -28,7 +28,9 @@ export async function POST(request: NextRequest) {
       .from("documents")
       .select("id, case_id, storage_path, file_name")
       .in("id", ids)
-      .eq("case_id", membership.case_id);
+      .eq("case_id", membership.case_id)
+      .eq("status", "active")
+      .is("deleted_at", null);
     if (error || !docs?.length) return new Response(JSON.stringify({ error: "No documents found" }), { status: 404 });
 
     console.log("[download-selected] Bucket name (check for typos/case):", JSON.stringify(BUCKET));

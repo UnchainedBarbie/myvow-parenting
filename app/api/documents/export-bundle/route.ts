@@ -20,7 +20,9 @@ export async function POST(request: NextRequest) {
     const { data: docs } = await admin
       .from("documents")
       .select("id, case_id")
-      .in("id", ids);
+      .in("id", ids)
+      .eq("status", "active")
+      .is("deleted_at", null);
     const { data: membership } = await admin
       .from("case_members")
       .select("case_id")

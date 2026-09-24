@@ -457,6 +457,8 @@ export async function POST(request: NextRequest) {
       .from("documents")
       .select("id, category, visibility, created_at")
       .eq("case_id", caseId)
+      .eq("status", "active")
+      .is("deleted_at", null)
       .gte("created_at", fromIso)
       .lte("created_at", toIso)
       .order("created_at", { ascending: true });

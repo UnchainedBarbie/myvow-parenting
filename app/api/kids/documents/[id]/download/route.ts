@@ -40,6 +40,7 @@ export async function GET(
       .eq("id", id)
       .eq("case_id", caseId)
       .eq("visibility", "family")
+      .eq("status", "active")
       .is("deleted_at", null)
       .maybeSingle();
 

@@ -252,6 +252,8 @@ export default async function DashboardPage() {
       .from("documents")
       .select("id, title, created_at")
       .eq("case_id", caseId)
+      .eq("status", "active")
+      .is("deleted_at", null)
       .order("created_at", { ascending: false })
       .limit(10),
     admin

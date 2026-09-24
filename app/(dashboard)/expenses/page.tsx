@@ -88,6 +88,8 @@ export default async function ExpensesPage() {
           .from("documents")
           .select("id, file_name")
           .in("id", receiptIds)
+          .eq("status", "active")
+          .is("deleted_at", null)
       : { data: [] };
   const receiptNameMap = (receiptDocs ?? []).reduce(
     (acc, row) => {

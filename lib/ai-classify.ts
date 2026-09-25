@@ -12,6 +12,7 @@ FIRST decide the TYPE, then the category.
 - "document" — everything else: court filings, orders, parenting plans, school records, medical records, correspondence, photos.
 
 If a document shows an amount paid or owed, classify it as "expense" even if it also contains dates or describes a future action.
+Always extract a monetary amount into "amount" when the document shows one, including amounts labeled as estimated, quoted, projected, or "total fees". When the amount is not a confirmed final charge, begin the "description" with the word describing it — for example "Estimated fees of $18.52 for..." — so the uncertainty is visible in the text rather than hidden in a number.
 
 The document category "expenses" is ONLY for a court order or legal document ABOUT expense obligations (for example an order allocating medical costs between parents). It is NEVER for a receipt, bill, or invoice itself — those are type "expense".
 

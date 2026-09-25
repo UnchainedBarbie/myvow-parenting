@@ -68,7 +68,12 @@ export function ProposalCardList({
 }: ProposalCardListProps) {
   if (proposals.length === 0) return null;
 
-  const actionableCount = proposals.filter(isActionable).length;
+  const visible = proposals
+    .map((p, idx) => ({ p, idx }))
+    .filter(({ p }) => !(isLogDocumentProposal(p.type) && p.executed === true));
+  if (visible.length === 0) return null;
+
+  const actionableCount = visible.filter(({ p }) => isActionable(p)).length;
   const checked = selectedIndexes;
 
   return (
@@ -93,7 +98,7 @@ export function ProposalCardList({
       </div>
 
       <ul className="space-y-2">
-        {proposals.map((p, idx) => {
+        {visible.map(({ p, idx }) => {
           const blocked = isBlocked(p);
           const approved = p.approved === true;
           const waived = isWaived(p);

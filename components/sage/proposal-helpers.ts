@@ -1,4 +1,5 @@
 import type { AddEventFormInitialValues } from "@/components/calendar/add-event-form";
+import type { DocumentRow } from "@/components/documents/document-detail-modal";
 import type { ExpenseFormInitialValues } from "@/components/expenses/expense-form";
 import {
   inferExpenseCategoryFromText,
@@ -609,4 +610,91 @@ function attachedFileFrom(
       input.attached_file_url.trim()) ||
     `/api/documents/${document_id}/download`;
   return { document_id, file_name, url };
+}
+
+const VAULT_DOCUMENT_CATEGORIES = new Set([
+  "court_order",
+  "school",
+  "medical",
+  "expenses",
+  "therapy",
+  "legal",
+  "custody",
+  "photos",
+  "communication",
+  "incident",
+  "other",
+]);
+
+function mapDocumentCategory(raw?: string | null): string {
+  const c = (raw ?? "").trim().toLowerCase();
+  if (VAULT_DOCUMENT_CATEGORIES.has(c)) return c;
+  if (
+    c === "parenting_plan" ||
+    c === "modification" ||
+    c === "custody_order" ||
+    c === "restraining_order"
+  ) {
+    return "court_order";
+  }
+  if (c === "financial_order") return "expenses";
+  return "other";
+}
+
+/** Prefill the document review modal from classify + the already-uploaded file. */
+export function buildDocumentReviewRow(
+  item: SageItem,
+  proposal: SageProposal
+): DocumentRow | null {
+  const attached = attachedFileFrom(item, proposal);
+  if (!attached) return null;
+  const input = toolInputRecord(item);
+  const classify =
+    input?.classify && typeof input.classify === "object" && input.classify !== null
+      ? (input.classify as Record<string, unknown>)
+      : null;
+  const title =
+    (typeof proposal.title === "string" && proposal.title.trim()) ||
+    (typeof classify?.title === "string" && classify.title.trim()) ||
+    attached.file_name;
+  const description =
+    (typeof proposal.description === "string" && proposal.description.trim()) ||
+    (typeof classify?.description === "string" && classify.description.trim()) ||
+    "";
+  const category = mapDocumentCategory(
+    (typeof proposal.category === "string" && proposal.category) ||
+      (typeof classify?.category === "string" && classify.category) ||
+      null
+  );
+  const visibilityRaw =
+    typeof input?.visibility === "string" ? input.visibility.trim() : "";
+  const visibility =
+    visibilityRaw === "private" || visibilityRaw === "family"
+      ? visibilityRaw
+      : "parents_only";
+  const childIds = Array.isArray(item.child_ids)
+    ? item.child_ids.filter((id): id is string => typeof id === "string" && !!id)
+    : [];
+  return {
+    id: attached.document_id,
+    title,
+    file_name: attached.file_name,
+    file_size_bytes: null,
+    mime_type: null,
+    category,
+    child_id: childIds[0] ?? null,
+    child_ids: childIds,
+    child_name: childNamesFromItem(item)[0] ?? null,
+    description,
+    created_at: item.created_at,
+    visibility,
+    related_comm_id: null,
+  };
+}
+
+/** Hide executed File-document cards — the chat confirmation is the resolved UI. */
+export function hasVisibleProposalCards(proposals: SageProposal[]): boolean {
+  return proposals.some(
+    (p) => !(isLogDocumentProposal(p.type) && p.executed === true)
+  );
 }

@@ -12,10 +12,13 @@ import { ProposalCardList } from "@/components/sage/proposal-card-list";
 import { ReviseProposalModal } from "@/components/sage/revise-proposal-modal";
 import {
   buildCalendarInitialValues,
+  buildDocumentReviewRow,
   buildExpenseInitialValues,
   dateKey,
+  hasVisibleProposalCards,
   isCalendarUpdateProposal,
   isFormExecuteProposal,
+  isLogDocumentProposal,
   isLogExpenseProposal,
   needsDateField,
 } from "@/components/sage/proposal-helpers";
@@ -30,6 +33,10 @@ import {
   AddEventForm,
   type AddEventFormInitialValues,
 } from "@/components/calendar/add-event-form";
+import {
+  DocumentDetailModal,
+  type DocumentRow,
+} from "@/components/documents/document-detail-modal";
 import {
   ExpenseForm,
   type ExpenseFormInitialValues,
@@ -86,6 +93,14 @@ type ExpenseAgreeTarget = {
   caseId: string;
 };
 
+type DocumentAgreeTarget = {
+  item: SageItem;
+  proposalIndex: number;
+  document: DocumentRow;
+  queue: number[];
+  caseId: string;
+};
+
 interface SageClientProps {
   sessionId: string | null;
   sessionTitle?: string | null;
@@ -119,6 +134,9 @@ export function SageClient({
     null
   );
   const [expenseAgree, setExpenseAgree] = useState<ExpenseAgreeTarget | null>(
+    null
+  );
+  const [documentAgree, setDocumentAgree] = useState<DocumentAgreeTarget | null>(
     null
   );
   const [reviseTarget, setReviseTarget] = useState<{
@@ -309,6 +327,7 @@ export function SageClient({
       p.chosen_date ||
       "";
     setExpenseAgree(null);
+    setDocumentAgree(null);
     setCalendarAgree({
       item,
       proposalIndex,
@@ -332,10 +351,36 @@ export function SageClient({
       p.chosen_date ||
       "";
     setCalendarAgree(null);
+    setDocumentAgree(null);
     setExpenseAgree({
       item,
       proposalIndex,
       initialValues: buildExpenseInitialValues(item, p, chosen || undefined),
+      queue,
+      caseId: formCaseId,
+    });
+  }
+
+  function openDocumentAgree(
+    item: SageItem,
+    proposalIndex: number,
+    queue: number[] = [],
+    formCaseId: string
+  ) {
+    const proposals = item.plan?.proposals ?? [];
+    const p = proposals[proposalIndex];
+    if (!p || !isLogDocumentProposal(p.type)) return;
+    const row = buildDocumentReviewRow(item, p);
+    if (!row) {
+      showErrorToast("Couldn't open the document — no file is attached.");
+      return;
+    }
+    setCalendarAgree(null);
+    setExpenseAgree(null);
+    setDocumentAgree({
+      item,
+      proposalIndex,
+      document: row,
       queue,
       caseId: formCaseId,
     });
@@ -352,6 +397,8 @@ export function SageClient({
       openCalendarAgree(item, proposalIndex, queue, formCaseId);
     } else if (isLogExpenseProposal(p?.type)) {
       openExpenseAgree(item, proposalIndex, queue, formCaseId);
+    } else if (isLogDocumentProposal(p?.type)) {
+      openDocumentAgree(item, proposalIndex, queue, formCaseId);
     }
   }
 
@@ -541,6 +588,60 @@ export function SageClient({
     }
 
     setExpenseAgree(null);
+  }
+
+  async function handleDocumentFiled(title: string) {
+    if (!documentAgree) return;
+    const { item, proposalIndex, queue, document: row, caseId: formCaseId } =
+      documentAgree;
+    const res = await fetch("/api/sage-inbox", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: item.id,
+        action: "execute",
+        proposal_index: proposalIndex,
+        document_id: row.id,
+        filed_title: title,
+      }),
+    });
+    const data = (await res.json().catch(() => ({}))) as {
+      success?: boolean;
+      plan?: SagePlan;
+      sage_message?: SageMessage;
+      sage_messages?: SageMessage[];
+    };
+    if (!res.ok) {
+      showErrorToast(
+        "Document was filed, but Sage couldn't mark the proposal done."
+      );
+      setDocumentAgree(null);
+      return;
+    }
+    const updatedItem = data.plan ? { ...item, plan: data.plan } : item;
+    if (data.plan) patchItemPlan(item.id, data.plan);
+    const extras = data.sage_messages?.length
+      ? data.sage_messages
+      : data.sage_message
+        ? [data.sage_message]
+        : [];
+    if (extras.length > 0) {
+      setMessages((prev) => [
+        ...prev,
+        ...extras.map((m) => ({
+          ...m,
+          sage_item: m.sage_item ?? null,
+        })),
+      ]);
+    }
+
+    if (queue.length > 0) {
+      const [nextIdx, ...rest] = queue;
+      openFormAgree(updatedItem, nextIdx, rest, formCaseId);
+      return;
+    }
+
+    setDocumentAgree(null);
   }
 
   async function ensureCaseId(): Promise<string | null> {
@@ -814,7 +915,10 @@ export function SageClient({
                           <p className="whitespace-pre-wrap">{msg.content}</p>
                         </div>
                       </div>
-                      {!isUser && item && proposals.length > 0 && (
+                      {!isUser &&
+                        item &&
+                        proposals.length > 0 &&
+                        hasVisibleProposalCards(proposals) && (
                         <div className="max-w-[90%] rounded-xl border border-[#E8E4DC] bg-white px-2 py-2">
                           <ProposalCardList
                             itemId={item.id}
@@ -1074,6 +1178,18 @@ export function SageClient({
             onSuccess={(expenseId) => void handleExpenseCreated(expenseId)}
           />
         </SageAgreeFormModal>
+      )}
+
+      {documentAgree && (
+        <DocumentDetailModal
+          open
+          reviewAndFile
+          initialEditMode
+          document={documentAgree.document}
+          children={childrenList}
+          onClose={() => setDocumentAgree(null)}
+          onSaved={(result) => handleDocumentFiled(result?.title ?? "")}
+        />
       )}
     </div>
   );

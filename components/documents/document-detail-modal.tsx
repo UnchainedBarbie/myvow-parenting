@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
-import { Pencil } from "lucide-react";
+import { FileText, Pencil } from "lucide-react";
 import { ChildMultiSelect } from "@/components/documents/child-multi-select";
 
 type DocumentHistoryEntry = {
@@ -77,8 +77,13 @@ interface DocumentDetailModalProps {
   document: DocumentRow | null;
   /** When true, open directly in edit mode (e.g. from pencil icon). */
   initialEditMode?: boolean;
+  /**
+   * Sage File-document review: always edit, show the attached-file chip,
+   * and activate the row (status=active) on submit. Cancel/close leaves it pending.
+   */
+  reviewAndFile?: boolean;
   /** Called after successful save so parent can refresh the list. */
-  onSaved?: () => void;
+  onSaved?: (result?: { title: string }) => void | Promise<void>;
   children?: ChildOption[];
 }
 
@@ -127,6 +132,7 @@ export function DocumentDetailModal({
   onClose,
   document: doc,
   initialEditMode = false,
+  reviewAndFile = false,
   onSaved,
   children: childOptions = [],
 }: DocumentDetailModalProps) {
@@ -144,7 +150,7 @@ export function DocumentDetailModal({
 
   useEffect(() => {
     if (open && doc) {
-      setIsEditing(!!initialEditMode);
+      setIsEditing(!!initialEditMode || reviewAndFile);
       setTitle((doc.title ?? "").trim());
       setDescription((doc.description ?? "").trim());
       setCategory(doc.category ?? "other");
@@ -158,10 +164,10 @@ export function DocumentDetailModal({
       setVisibility(doc.visibility === "private" ? "private" : doc.visibility === "parents_only" ? "parents_only" : "family");
       setSaveError(null);
     }
-  }, [open, doc, initialEditMode]);
+  }, [open, doc, initialEditMode, reviewAndFile]);
 
   useEffect(() => {
-    if (!open || !doc) return;
+    if (!open || !doc || reviewAndFile) return;
     let cancelled = false;
     async function loadHistory() {
       setLoadingHistory(true);
@@ -178,9 +184,13 @@ export function DocumentDetailModal({
     }
     loadHistory();
     return () => { cancelled = true; };
-  }, [open, doc]);
+  }, [open, doc, reviewAndFile]);
 
   function handleCancel() {
+    if (reviewAndFile) {
+      onClose();
+      return;
+    }
     if (doc) {
       setTitle((doc.title ?? "").trim());
       setDescription((doc.description ?? "").trim());
@@ -277,13 +287,14 @@ export function DocumentDetailModal({
           child_id: selectedChildIds.length === 0 ? null : selectedChildIds[0],
           child_ids: selectedChildIds,
           visibility,
+          ...(reviewAndFile ? { status: "active" } : {}),
           ...(historyEntries.length > 0 ? { history: historyEntries } : {}),
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message ?? "Save failed");
-      onSaved?.();
-      onClose();
+      await onSaved?.({ title: titleTrim });
+      if (!reviewAndFile) onClose();
     } catch (e) {
       setSaveError(e instanceof Error ? e.message : "Save failed");
     } finally {
@@ -306,10 +317,10 @@ export function DocumentDetailModal({
       >
         <div className="p-4 border-b border-border flex items-center justify-between shrink-0">
           <h2 id="document-modal-title" className="font-heading text-lg font-semibold text-foreground">
-            Document
+            {reviewAndFile ? "File document" : "Document"}
           </h2>
           <div className="flex items-center gap-1">
-            {!isEditing && doc && (
+            {!isEditing && !reviewAndFile && doc && (
               <Button
                 type="button"
                 variant="outline"
@@ -339,6 +350,22 @@ export function DocumentDetailModal({
             <>
               {saveError && (
                 <p className="text-xs text-alert" role="alert">{saveError}</p>
+              )}
+              {reviewAndFile && doc.file_name && (
+                <div className="rounded-card border border-border bg-background p-2 flex items-center gap-2">
+                  <FileText className="h-8 w-8 text-foreground-secondary shrink-0" aria-hidden />
+                  <div className="min-w-0 flex-1">
+                    <p
+                      className="text-xs text-foreground truncate"
+                      title={doc.file_name}
+                    >
+                      {doc.file_name}
+                    </p>
+                    <p className="text-[11px] text-foreground-secondary">
+                      Already attached
+                    </p>
+                  </div>
+                </div>
               )}
               <div className="space-y-2">
                 <Label htmlFor="doc-modal-title" className="text-xs font-medium">Document title</Label>
@@ -473,7 +500,7 @@ export function DocumentDetailModal({
             </>
           )}
 
-          {doc && (
+          {doc && !reviewAndFile && (
             <section className="space-y-2 border-t border-border pt-4 mt-4">
               <button
                 type="button"
@@ -513,7 +540,13 @@ export function DocumentDetailModal({
               Cancel
             </Button>
             <Button type="button" size="sm" className="rounded-full" onClick={handleSave} disabled={saving}>
-              {saving ? "Saving…" : "Save changes"}
+              {saving
+                ? reviewAndFile
+                  ? "Filing…"
+                  : "Saving…"
+                : reviewAndFile
+                  ? "File document"
+                  : "Save changes"}
             </Button>
           </div>
         )}

@@ -95,6 +95,45 @@ function filedTitle(p: PlanProposal, attachment: ChatAttachmentMeta | null): str
   return fromProposal || attachment?.file_name || "document";
 }
 
+async function insertFiledConfirmation(opts: {
+  admin: ReturnType<typeof getServiceRoleClient>;
+  userId: string;
+  sourceId: string | null;
+  title: string;
+}): Promise<Record<string, unknown> | null> {
+  let sessionId: string | null = null;
+  if (opts.sourceId) {
+    const { data: sourceMsg } = await opts.admin
+      .from("sage_journal_messages")
+      .select("session_id")
+      .eq("id", opts.sourceId)
+      .maybeSingle();
+    sessionId =
+      typeof sourceMsg?.session_id === "string" ? sourceMsg.session_id : null;
+  }
+  const content = `Filed “${opts.title}” in your documents.`;
+  const sagePayload: Record<string, unknown> = {
+    user_id: opts.userId,
+    role: "sage",
+    content,
+    created_at: new Date().toISOString(),
+    ...(sessionId ? { session_id: sessionId } : {}),
+  };
+  const { data: sageRow, error: sageErr } = await opts.admin
+    .from("sage_journal_messages")
+    .insert(sagePayload)
+    .select("id, user_id, role, content, created_at, session_id")
+    .single();
+  if (sageErr) {
+    console.warn("[sage-inbox/POST] filed confirmation insert failed:", sageErr.message);
+    return null;
+  }
+  return {
+    ...(sageRow as Record<string, unknown>),
+    sage_item: null,
+  };
+}
+
 /**
  * GET /api/sage-inbox?status=open|flagged|archived|all
  * Authenticated parent user.
@@ -193,6 +232,8 @@ export async function POST(req: NextRequest) {
       revised_text?: unknown;
       event_id?: unknown;
       expense_id?: unknown;
+      document_id?: unknown;
+      filed_title?: unknown;
       dates?: Record<string, string> | null;
     } | null;
 
@@ -303,6 +344,12 @@ export async function POST(req: NextRequest) {
         typeof body?.expense_id === "string" && body.expense_id.trim()
           ? body.expense_id.trim()
           : "";
+      const documentId =
+        typeof body?.document_id === "string" && body.document_id.trim()
+          ? body.document_id.trim()
+          : "";
+      const filedTitleFromBody =
+        typeof body?.filed_title === "string" ? body.filed_title.trim() : "";
       if (idx < 0 || idx >= proposals.length) {
         return NextResponse.json(
           { success: false, error: "Invalid proposal_index" },
@@ -328,6 +375,18 @@ export async function POST(req: NextRequest) {
           { status: 400 }
         );
       }
+      const toolInputForExecute = toolInputRecord(
+        (row as { tool_input?: unknown }).tool_input
+      );
+      const documentAttachment = isLogDocumentProposal(p.type)
+        ? attachmentFromProposal(p, toolInputForExecute)
+        : null;
+      if (isLogDocumentProposal(p.type) && !documentId && !documentAttachment) {
+        return NextResponse.json(
+          { success: false, error: "Invalid document_id" },
+          { status: 400 }
+        );
+      }
       if (p.executed === true) {
         return NextResponse.json(
           { success: false, error: "already executed" },
@@ -335,6 +394,8 @@ export async function POST(req: NextRequest) {
         );
       }
       const nowIso = new Date().toISOString();
+      const resultDocumentId =
+        documentId || documentAttachment?.document_id || "";
       proposals[idx] = {
         ...p,
         approved: true,
@@ -343,6 +404,9 @@ export async function POST(req: NextRequest) {
         executed_at: nowIso,
         ...(isCalendarUpdateProposal(p.type) ? { result_event_id: eventId } : {}),
         ...(isLogExpenseProposal(p.type) ? { result_expense_id: expenseId } : {}),
+        ...(isLogDocumentProposal(p.type) && resultDocumentId
+          ? { result_document_id: resultDocumentId, title: filedTitleFromBody || p.title }
+          : {}),
       };
       const updatedPlan: SagePlan = { ...plan, proposals };
       const { error: updateError } = await admin
@@ -356,6 +420,21 @@ export async function POST(req: NextRequest) {
           { success: false, error: updateError.message ?? "Failed to mark executed" },
           { status: 500 }
         );
+      }
+      if (isLogDocumentProposal(p.type)) {
+        const title =
+          filedTitleFromBody || filedTitle(p, documentAttachment);
+        const confirmation = await insertFiledConfirmation({
+          admin,
+          userId: user.id,
+          sourceId: (row as { source_id?: string | null }).source_id ?? null,
+          title,
+        });
+        return NextResponse.json({
+          success: true,
+          plan: updatedPlan,
+          ...(confirmation ? { sage_messages: [confirmation] } : {}),
+        });
       }
       return NextResponse.json({ success: true, plan: updatedPlan });
     }
@@ -428,42 +507,8 @@ export async function POST(req: NextRequest) {
       if (action === "agree" && blocked) continue;
 
       if (action === "agree") {
-        // Calendar and expense must go through the form + execute, never record-only approve.
+        // Calendar, expense, and document must go through the form + execute, never record-only approve.
         if (isFormExecuteProposal(p.type)) continue;
-        if (isLogDocumentProposal(p.type)) {
-          const attachment = attachmentFromProposal(p, toolInput);
-          if (attachment) {
-            const title = filedTitle(p, attachment);
-            const description =
-              typeof p.description === "string" ? p.description.trim() : "";
-            const category =
-              typeof p.category === "string" ? p.category.trim() : "";
-            const docUpdates: Record<string, unknown> = { status: "active" };
-            if (title) docUpdates.title = title;
-            if (description) docUpdates.description = description;
-            if (category) docUpdates.category = category;
-            const { error: docErr } = await admin
-              .from("documents")
-              .update(docUpdates)
-              .eq("id", attachment.document_id);
-            if (docErr) {
-              console.error("[sage-inbox/POST] document activate failed:", docErr);
-              return NextResponse.json(
-                { success: false, error: "Failed to file the document." },
-                { status: 500 }
-              );
-            }
-            chatFollowUps.push({ kind: "filed", title });
-          }
-          proposals[idx] = {
-            ...p,
-            approved: true,
-            approved_at: now,
-            executed: true,
-            executed_at: now,
-          };
-          continue;
-        }
         const chosenDate =
           dates[String(idx)] ?? dates[idx as unknown as string] ?? undefined;
         proposals[idx] = {

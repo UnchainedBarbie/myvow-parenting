@@ -64,12 +64,35 @@ export async function PATCH(
       }
       updates.visibility = v;
     }
+    if (rest.status === "active") {
+      updates.status = "active";
+    }
 
     const { error: updateErr } = await admin
       .from("documents")
       .update(updates)
       .eq("id", id);
     if (updateErr) return NextResponse.json({ message: updateErr.message }, { status: 500 });
+
+    if (Array.isArray(rest.child_ids)) {
+      const childIds = rest.child_ids
+        .map((v: unknown) => (typeof v === "string" ? v.trim() : ""))
+        .filter(Boolean);
+      const { error: delErr } = await admin
+        .from("document_children")
+        .delete()
+        .eq("document_id", id);
+      if (delErr) {
+        console.warn("[documents PATCH] document_children delete failed:", delErr.message);
+      } else if (childIds.length > 0) {
+        const { error: insErr } = await admin.from("document_children").insert(
+          childIds.map((child_id: string) => ({ document_id: id, child_id }))
+        );
+        if (insErr) {
+          console.warn("[documents PATCH] document_children insert failed:", insErr.message);
+        }
+      }
+    }
 
     if (Array.isArray(historyEntries) && historyEntries.length > 0) {
       const rows = historyEntries.map((h: { field_changed: string; old_value?: string | null; new_value?: string | null }) => ({

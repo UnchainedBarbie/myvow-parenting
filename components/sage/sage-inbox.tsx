@@ -17,12 +17,14 @@ import { ProposalCardList } from "@/components/sage/proposal-card-list";
 import { TalkToSageDrawer } from "@/components/sage/talk-to-sage-drawer";
 import {
   buildCalendarInitialValues,
+  buildDocumentReviewRow,
   buildExpenseInitialValues,
   childNamesFromItem,
   dateKey,
   isActionable,
   isCalendarUpdateProposal,
   isFormExecuteProposal,
+  isLogDocumentProposal,
   isLogExpenseProposal,
   needsDateField,
 } from "@/components/sage/proposal-helpers";
@@ -32,6 +34,10 @@ import {
   AddEventForm,
   type AddEventFormInitialValues,
 } from "@/components/calendar/add-event-form";
+import {
+  DocumentDetailModal,
+  type DocumentRow,
+} from "@/components/documents/document-detail-modal";
 import {
   ExpenseForm,
   type ExpenseFormInitialValues,
@@ -118,6 +124,13 @@ type ExpenseAgreeTarget = {
   queue: number[];
 };
 
+type DocumentAgreeTarget = {
+  item: SageItem;
+  proposalIndex: number;
+  document: DocumentRow;
+  queue: number[];
+};
+
 export function SageInbox({
   caseId,
   children: childrenList,
@@ -144,6 +157,9 @@ export function SageInbox({
     null
   );
   const [expenseAgree, setExpenseAgree] = useState<ExpenseAgreeTarget | null>(
+    null
+  );
+  const [documentAgree, setDocumentAgree] = useState<DocumentAgreeTarget | null>(
     null
   );
   const [reviseTarget, setReviseTarget] = useState<{
@@ -347,6 +363,7 @@ export function SageInbox({
       p.chosen_date ||
       "";
     setExpenseAgree(null);
+    setDocumentAgree(null);
     setCalendarAgree({
       item,
       proposalIndex,
@@ -368,10 +385,31 @@ export function SageInbox({
       p.chosen_date ||
       "";
     setCalendarAgree(null);
+    setDocumentAgree(null);
     setExpenseAgree({
       item,
       proposalIndex,
       initialValues: buildExpenseInitialValues(item, p, chosen || undefined),
+      queue,
+    });
+  }
+
+  function openDocumentAgree(
+    item: SageItem,
+    proposalIndex: number,
+    queue: number[] = []
+  ) {
+    const proposals = item.plan?.proposals ?? [];
+    const p = proposals[proposalIndex];
+    if (!p || !isLogDocumentProposal(p.type)) return;
+    const row = buildDocumentReviewRow(item, p);
+    if (!row) return;
+    setCalendarAgree(null);
+    setExpenseAgree(null);
+    setDocumentAgree({
+      item,
+      proposalIndex,
+      document: row,
       queue,
     });
   }
@@ -386,10 +424,12 @@ export function SageInbox({
       openCalendarAgree(item, proposalIndex, queue);
     } else if (isLogExpenseProposal(p?.type)) {
       openExpenseAgree(item, proposalIndex, queue);
+    } else if (isLogDocumentProposal(p?.type)) {
+      openDocumentAgree(item, proposalIndex, queue);
     }
   }
 
-  /** Agree: calendar_update / log_expense open forms; other types record approval only. */
+  /** Agree: calendar_update / log_expense / log_document open forms; other types record approval only. */
   async function handleAgree(
     item: SageItem,
     proposal_indexes: number[],
@@ -471,6 +511,37 @@ export function SageInbox({
     }
 
     setExpenseAgree(null);
+    await fetchInbox();
+  }
+
+  async function handleDocumentFiled(title: string) {
+    if (!documentAgree) return;
+    const { item, proposalIndex, queue, document: row } = documentAgree;
+    const res = await fetch("/api/sage-inbox", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: item.id,
+        action: "execute",
+        proposal_index: proposalIndex,
+        document_id: row.id,
+        filed_title: title,
+      }),
+    });
+    if (!res.ok) {
+      setDocumentAgree(null);
+      await fetchInbox();
+      return;
+    }
+
+    if (queue.length > 0) {
+      const [nextIdx, ...rest] = queue;
+      openFormAgree(item, nextIdx, rest);
+      void fetchInbox();
+      return;
+    }
+
+    setDocumentAgree(null);
     await fetchInbox();
   }
 
@@ -838,6 +909,18 @@ export function SageInbox({
             onSuccess={(expenseId) => void handleExpenseCreated(expenseId)}
           />
         </SageAgreeFormModal>
+      )}
+
+      {documentAgree && (
+        <DocumentDetailModal
+          open
+          reviewAndFile
+          initialEditMode
+          document={documentAgree.document}
+          children={childrenList}
+          onClose={() => setDocumentAgree(null)}
+          onSaved={(result) => handleDocumentFiled(result?.title ?? "")}
+        />
       )}
 
       <ConfirmModal

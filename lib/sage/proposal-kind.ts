@@ -20,5 +20,9 @@ export function isLogDocumentProposal(type?: string | null): boolean {
 
 /** Types that must open a real form and execute — never record-only "approved". */
 export function isFormExecuteProposal(type?: string | null): boolean {
-  return isCalendarUpdateProposal(type) || isLogExpenseProposal(type);
+  return (
+    isCalendarUpdateProposal(type) ||
+    isLogExpenseProposal(type) ||
+    isLogDocumentProposal(type)
+  );
 }

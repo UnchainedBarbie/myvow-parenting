@@ -454,7 +454,6 @@ export function resolveDate(
 
   // ISO YYYY-MM-DD (full string). Keep the stated year as-is.
   const isoMatch = lower.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:[t\s].*)?$/);
-  const isoMatch = lower.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:[t\s].*)?$/);
   if (isoMatch) {
     const y = Number(isoMatch[1]);
     const m = Number(isoMatch[2]);

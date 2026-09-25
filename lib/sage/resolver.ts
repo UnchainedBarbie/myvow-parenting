@@ -28,9 +28,51 @@ function normalize(s: string): string {
   return s.trim().toLowerCase();
 }
 
+function matchExactFirstName(
+  children: CaseChild[],
+  needle: string
+): CaseChild[] {
+  if (!needle) return [];
+  return children.filter((c) => normalize(c.first_name ?? "") === needle);
+}
+
+function matchPrefixFirstName(
+  children: CaseChild[],
+  needle: string
+): CaseChild[] {
+  if (!needle) return [];
+  return children.filter((c) => {
+    const first = normalize(c.first_name ?? "");
+    return first.length > 0 && first.startsWith(needle);
+  });
+}
+
+function unresolvedOf(name: string): ChildResolution {
+  return {
+    name,
+    child_id: null,
+    matched_name: null,
+    method: "unresolved",
+  };
+}
+
+function resolvedOf(
+  name: string,
+  child: CaseChild,
+  method: "exact" | "prefix"
+): ChildResolution {
+  return {
+    name,
+    child_id: child.id,
+    matched_name: child.first_name,
+    method,
+  };
+}
+
 /**
  * Resolve Understanding-extracted child names to case children ids.
- * Exact match first, then unique prefix; never fuzzy-guess.
+ * Exact match first, then unique prefix; then last-name-first / full-name
+ * fallbacks. Never fuzzy-guess: any ambiguous match stays unresolved.
  */
 export async function resolveChildren(
   caseId: string,
@@ -112,12 +154,60 @@ export async function resolveChildren(
       continue;
     }
 
-    resolved.push({
-      name,
-      child_id: null,
-      matched_name: null,
-      method: "unresolved",
-    });
+    // Last-name-first: "Walker, Kyle" → match the given name after the comma.
+    const commaAt = needle.indexOf(",");
+    if (commaAt >= 0) {
+      const afterComma = normalize(needle.slice(commaAt + 1));
+      if (afterComma) {
+        const commaExact = matchExactFirstName(children, afterComma);
+        if (commaExact.length === 1) {
+          resolved.push(resolvedOf(name, commaExact[0], "exact"));
+          continue;
+        }
+        if (commaExact.length > 1) {
+          resolved.push(unresolvedOf(name));
+          continue;
+        }
+        const commaPrefix = matchPrefixFirstName(children, afterComma);
+        if (commaPrefix.length === 1) {
+          resolved.push(resolvedOf(name, commaPrefix[0], "prefix"));
+          continue;
+        }
+        if (commaPrefix.length > 1) {
+          resolved.push(unresolvedOf(name));
+          continue;
+        }
+      }
+    }
+
+    // Full name: "KYLE WALKER" → unique exact first_name among whitespace tokens.
+    const tokens = needle.split(/\s+/).filter(Boolean);
+    const tokenMatchedIds = new Set<string>();
+    let tokenAmbiguous = false;
+    for (const token of tokens) {
+      const tokenExact = matchExactFirstName(children, token);
+      if (tokenExact.length > 1) {
+        tokenAmbiguous = true;
+        break;
+      }
+      if (tokenExact.length === 1) {
+        tokenMatchedIds.add(tokenExact[0].id);
+      }
+    }
+    if (tokenAmbiguous || tokenMatchedIds.size > 1) {
+      resolved.push(unresolvedOf(name));
+      continue;
+    }
+    if (tokenMatchedIds.size === 1) {
+      const id = [...tokenMatchedIds][0];
+      const child = children.find((c) => c.id === id);
+      if (child) {
+        resolved.push(resolvedOf(name, child, "exact"));
+        continue;
+      }
+    }
+
+    resolved.push(unresolvedOf(name));
   }
 
   const child_ids = [

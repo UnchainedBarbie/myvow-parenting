@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState, useEffect, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -14,6 +14,7 @@ import { showErrorToast, showSuccessToast } from "@/components/ui/toaster";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { coparentShareInvolves } from "@/lib/expenses-share";
 import { Label } from "@/components/ui/label";
+import { ChildMultiSelect } from "@/components/documents/child-multi-select";
 
 const CATEGORY_LABELS: Record<string, string> = {
   medical: "Medical",
@@ -315,7 +316,7 @@ export function ExpenseList({
     description: "",
     amount: "",
     category: "other",
-    child_id: "",
+    child_ids: [] as string[],
     incurred_date: "",
     category_description: "",
     status: "submitted",
@@ -326,14 +327,17 @@ export function ExpenseList({
     payment_notes: "",
   });
   const [savingEdit, setSavingEdit] = useState(false);
+  const editLoadIdRef = useRef<string | null>(null);
 
-  function openEditModal(exp: ExpenseRow) {
+  async function openEditModal(exp: ExpenseRow) {
+    editLoadIdRef.current = exp.id;
+    const fallback = exp.child_id ? [exp.child_id] : [];
     setEditExpense(exp);
     setEditForm({
       description: exp.description ?? "",
       amount: exp.amount ?? "",
       category: exp.category ?? "other",
-      child_id: exp.child_id ?? "",
+      child_ids: fallback,
       incurred_date: (() => {
         const raw = (exp.incurred_date ?? "").trim();
         const m = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
@@ -349,6 +353,19 @@ export function ExpenseList({
       payment_reference: (exp as { payment_reference?: string | null }).payment_reference ?? "",
       payment_notes: (exp as { payment_notes?: string | null }).payment_notes ?? "",
     });
+    try {
+      const res = await fetch(`/api/expenses/${exp.id}`);
+      const data = (await res.json().catch(() => ({}))) as { child_ids?: unknown };
+      if (editLoadIdRef.current !== exp.id) return;
+      if (res.ok && Array.isArray(data.child_ids)) {
+        const ids = data.child_ids.filter(
+          (id): id is string => typeof id === "string" && id.trim().length > 0
+        );
+        setEditForm((f) => ({ ...f, child_ids: ids }));
+      }
+    } catch {
+      // Keep fallback from expenses.child_id
+    }
   }
 
   function closeEditModal() {
@@ -384,7 +401,8 @@ export function ExpenseList({
             editForm.category === "other"
               ? editForm.category_description.trim() || null
               : null,
-          child_id: editForm.child_id || null,
+          child_id: editForm.child_ids[0] ?? null,
+          child_ids: editForm.child_ids,
           incurred_date: editForm.incurred_date || null,
           status: editForm.status || undefined,
           dispute_reason: editForm.dispute_reason.trim() || null,
@@ -1829,16 +1847,12 @@ const dateFilterValue: DateFilterValue = {
                 )}
               </Label>
               {editExpense.submitted_by === currentUserId ? (
-                <select
-                  value={editForm.child_id}
-                  onChange={(e) => setEditForm((f) => ({ ...f, child_id: e.target.value }))}
-                  className="h-8 w-full rounded-md border border-[#E8E4DC] bg-white px-2 text-sm text-[#3D3D3D] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E]"
-                >
-                  <option value="">All children</option>
-                  {children.map((c) => (
-                    <option key={c.id} value={c.id}>{c.first_name}</option>
-                  ))}
-                </select>
+                <ChildMultiSelect
+                  id="edit-expense-child"
+                  children={children}
+                  value={editForm.child_ids}
+                  onChange={(ids) => setEditForm((f) => ({ ...f, child_ids: ids }))}
+                />
               ) : (
                 <p className="text-sm text-foreground-secondary py-1.5">
                   {editExpense.child_name ?? "—"}

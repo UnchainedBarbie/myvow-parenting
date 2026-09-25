@@ -279,6 +279,7 @@ export function ExpenseForm({
           ...(category === "other" && categoryDescription.trim() ? { category_description: categoryDescription.trim() } : {}),
           incurred_date: incurredDate || undefined,
           child_id: childId || undefined,
+          child_ids: selectedChildIds,
           receipt_file_id: receiptFileId,
           notify_coparent: notifyCoparent,
         }),

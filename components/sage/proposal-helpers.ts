@@ -550,10 +550,10 @@ export function buildExpenseInitialValues(
   proposal: SageProposal,
   chosenDate?: string
 ): ExpenseFormInitialValues {
-  const childId =
-    Array.isArray(item.child_ids) && item.child_ids[0]
-      ? item.child_ids[0]
-      : undefined;
+  const childIds = Array.isArray(item.child_ids)
+    ? item.child_ids.filter((id): id is string => typeof id === "string" && !!id)
+    : [];
+  const childId = childIds[0];
   const draftSource =
     (typeof proposal.revised_text === "string" && proposal.revised_text.trim()
       ? proposal.revised_text
@@ -577,7 +577,8 @@ export function buildExpenseInitialValues(
     ...(amount != null ? { amount } : {}),
     incurredDate: date,
     category: inferExpenseCategory(item, proposal),
-    childId,
+    ...(childId ? { childId } : {}),
+    ...(childIds.length > 0 ? { childIds } : {}),
     ...(attachedFile ? { attachedFile } : {}),
   };
 }

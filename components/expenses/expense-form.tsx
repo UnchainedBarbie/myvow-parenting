@@ -51,6 +51,7 @@ export type ExpenseFormInitialValues = {
   category?: string;
   categoryDescription?: string;
   childId?: string;
+  childIds?: string[];
   visibility?: string;
   /** Already-stored vault file — shown as attached; not re-uploaded on submit. */
   attachedFile?: ExpenseAttachedFile | null;
@@ -94,7 +95,11 @@ export function ExpenseForm({
     () => initialValues?.categoryDescription?.slice(0, 100) ?? ""
   );
   const [selectedChildIds, setSelectedChildIds] = useState<string[]>(() =>
-    initialValues?.childId ? [initialValues.childId] : []
+    initialValues?.childIds?.length
+      ? initialValues.childIds
+      : initialValues?.childId
+        ? [initialValues.childId]
+        : []
   );
   const [visibility, setVisibility] = useState<string>(
     () => initialValues?.visibility ?? "parents_only"
@@ -135,7 +140,9 @@ export function ExpenseForm({
     if (initialValues.categoryDescription != null) {
       setCategoryDescription(initialValues.categoryDescription.slice(0, 100));
     }
-    if (initialValues.childId) {
+    if (initialValues.childIds?.length) {
+      setSelectedChildIds(initialValues.childIds);
+    } else if (initialValues.childId) {
       setSelectedChildIds([initialValues.childId]);
     }
     if (initialValues.visibility != null) {

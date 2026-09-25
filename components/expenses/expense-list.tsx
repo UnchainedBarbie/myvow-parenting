@@ -51,6 +51,7 @@ export type ExpenseRow = {
   category_description?: string | null;
   child_id: string | null;
   child_name: string | null;
+  child_ids: string[];
   amount_owed: string | null;
   status: string;
   created_at: string;
@@ -331,7 +332,12 @@ export function ExpenseList({
 
   async function openEditModal(exp: ExpenseRow) {
     editLoadIdRef.current = exp.id;
-    const fallback = exp.child_id ? [exp.child_id] : [];
+    const fallback =
+      exp.child_ids.length > 0
+        ? exp.child_ids
+        : exp.child_id
+          ? [exp.child_id]
+          : [];
     setEditExpense(exp);
     setEditForm({
       description: exp.description ?? "",
@@ -468,7 +474,12 @@ export function ExpenseList({
 
       if (filterCategories.length && !filterCategories.includes(exp.category)) return false;
       if (filterChildren.length) {
-        if (!exp.child_id || !filterChildren.includes(exp.child_id)) return false;
+        if (
+          !exp.child_ids.length ||
+          !exp.child_ids.some((id) => filterChildren.includes(id))
+        ) {
+          return false;
+        }
       }
       if (filterStatuses.length && !filterStatuses.includes(exp.status)) return false;
 
@@ -1270,30 +1281,7 @@ const dateFilterValue: DateFilterValue = {
                         </div>
                       </td>
                       <td className="px-3 py-1.5 text-foreground-secondary align-middle">
-                    {exp.child_id && exp.child_name ? (
-                          <div className="flex items-center gap-2">
-                            {(() => {
-                              const child = children.find((c) => c.id === exp.child_id);
-                              if (child?.profile_image) {
-                                return (
-                                  <img
-                                    src={child.profile_image}
-                                    alt={child.first_name}
-                                    className="h-6 w-6 rounded-full object-cover border border-border/60 bg-emerald-50"
-                                  />
-                                );
-                              }
-                              return (
-                                <div className="h-6 w-6 rounded-full bg-emerald-50 text-emerald-800 flex items-center justify-center text-[10px] font-medium">
-                                  {exp.child_name?.charAt(0).toUpperCase() ?? ""}
-                                </div>
-                              );
-                            })()}
-                            <span>{exp.child_name}</span>
-                          </div>
-                        ) : (
-                          "—"
-                        )}
+                        {exp.child_name ?? "—"}
                       </td>
                       <td className="px-3 py-1.5 text-foreground-secondary whitespace-nowrap align-middle">
                         {exp.incurred_date

@@ -56,23 +56,31 @@ export default async function ExpensesPage() {
     .is("deleted_at", null)
     .order("created_at", { ascending: false });
 
-  const childIds = [...new Set((expensesRaw ?? []).map((e) => e.child_id).filter(Boolean))] as string[];
-  const { data: childRows } =
-    childIds.length > 0
+  const expenseIds = (expensesRaw ?? []).map((e) => e.id as string);
+  const { data: expenseChildRows } =
+    expenseIds.length > 0
       ? await admin
-          .from("children")
-          .select("id, first_name, profile_image")
-          .in("id", childIds)
+          .from("expense_children")
+          .select("expense_id, child_id")
+          .in("expense_id", expenseIds)
       : { data: [] };
-  const childMap = (childRows ?? []).reduce(
+
+  const childIdsByExpense = new Map<string, string[]>();
+  for (const row of expenseChildRows ?? []) {
+    const expenseId = (row as { expense_id?: string }).expense_id;
+    const childId = (row as { child_id?: string }).child_id;
+    if (!expenseId || !childId) continue;
+    const list = childIdsByExpense.get(expenseId) ?? [];
+    list.push(childId);
+    childIdsByExpense.set(expenseId, list);
+  }
+
+  const nameById = (children ?? []).reduce(
     (acc, c) => {
-      acc[c.id] = {
-        first_name: c.first_name as string,
-        profile_image: (c.profile_image as string | null) ?? null,
-      };
+      acc[c.id as string] = (c.first_name as string) ?? "";
       return acc;
     },
-    {} as Record<string, { first_name: string; profile_image: string | null }>
+    {} as Record<string, string>
   );
 
   const receiptIds = [
@@ -108,7 +116,22 @@ export default async function ExpensesPage() {
     category_description:
       (e as { category_description?: string | null }).category_description ?? null,
     child_id: e.child_id,
-    child_name: e.child_id ? childMap[e.child_id]?.first_name ?? null : null,
+    child_ids: (() => {
+      const fromJunction = childIdsByExpense.get(e.id as string) ?? [];
+      if (fromJunction.length > 0) return fromJunction;
+      return e.child_id ? [e.child_id as string] : [];
+    })(),
+    child_name: (() => {
+      const fromJunction = childIdsByExpense.get(e.id as string) ?? [];
+      const ids =
+        fromJunction.length > 0
+          ? fromJunction
+          : e.child_id
+            ? [e.child_id as string]
+            : [];
+      const names = ids.map((id) => nameById[id]).filter(Boolean);
+      return names.length > 0 ? names.join(", ") : null;
+    })(),
     amount_owed: e.amount_owed != null ? String(e.amount_owed) : null,
     status: e.status,
     created_at: e.created_at,

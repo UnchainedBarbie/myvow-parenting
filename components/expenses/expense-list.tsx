@@ -276,6 +276,15 @@ export function ExpenseList({
 }: ExpenseListProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const childrenByFirstName = useMemo(
+    () =>
+      [...children].sort((a, b) =>
+        (a.first_name ?? "").localeCompare(b.first_name ?? "", undefined, {
+          sensitivity: "base",
+        })
+      ),
+    [children]
+  );
   const [searchInput, setSearchInput] = useState("");
   const [filterCategories, setFilterCategories] = useState<string[]>([]);
   const [filterChildren, setFilterChildren] = useState<string[]>([]);
@@ -1841,7 +1850,7 @@ const dateFilterValue: DateFilterValue = {
               {editExpense.submitted_by === currentUserId ? (
                 <ChildMultiSelect
                   id="edit-expense-child"
-                  children={children}
+                  children={childrenByFirstName}
                   value={editForm.child_ids}
                   onChange={(ids) => setEditForm((f) => ({ ...f, child_ids: ids }))}
                 />

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -77,6 +77,15 @@ export function ExpenseForm({
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
+  const childrenByFirstName = useMemo(
+    () =>
+      [...children].sort((a, b) =>
+        (a.first_name ?? "").localeCompare(b.first_name ?? "", undefined, {
+          sensitivity: "base",
+        })
+      ),
+    [children]
+  );
   const [description, setDescription] = useState(
     () => initialValues?.description?.slice(0, 80) ?? ""
   );
@@ -628,7 +637,7 @@ export function ExpenseForm({
                 )}
               </div>
               <ChildMultiSelect
-                children={children}
+                children={childrenByFirstName}
                 value={selectedChildIds}
                 onChange={(ids) => {
                   setChildTouched(true);

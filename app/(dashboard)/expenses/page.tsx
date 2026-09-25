@@ -129,7 +129,12 @@ export default async function ExpensesPage() {
           : e.child_id
             ? [e.child_id as string]
             : [];
-      const names = ids.map((id) => nameById[id]).filter(Boolean);
+      const names = ids
+        .map((id) => nameById[id])
+        .filter(Boolean)
+        .sort((a, b) =>
+          a.localeCompare(b, undefined, { sensitivity: "base" })
+        );
       return names.length > 0 ? names.join(", ") : null;
     })(),
     amount_owed: e.amount_owed != null ? String(e.amount_owed) : null,

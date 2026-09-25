@@ -253,12 +253,13 @@ function displayExpenseStatus(exp: ExpenseRow, involved: boolean): string {
   return STATUS_LABELS[exp.status] ?? exp.status;
 }
 
-function expenseIdFromIndex(idx: number) {
-  return `EXP-${String(idx + 1).padStart(3, "0")}`;
-}
-
 function formatStoredExpenseNumber(n: number | null | undefined): string {
   if (n == null || !Number.isFinite(Number(n))) return "—";
+  return `EXP-${String(Math.trunc(Number(n))).padStart(3, "0")}`;
+}
+
+function csvStoredExpenseNumber(n: number | null | undefined): string {
+  if (n == null || !Number.isFinite(Number(n))) return "";
   return `EXP-${String(Math.trunc(Number(n))).padStart(3, "0")}`;
 }
 
@@ -557,16 +558,18 @@ export function ExpenseList({
       "Their share",
       "Status",
     ];
-    const rows = filtered.map((exp, idx) => {
-      const id = expenseIdFromIndex(idx);
+    const rows = filtered.map((exp) => {
       const amountNum = Number(exp.amount);
       const owedNum = exp.amount_owed != null ? Number(exp.amount_owed) : null;
       const isMine = exp.submitted_by === currentUserId;
       const theirShare =
         owedNum != null ? (isMine ? owedNum : amountNum - owedNum) : null;
-      const statusLabel = STATUS_LABELS[exp.status] ?? exp.status;
+      const involved = coparentShareInvolves(
+        coparentShareForRow(exp, currentUserId)
+      );
+      const statusLabel = displayExpenseStatus(exp, involved);
       return [
-        id,
+        csvStoredExpenseNumber(exp.expense_number),
         exp.description ?? "",
         CATEGORY_LABELS[exp.category] ?? exp.category,
         exp.child_name ?? "—",
@@ -611,14 +614,15 @@ export function ExpenseList({
         "Payment Reference",
       ];
       const rows = selected.map((exp) => {
-        const idx = filtered.findIndex((e) => e.id === exp.id);
-        const idLabel = expenseIdFromIndex(idx >= 0 ? idx : 0);
         const amountNum = Number(exp.amount);
         const owedNum = exp.amount_owed != null ? Number(exp.amount_owed) : null;
         const isMine = exp.submitted_by === currentUserId;
         const theirShare =
           owedNum != null ? (isMine ? owedNum : amountNum - owedNum) : null;
-        const statusLabel = STATUS_LABELS[exp.status] ?? exp.status;
+        const involved = coparentShareInvolves(
+          coparentShareForRow(exp, currentUserId)
+        );
+        const statusLabel = displayExpenseStatus(exp, involved);
         const paymentMethod = (exp as any).payment_method ?? "";
         const paidAt = (exp as any).paid_at
           ? formatDate((exp as any).paid_at as string)
@@ -626,7 +630,7 @@ export function ExpenseList({
         const paymentRef = (exp as any).payment_reference ?? "";
         const splitLabel = (exp as any).split_label ?? "";
         return [
-          idLabel,
+          csvStoredExpenseNumber(exp.expense_number),
           exp.description ?? "",
           CATEGORY_LABELS[exp.category] ?? exp.category,
           exp.child_name ?? "—",

@@ -5,6 +5,7 @@ import { AddEventForm } from "@/components/calendar/add-event-form";
 import type { CalendarEventRow } from "@/components/calendar/calendar-month";
 import { CalendarWithCustody } from "@/components/calendar/calendar-with-custody";
 import { CalendarExportButton } from "@/components/calendar/calendar-export-button";
+import { CalendarInboxButton } from "@/components/calendar/calendar-inbox-button";
 import { CalendarYearView } from "@/components/calendar/calendar-year-view";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 
@@ -379,6 +380,9 @@ export default async function CalendarPage({
         <h1 className="font-heading text-xl md:text-2xl font-semibold text-foreground">
           Calendar
         </h1>
+        <div className="ml-auto">
+          <CalendarInboxButton />
+        </div>
       </div>
       <p className="text-xs md:text-sm text-foreground-secondary mb-2">
         Shared record of parenting events.

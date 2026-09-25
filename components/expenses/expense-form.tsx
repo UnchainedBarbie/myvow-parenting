@@ -36,7 +36,25 @@ function formatSize(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-type Child = { id: string; first_name: string };
+type Child = { id: string; first_name: string; date_of_birth?: string | null };
+
+function compareChildrenByAge(
+  a: { first_name?: string | null; date_of_birth?: string | null },
+  b: { first_name?: string | null; date_of_birth?: string | null }
+) {
+  const dobA = a.date_of_birth?.trim() ?? "";
+  const dobB = b.date_of_birth?.trim() ?? "";
+  const hasA = dobA.length > 0;
+  const hasB = dobB.length > 0;
+  if (hasA && hasB) {
+    if (dobA !== dobB) return dobA < dobB ? -1 : 1;
+  } else if (hasA !== hasB) {
+    return hasA ? -1 : 1;
+  }
+  return (a.first_name ?? "").localeCompare(b.first_name ?? "", undefined, {
+    sensitivity: "base",
+  });
+}
 
 export type ExpenseAttachedFile = {
   document_id: string;
@@ -77,13 +95,8 @@ export function ExpenseForm({
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
-  const childrenByFirstName = useMemo(
-    () =>
-      [...children].sort((a, b) =>
-        (a.first_name ?? "").localeCompare(b.first_name ?? "", undefined, {
-          sensitivity: "base",
-        })
-      ),
+  const childrenByAge = useMemo(
+    () => [...children].sort(compareChildrenByAge),
     [children]
   );
   const [description, setDescription] = useState(
@@ -637,7 +650,7 @@ export function ExpenseForm({
                 )}
               </div>
               <ChildMultiSelect
-                children={childrenByFirstName}
+                children={childrenByAge}
                 value={selectedChildIds}
                 onChange={(ids) => {
                   setChildTouched(true);

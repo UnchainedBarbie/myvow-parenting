@@ -30,7 +30,7 @@ const VISIBILITY_OPTIONS = [
 ] as const;
 
 const TITLE_MAX = 120;
-const DESCRIPTION_MAX = 250;
+const DESCRIPTION_MAX = 600;
 const MAX_FILE_BYTES = 25 * 1024 * 1024; // 25MB
 const ACCEPT = "image/*,.pdf,application/pdf,.doc,.docx";
 const ACCEPT_LABEL = "PDF, JPG, PNG, DOCX";

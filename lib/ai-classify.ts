@@ -107,7 +107,7 @@ Respond ONLY in JSON format with no other text. For non-court documents, omit th
   "type": "document" or "expense" or "event",
   "confidence": 0.0 to 1.0,
   "title": "suggested title",
-  "description": "brief description",
+  "description": "description of the file, under 500 characters",
   "category": "category from the allowed list above",
   "child_names": ["names of children mentioned if any"],
   "children": [

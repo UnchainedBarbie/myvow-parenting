@@ -16,7 +16,7 @@ type DocumentHistoryEntry = {
 };
 
 const TITLE_MAX = 120;
-const DESCRIPTION_MAX = 250;
+const DESCRIPTION_MAX = 600;
 
 const CATEGORY_OPTIONS = [
   { value: "court_order", label: "Court Order" },
@@ -395,7 +395,9 @@ export function DocumentDetailModal({
                   )}
                   maxLength={DESCRIPTION_MAX}
                 />
-                <p className="text-[11px] text-foreground-secondary">{description.length} / {DESCRIPTION_MAX}</p>
+                <p className="text-[11px] text-foreground-secondary tabular-nums">
+                  <span className={cn(description.length > DESCRIPTION_MAX && "text-alert")}>{description.length}</span> / {DESCRIPTION_MAX}
+                </p>
               </div>
               <div className="space-y-2">
                 <Label htmlFor="doc-modal-category" className="text-xs font-medium">Category</Label>

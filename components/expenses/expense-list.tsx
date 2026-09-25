@@ -77,11 +77,29 @@ type ExpenseSortKey =
   | "their_share";
 type SortDir = "asc" | "desc";
 
+function compareChildrenByAge(
+  a: { first_name?: string | null; date_of_birth?: string | null },
+  b: { first_name?: string | null; date_of_birth?: string | null }
+) {
+  const dobA = a.date_of_birth?.trim() ?? "";
+  const dobB = b.date_of_birth?.trim() ?? "";
+  const hasA = dobA.length > 0;
+  const hasB = dobB.length > 0;
+  if (hasA && hasB) {
+    if (dobA !== dobB) return dobA < dobB ? -1 : 1;
+  } else if (hasA !== hasB) {
+    return hasA ? -1 : 1;
+  }
+  return (a.first_name ?? "").localeCompare(b.first_name ?? "", undefined, {
+    sensitivity: "base",
+  });
+}
+
 interface ExpenseListProps {
   expenses: ExpenseRow[];
   currentUserId: string;
   custodySplitPercent: number;
-  children: { id: string; first_name: string; profile_image?: string | null }[];
+  children: { id: string; first_name: string; profile_image?: string | null; date_of_birth?: string | null }[];
 }
 
 function formatDate(createdAt: string) {
@@ -276,13 +294,8 @@ export function ExpenseList({
 }: ExpenseListProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const childrenByFirstName = useMemo(
-    () =>
-      [...children].sort((a, b) =>
-        (a.first_name ?? "").localeCompare(b.first_name ?? "", undefined, {
-          sensitivity: "base",
-        })
-      ),
+  const childrenByAge = useMemo(
+    () => [...children].sort(compareChildrenByAge),
     [children]
   );
   const [searchInput, setSearchInput] = useState("");
@@ -1850,7 +1863,7 @@ const dateFilterValue: DateFilterValue = {
               {editExpense.submitted_by === currentUserId ? (
                 <ChildMultiSelect
                   id="edit-expense-child"
-                  children={childrenByFirstName}
+                  children={childrenByAge}
                   value={editForm.child_ids}
                   onChange={(ids) => setEditForm((f) => ({ ...f, child_ids: ids }))}
                 />

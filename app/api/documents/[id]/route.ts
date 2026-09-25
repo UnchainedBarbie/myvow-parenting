@@ -3,7 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getServiceRoleClient } from "@/lib/supabase/server";
 
 const TITLE_MAX = 120;
-const DESCRIPTION_MAX = 250;
+const DESCRIPTION_MAX = 600;
 const VISIBILITY_VALUES = ["family", "parents_only", "private", "family_read_only"] as const;
 
 /**

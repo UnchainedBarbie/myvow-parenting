@@ -3,6 +3,24 @@ import { redirect } from "next/navigation";
 import { ExpenseForm } from "@/components/expenses/expense-form";
 import { ExpenseList, type ExpenseRow } from "@/components/expenses/expense-list";
 
+function compareChildrenByAge(
+  a: { first_name?: string | null; date_of_birth?: string | null },
+  b: { first_name?: string | null; date_of_birth?: string | null }
+) {
+  const dobA = a.date_of_birth?.trim() ?? "";
+  const dobB = b.date_of_birth?.trim() ?? "";
+  const hasA = dobA.length > 0;
+  const hasB = dobB.length > 0;
+  if (hasA && hasB) {
+    if (dobA !== dobB) return dobA < dobB ? -1 : 1;
+  } else if (hasA !== hasB) {
+    return hasA ? -1 : 1;
+  }
+  return (a.first_name ?? "").localeCompare(b.first_name ?? "", undefined, {
+    sensitivity: "base",
+  });
+}
+
 export default async function ExpensesPage() {
   const supabase = await createClient();
   const {
@@ -43,7 +61,7 @@ export default async function ExpensesPage() {
 
   const { data: children } = await admin
     .from("children")
-    .select("id, first_name, profile_image")
+    .select("id, first_name, profile_image, date_of_birth")
     .eq("case_id", caseId)
     .order("first_name");
 
@@ -75,12 +93,15 @@ export default async function ExpensesPage() {
     childIdsByExpense.set(expenseId, list);
   }
 
-  const nameById = (children ?? []).reduce(
+  const childById = (children ?? []).reduce(
     (acc, c) => {
-      acc[c.id as string] = (c.first_name as string) ?? "";
+      acc[c.id as string] = {
+        first_name: (c.first_name as string) ?? "",
+        date_of_birth: (c.date_of_birth as string | null) ?? null,
+      };
       return acc;
     },
-    {} as Record<string, string>
+    {} as Record<string, { first_name: string; date_of_birth: string | null }>
   );
 
   const receiptIds = [
@@ -130,11 +151,12 @@ export default async function ExpensesPage() {
             ? [e.child_id as string]
             : [];
       const names = ids
-        .map((id) => nameById[id])
-        .filter(Boolean)
-        .sort((a, b) =>
-          a.localeCompare(b, undefined, { sensitivity: "base" })
-        );
+        .map((id) => childById[id])
+        .filter((c): c is { first_name: string; date_of_birth: string | null } =>
+          Boolean(c?.first_name)
+        )
+        .sort(compareChildrenByAge)
+        .map((c) => c.first_name);
       return names.length > 0 ? names.join(", ") : null;
     })(),
     amount_owed: e.amount_owed != null ? String(e.amount_owed) : null,

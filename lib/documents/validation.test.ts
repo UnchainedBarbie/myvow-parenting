@@ -4,7 +4,7 @@
  */
 import assert from "node:assert";
 
-const DESCRIPTION_MAX = 250;
+const DESCRIPTION_MAX = 600;
 
 function validateDescription(description: string | null | undefined): { valid: boolean; error?: string } {
   const trimmed = description?.trim() ?? "";
@@ -19,15 +19,15 @@ function normalizeChildId(childId: string | null | undefined): string | null {
 }
 
 function run() {
-  const d250 = "a".repeat(250);
-  const d251 = "a".repeat(251);
+  const atMax = "a".repeat(DESCRIPTION_MAX);
+  const overMax = "a".repeat(DESCRIPTION_MAX + 1);
 
   assert.strictEqual(validateDescription(null).valid, false);
   assert.strictEqual(validateDescription("").valid, false);
   assert.strictEqual(validateDescription("   ").valid, false);
   assert.strictEqual(validateDescription("ok").valid, true);
-  assert.strictEqual(validateDescription(d250).valid, true);
-  assert.strictEqual(validateDescription(d251).valid, false);
+  assert.strictEqual(validateDescription(atMax).valid, true);
+  assert.strictEqual(validateDescription(overMax).valid, false);
 
   assert.strictEqual(normalizeChildId(null), null);
   assert.strictEqual(normalizeChildId(""), null);

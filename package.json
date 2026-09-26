@@ -30,6 +30,7 @@
     "@stripe/stripe-js": "^8.9.0",
     "@supabase/ssr": "^0.5.2",
     "@supabase/supabase-js": "^2.47.10",
+    "@vercel/functions": "^3.9.9",
     "archiver": "^7.0.1",
     "bcryptjs": "^3.0.3",
     "class-variance-authority": "^0.7.0",

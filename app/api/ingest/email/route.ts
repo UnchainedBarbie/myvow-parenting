@@ -1,9 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
+import { waitUntil } from "@vercel/functions";
 import { getServiceRoleClient } from "@/lib/supabase/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { extractPdfText } from "@/lib/pdf-extract";
+import { processInboxItemForIngest } from "@/lib/sage/process-inbox-item";
 
 export const runtime = "nodejs";
+/** Classify runs inline; Sage (2–4 LLM calls per row) runs after the response. */
+export const maxDuration = 60;
 
 const BUCKET = "inbox";
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024; // 10MB
@@ -557,6 +561,7 @@ export async function POST(req: NextRequest) {
 
     await ensureInboxBucket(admin);
 
+    const insertedInboxIds: string[] = [];
     let processedAttachment = false;
 
     for (const att of attachments) {
@@ -602,7 +607,7 @@ export async function POST(req: NextRequest) {
         const aiChildIds = await mapChildNamesToIds(admin, caseId, payload.child_names);
         const clamp = (n: number) => Math.min(1, Math.max(0, n));
 
-        const { error: insertErr } = await admin
+        const { data: inserted, error: insertErr } = await admin
           .from("inbox_items")
           .insert({
             case_id: caseId,
@@ -634,13 +639,17 @@ export async function POST(req: NextRequest) {
             ai_is_all_day: !!payload.is_all_day,
             ai_visibility: null,
             ai_raw_response: null,
-          });
+          })
+          .select("id")
+          .single();
 
         if (insertErr) {
           console.error("[ingest/email] Failed to insert inbox_items row for attachment:", insertErr);
           continue;
         }
 
+        const insertedId = (inserted as { id?: string } | null)?.id;
+        if (insertedId) insertedInboxIds.push(insertedId);
         processedAttachment = true;
       } catch (e) {
         console.error("[ingest/email] Error processing attachment:", e);
@@ -665,7 +674,7 @@ export async function POST(req: NextRequest) {
         };
       }
 
-      const { error: insertErr } = await admin.from("inbox_items").insert({
+      const { data: inserted, error: insertErr } = await admin.from("inbox_items").insert({
         case_id: caseId,
         source_type: "email",
         status: "pending_review",
@@ -681,11 +690,26 @@ export async function POST(req: NextRequest) {
           subject,
           text: body.TextBody ?? null,
         },
-      });
+      })
+        .select("id")
+        .single();
 
       if (insertErr) {
         console.error("[ingest/email] Failed to insert inbox_items row for email body:", insertErr);
+      } else {
+        const insertedId = (inserted as { id?: string } | null)?.id;
+        if (insertedId) insertedInboxIds.push(insertedId);
       }
+    }
+
+    if (insertedInboxIds.length > 0) {
+      waitUntil(
+        (async () => {
+          for (const inboxItemId of insertedInboxIds) {
+            await processInboxItemForIngest(inboxItemId);
+          }
+        })()
+      );
     }
 
     return NextResponse.json({ ok: true });

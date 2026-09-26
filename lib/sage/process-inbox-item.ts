@@ -1,6 +1,9 @@
 /**
  * Email adapter — runs Observation Builder + shared processObservation on a stored
- * inbox_items row and writes a sage_items row. No webhook changes.
+ * inbox_items row and writes a sage_items row.
+ *
+ * Ingest schedules this after the webhook response via waitUntil(); it is safe to
+ * call twice on the same inbox item (existing sage_items for the source win).
  */
 
 import { extractPdfText } from "@/lib/pdf-extract";
@@ -29,6 +32,7 @@ export type InboxItemRow = {
   file_name: string | null;
   file_path: string | null;
   mime_type: string | null;
+  sage_item_id?: string | null;
 };
 
 export type InboxExtractResult = {
@@ -211,6 +215,26 @@ async function resolveVisibleTo(
   };
 }
 
+async function findSageItemForSource(
+  admin: SupabaseClient,
+  sourceType: string,
+  sourceId: string
+): Promise<string | null> {
+  const { data } = await admin
+    .from("sage_items")
+    .select("id")
+    .eq("source_type", sourceType)
+    .eq("source_id", sourceId)
+    .maybeSingle();
+  return (data as { id?: string } | null)?.id ?? null;
+}
+
+function isUniqueViolation(error: { code?: string; message?: string } | null): boolean {
+  if (!error) return false;
+  if (error.code === "23505") return true;
+  return /sage_items_source_idx|duplicate key/i.test(error.message ?? "");
+}
+
 export async function processInboxItem(
   inboxItemId: string
 ): Promise<{ sage_item_id: string } | { error: string }> {
@@ -234,6 +258,11 @@ export async function processInboxItem(
     }
 
     const inboxRow = row as InboxItemRow;
+    const sourceType = (inboxRow.source_type ?? "email").trim() || "email";
+
+    const existingId = await findSageItemForSource(admin, sourceType, inboxItemId);
+    if (existingId) return { sage_item_id: existingId };
+
     const extracted = await extractInboxText(inboxRow, admin);
     if (!extracted.text) {
       return {
@@ -242,7 +271,6 @@ export async function processInboxItem(
       };
     }
 
-    const sourceType = (inboxRow.source_type ?? "email").trim() || "email";
     const sender =
       (inboxRow.source_email_from ?? inboxRow.coparent_email ?? "Co-Parent").trim() ||
       "Co-Parent";
@@ -280,7 +308,7 @@ export async function processInboxItem(
       .from("sage_items")
       .insert({
         case_id: inboxRow.case_id,
-        source_type: "email",
+        source_type: sourceType,
         source_id: inboxItemId,
         visible_to: visibleTo,
         item_type: intent.item_type,
@@ -307,6 +335,10 @@ export async function processInboxItem(
       .single();
 
     if (insertError || !sageRow) {
+      if (isUniqueViolation(insertError)) {
+        const racedId = await findSageItemForSource(admin, sourceType, inboxItemId);
+        if (racedId) return { sage_item_id: racedId };
+      }
       console.error("[process-inbox-item] sage_items insert failed:", insertError);
       return { error: insertError?.message ?? "Failed to insert sage_items row" };
     }
@@ -316,5 +348,54 @@ export async function processInboxItem(
     const message = e instanceof Error ? e.message : "processInboxItem failed";
     console.error("[process-inbox-item]", e);
     return { error: message };
+  }
+}
+
+/** Ingest waitUntil() path: mark processing state, run Sage, persist sage_item_id. */
+export async function processInboxItemForIngest(inboxItemId: string): Promise<void> {
+  const admin = getServiceRoleClient();
+  try {
+    const { data: current } = await admin
+      .from("inbox_items")
+      .select("id, status, sage_item_id")
+      .eq("id", inboxItemId)
+      .maybeSingle();
+    const row = current as
+      | { id: string; status?: string | null; sage_item_id?: string | null }
+      | null;
+    if (row?.status === "saged" && row.sage_item_id) {
+      console.log(
+        `[ingest-sage] inbox_item_id=${inboxItemId} sage_item_id=${row.sage_item_id} already saged`
+      );
+      return;
+    }
+
+    await admin.from("inbox_items").update({ status: "processing" }).eq("id", inboxItemId);
+
+    const result = await processInboxItem(inboxItemId);
+    if ("sage_item_id" in result) {
+      const { error: sagedErr } = await admin
+        .from("inbox_items")
+        .update({ status: "saged", sage_item_id: result.sage_item_id })
+        .eq("id", inboxItemId);
+      if (sagedErr) {
+        await admin.from("inbox_items").update({ status: "saged" }).eq("id", inboxItemId);
+        console.error(
+          `[ingest-sage] inbox_item_id=${inboxItemId} sage_item_id=${result.sage_item_id} link failed: ${sagedErr.message}`
+        );
+      } else {
+        console.log(
+          `[ingest-sage] inbox_item_id=${inboxItemId} sage_item_id=${result.sage_item_id}`
+        );
+      }
+      return;
+    }
+
+    await admin.from("inbox_items").update({ status: "sage_failed" }).eq("id", inboxItemId);
+    console.error(`[ingest-sage] inbox_item_id=${inboxItemId} error=${result.error}`);
+  } catch (e) {
+    const message = e instanceof Error ? e.message : "processInboxItemForIngest failed";
+    console.error(`[ingest-sage] inbox_item_id=${inboxItemId} error=${message}`);
+    await admin.from("inbox_items").update({ status: "sage_failed" }).eq("id", inboxItemId);
   }
 }

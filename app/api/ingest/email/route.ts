@@ -191,14 +191,60 @@ type PostmarkAttachment = {
   ContentLength?: number;
 };
 
+type PostmarkHeader = {
+  Name: string;
+  Value: string;
+};
+
 type PostmarkPayload = {
   To?: string | null;
   From?: string | null;
   Subject?: string | null;
   TextBody?: string | null;
   HtmlBody?: string | null;
+  MessageID?: string | null;
+  StrippedTextReply?: string | null;
+  Headers?: PostmarkHeader[];
   Attachments?: PostmarkAttachment[];
 };
+
+type ExtractedPostmarkThread = {
+  messageId: string | null;
+  inReplyTo: string | null;
+  references: string[];
+  bodyText: string;
+};
+
+function headerValue(
+  headers: PostmarkHeader[] | undefined,
+  name: string
+): string | null {
+  if (!Array.isArray(headers)) return null;
+  const want = name.toLowerCase();
+  const found = headers.find(
+    (h) => typeof h?.Name === "string" && h.Name.toLowerCase() === want
+  );
+  if (typeof found?.Value !== "string") return null;
+  const trimmed = found.Value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function extractPostmarkThread(payload: PostmarkPayload): ExtractedPostmarkThread {
+  const messageId =
+    typeof payload.MessageID === "string" && payload.MessageID.trim()
+      ? payload.MessageID.trim()
+      : null;
+  const inReplyTo = headerValue(payload.Headers, "In-Reply-To");
+  const referencesRaw = headerValue(payload.Headers, "References");
+  const references = referencesRaw ? referencesRaw.split(/\s+/).filter(Boolean) : [];
+  const stripped =
+    typeof payload.StrippedTextReply === "string"
+      ? payload.StrippedTextReply.trim()
+      : "";
+  const textBody = typeof payload.TextBody === "string" ? payload.TextBody : "";
+  const bodyText = stripped.length > 0 ? stripped : textBody;
+  return { messageId, inReplyTo, references, bodyText };
+}
 
 function parseClassifyResponse(content: string | undefined, fallbackFileName: string): ClassifyPayload {
   const defaultPayload: ClassifyPayload = {
@@ -530,8 +576,20 @@ export async function POST(req: NextRequest) {
     }
 
     const raw = body as unknown as Record<string, unknown>;
+    const extracted = extractPostmarkThread(body);
     console.log("[postmark-raw] keys", Object.keys(raw));
     console.log("[postmark-raw] Headers", raw.Headers ?? null);
+    console.log("[postmark-raw] extracted", {
+      messageId: extracted.messageId,
+      inReplyTo: extracted.inReplyTo,
+      references: extracted.references,
+      bodyTextSource:
+        typeof body.StrippedTextReply === "string" &&
+        body.StrippedTextReply.trim().length > 0
+          ? "StrippedTextReply"
+          : "TextBody",
+      bodyTextLength: extracted.bodyText.length,
+    });
 
     const toAddress = extractEmailFromAddress(body.To);
     const fromEmail = extractEmailFromAddress(body.From);

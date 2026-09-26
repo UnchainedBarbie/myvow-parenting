@@ -210,6 +210,7 @@ type PostmarkPayload = {
 
 type ExtractedPostmarkThread = {
   messageId: string | null;
+  messageIdSource: "Message-ID" | "MessageID" | null;
   inReplyTo: string | null;
   references: string[];
   bodyText: string;
@@ -230,9 +231,16 @@ function headerValue(
 }
 
 function extractPostmarkThread(payload: PostmarkPayload): ExtractedPostmarkThread {
-  const messageId =
+  const headerMessageId = headerValue(payload.Headers, "Message-ID");
+  const topLevelMessageId =
     typeof payload.MessageID === "string" && payload.MessageID.trim()
       ? payload.MessageID.trim()
+      : null;
+  const messageId = headerMessageId ?? topLevelMessageId;
+  const messageIdSource: ExtractedPostmarkThread["messageIdSource"] = headerMessageId
+    ? "Message-ID"
+    : topLevelMessageId
+      ? "MessageID"
       : null;
   const inReplyTo = headerValue(payload.Headers, "In-Reply-To");
   const referencesRaw = headerValue(payload.Headers, "References");
@@ -243,7 +251,7 @@ function extractPostmarkThread(payload: PostmarkPayload): ExtractedPostmarkThrea
       : "";
   const textBody = typeof payload.TextBody === "string" ? payload.TextBody : "";
   const bodyText = stripped.length > 0 ? stripped : textBody;
-  return { messageId, inReplyTo, references, bodyText };
+  return { messageId, messageIdSource, inReplyTo, references, bodyText };
 }
 
 function parseClassifyResponse(content: string | undefined, fallbackFileName: string): ClassifyPayload {
@@ -581,6 +589,7 @@ export async function POST(req: NextRequest) {
     console.log("[postmark-raw] Headers", raw.Headers ?? null);
     console.log("[postmark-raw] extracted", {
       messageId: extracted.messageId,
+      messageIdSource: extracted.messageIdSource,
       inReplyTo: extracted.inReplyTo,
       references: extracted.references,
       bodyTextSource:

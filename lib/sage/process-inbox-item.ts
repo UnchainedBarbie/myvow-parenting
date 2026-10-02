@@ -177,7 +177,7 @@ export async function extractInboxText(
   return { text: "", attachments };
 }
 
-async function resolveVisibleTo(
+export async function resolveVisibleTo(
   caseId: string
 ): Promise<string | { error: string }> {
   const admin = getServiceRoleClient();

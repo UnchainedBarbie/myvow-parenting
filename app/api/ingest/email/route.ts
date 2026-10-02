@@ -3,7 +3,10 @@ import { waitUntil } from "@vercel/functions";
 import { getServiceRoleClient } from "@/lib/supabase/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { extractPdfText } from "@/lib/pdf-extract";
-import { processInboxItemForIngest } from "@/lib/sage/process-inbox-item";
+import {
+  processInboxItemForIngest,
+  resolveVisibleTo,
+} from "@/lib/sage/process-inbox-item";
 
 export const runtime = "nodejs";
 /** Classify runs inline; Sage (2–4 LLM calls per row) runs after the response. */
@@ -558,6 +561,212 @@ async function classifyEmailBody(subject: string, textBody: string | null): Prom
   }
 }
 
+const LEADING_REPLY_PREFIX = /^(?:re|fw|fwd)\s*:\s*/i;
+
+/** Strip leading reply/forward prefixes, trim, and collapse whitespace. */
+function normalizeConversationSubject(raw: string): string {
+  let s = raw.trim().replace(/\s+/g, " ");
+  let prev = "";
+  while (s.length > 0 && s !== prev) {
+    prev = s;
+    s = s.replace(LEADING_REPLY_PREFIX, "").trim().replace(/\s+/g, " ");
+  }
+  return s.toLowerCase();
+}
+
+function threadIdCandidates(thread: ExtractedPostmarkThread): string[] {
+  const ids: string[] = [];
+  if (thread.inReplyTo) ids.push(thread.inReplyTo);
+  for (const id of thread.references) {
+    if (id) ids.push(id);
+  }
+  return [...new Set(ids)];
+}
+
+type ConversationStampRow = {
+  id: string;
+  email_thread_id: string | null;
+  coparent_email: string | null;
+};
+
+function logConvMatch(
+  step: "thread" | "subject" | "create",
+  conversationId: string | null,
+  created: boolean
+): void {
+  console.log(
+    `[conv-match] step=${step} conversation_id=${conversationId ?? "none"} created=${created}`
+  );
+}
+
+async function stampMatchedConversation(
+  admin: ReturnType<typeof getServiceRoleClient>,
+  row: ConversationStampRow,
+  thread: ExtractedPostmarkThread,
+  from: string | null
+): Promise<void> {
+  const patch: {
+    updated_at: string;
+    email_thread_id?: string;
+    coparent_email?: string;
+  } = {
+    updated_at: new Date().toISOString(),
+  };
+  if (!(row.email_thread_id ?? "").trim() && thread.messageId) {
+    patch.email_thread_id = thread.messageId;
+  }
+  if (!(row.coparent_email ?? "").trim() && from) {
+    patch.coparent_email = from;
+  }
+  const { error } = await admin.from("conversations").update(patch).eq("id", row.id);
+  if (error) {
+    console.error(
+      `[conv-match] conversation_id=${row.id} stamp_failed=${error.message}`
+    );
+  }
+}
+
+/**
+ * Resolve the conversation for an inbound email, or create one.
+ * Does not write a messages row.
+ */
+async function resolveOrCreateConversation(
+  caseId: string,
+  thread: ExtractedPostmarkThread,
+  from: string | null,
+  subject: string
+): Promise<void> {
+  try {
+    const admin = getServiceRoleClient();
+    const candidates = threadIdCandidates(thread);
+
+    if (candidates.length > 0) {
+      const { data: byThread, error: threadErr } = await admin
+        .from("conversations")
+        .select("id, email_thread_id, coparent_email")
+        .eq("case_id", caseId)
+        .in("email_thread_id", candidates)
+        .order("updated_at", { ascending: false })
+        .limit(1);
+
+      if (threadErr) {
+        console.error(`[conv-match] step=thread error=${threadErr.message}`);
+        return;
+      }
+
+      const threadRow = (byThread ?? [])[0] as ConversationStampRow | undefined;
+      if (threadRow?.id) {
+        await stampMatchedConversation(admin, threadRow, thread, from);
+        logConvMatch("thread", threadRow.id, false);
+        return;
+      }
+
+      const { data: byMessage, error: msgErr } = await admin
+        .from("messages")
+        .select("conversation_id")
+        .eq("case_id", caseId)
+        .in("email_message_id", candidates)
+        .not("conversation_id", "is", null)
+        .order("created_at", { ascending: false })
+        .limit(1);
+
+      if (msgErr) {
+        console.error(`[conv-match] step=thread error=${msgErr.message}`);
+        return;
+      }
+
+      const messageConversationId = (
+        (byMessage ?? [])[0] as { conversation_id?: string | null } | undefined
+      )?.conversation_id;
+
+      if (messageConversationId) {
+        const { data: conv, error: convErr } = await admin
+          .from("conversations")
+          .select("id, email_thread_id, coparent_email")
+          .eq("id", messageConversationId)
+          .eq("case_id", caseId)
+          .maybeSingle();
+        if (convErr) {
+          console.error(`[conv-match] step=thread error=${convErr.message}`);
+          return;
+        }
+        if (conv?.id) {
+          await stampMatchedConversation(
+            admin,
+            conv as ConversationStampRow,
+            thread,
+            from
+          );
+          logConvMatch("thread", conv.id as string, false);
+          return;
+        }
+      }
+    }
+
+    const normalized = normalizeConversationSubject(subject);
+    if (normalized) {
+      const { data: convs, error: subjErr } = await admin
+        .from("conversations")
+        .select("id, subject, email_thread_id, coparent_email, updated_at")
+        .eq("case_id", caseId)
+        .order("updated_at", { ascending: false });
+      if (subjErr) {
+        console.error(`[conv-match] step=subject error=${subjErr.message}`);
+        return;
+      }
+      const hit = (
+        (convs ?? []) as {
+          id: string;
+          subject: string | null;
+          email_thread_id: string | null;
+          coparent_email: string | null;
+        }[]
+      ).find((c) => normalizeConversationSubject(c.subject ?? "") === normalized);
+      if (hit) {
+        await stampMatchedConversation(admin, hit, thread, from);
+        logConvMatch("subject", hit.id, false);
+        return;
+      }
+    }
+
+    const trimmedSubject = subject.trim();
+    const createdSubject = trimmedSubject.length > 0 ? trimmedSubject : "(no subject)";
+    const visibleTo = await resolveVisibleTo(caseId);
+    if (typeof visibleTo !== "string") {
+      console.error(
+        `[conv-match] step=create conversation_id=none created=false error=${visibleTo.error}`
+      );
+      return;
+    }
+
+    const { data: created, error: createErr } = await admin
+      .from("conversations")
+      .insert({
+        case_id: caseId,
+        subject: createdSubject,
+        topic: "General",
+        category: "General",
+        created_by: visibleTo,
+        coparent_email: from,
+        email_thread_id: thread.messageId,
+        child_id: null,
+      })
+      .select("id")
+      .single();
+
+    if (createErr || !created) {
+      console.error(
+        `[conv-match] step=create conversation_id=none created=false error=${createErr?.message ?? "insert failed"}`
+      );
+      return;
+    }
+    logConvMatch("create", (created as { id: string }).id, true);
+  } catch (e) {
+    const message = e instanceof Error ? e.message : "resolveOrCreateConversation failed";
+    console.error(`[conv-match] error=${message}`);
+  }
+}
+
 export async function POST(req: NextRequest) {
   try {
     const secret = process.env.POSTMARK_WEBHOOK_SECRET;
@@ -628,6 +837,7 @@ export async function POST(req: NextRequest) {
     }
 
     const caseId = caseRow.id as string;
+    await resolveOrCreateConversation(caseId, extracted, fromEmail, subject);
     const attachments = Array.isArray(body.Attachments) ? body.Attachments : [];
 
     await ensureInboxBucket(admin);

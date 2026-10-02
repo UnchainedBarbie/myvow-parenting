@@ -13,6 +13,7 @@ import {
   type RawItem,
 } from "@/lib/sage/observation-builder";
 import { processObservation } from "@/lib/sage/process-observation";
+import type { Plan } from "@/lib/sage/planner";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 const INBOX_BUCKET = "inbox";
@@ -397,5 +398,281 @@ export async function processInboxItemForIngest(inboxItemId: string): Promise<vo
     const message = e instanceof Error ? e.message : "processInboxItemForIngest failed";
     console.error(`[ingest-sage] inbox_item_id=${inboxItemId} error=${message}`);
     await admin.from("inbox_items").update({ status: "sage_failed" }).eq("id", inboxItemId);
+  }
+}
+
+function needsAttention(plan: Plan): boolean {
+  if (plan.status === "no_action") return false;
+  return plan.proposals.some((p) => p.type !== "note_only");
+}
+
+function narrationFor(plan: Plan, summary: string, conversationId: string): string {
+  const reply = plan.proposals.find((p) => p.type === "reply_coparent")?.draft?.trim();
+  const ask = plan.proposals.find((p) => p.type === "ask_clarification")?.draft?.trim();
+  const lead =
+    reply || ask || summary.trim() || "Co-Parent sent something that needs a look.";
+  return `${lead}\n\n/messages?conversation_id=${conversationId}`;
+}
+
+function logMsgSage(messageId: string, detail: string): void {
+  console.log(`[msg-sage] message_id=${messageId} ${detail}`);
+}
+
+async function findActiveConversationSession(
+  admin: SupabaseClient,
+  userId: string,
+  conversationId: string
+): Promise<{ id: string | null; error?: string }> {
+  const { data, error } = await admin
+    .from("sage_sessions")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("conversation_id", conversationId)
+    .or("archived.is.null,archived.eq.false")
+    .order("updated_at", { ascending: false })
+    .limit(1);
+  if (error) return { id: null, error: error.message };
+  const id = ((data ?? [])[0] as { id?: string } | undefined)?.id ?? null;
+  return { id };
+}
+
+/**
+ * Co-Parent inbound message → Sage. Propose only.
+ * Does not write a role:'user' journal row.
+ */
+export async function processInboundMessageForSage(messageId: string): Promise<void> {
+  const admin = getServiceRoleClient();
+  try {
+    const { data: messageRow, error: messageErr } = await admin
+      .from("messages")
+      .select("id, case_id, conversation_id, original_content, created_at")
+      .eq("id", messageId)
+      .maybeSingle();
+    if (messageErr) {
+      logMsgSage(messageId, `skipped=load_failed error=${messageErr.message}`);
+      return;
+    }
+    const message = messageRow as {
+      id: string;
+      case_id: string;
+      conversation_id: string | null;
+      original_content: string | null;
+      created_at: string | null;
+    } | null;
+    if (!message) {
+      logMsgSage(messageId, "skipped=message_not_found");
+      return;
+    }
+    if (!message.conversation_id) {
+      logMsgSage(messageId, "skipped=no_conversation");
+      return;
+    }
+
+    const { data: convRow, error: convErr } = await admin
+      .from("conversations")
+      .select("id, subject, topic")
+      .eq("id", message.conversation_id)
+      .maybeSingle();
+    if (convErr) {
+      logMsgSage(messageId, `skipped=load_failed error=${convErr.message}`);
+      return;
+    }
+    const conversation = convRow as {
+      id: string;
+      subject: string | null;
+      topic: string | null;
+    } | null;
+    if (!conversation) {
+      logMsgSage(messageId, "skipped=conversation_not_found");
+      return;
+    }
+
+    const existingId = await findSageItemForSource(admin, "message", message.id);
+    if (existingId) {
+      logMsgSage(messageId, `skipped=sage_item_exists sage_item_id=${existingId}`);
+      return;
+    }
+
+    const text = (message.original_content ?? "").trim();
+    if (!text) {
+      logMsgSage(messageId, "skipped=empty_body");
+      return;
+    }
+
+    const visibleTo = await resolveVisibleTo(message.case_id);
+    if (typeof visibleTo !== "string") {
+      logMsgSage(messageId, `skipped=no_recipient error=${visibleTo.error}`);
+      return;
+    }
+
+    const { data: profile } = await admin
+      .from("users")
+      .select("timezone")
+      .eq("id", visibleTo)
+      .maybeSingle();
+    const timezone =
+      typeof (profile as { timezone?: string | null } | null)?.timezone === "string" &&
+      (profile as { timezone: string }).timezone.trim()
+        ? (profile as { timezone: string }).timezone.trim()
+        : "America/Denver";
+
+    const rawItem: RawItem = {
+      id: message.id,
+      reply_to_id: null,
+      from: "Co-Parent",
+      timestamp: message.created_at ?? new Date().toISOString(),
+      text,
+      source: "message",
+    };
+    const observation = buildObservation(message.id, [rawItem]);
+    const processed = await processObservation(observation, {
+      case_id: message.case_id,
+      timezone,
+      source_type: "message",
+      source_id: message.id,
+      sender: "Co-Parent",
+      plan_sender: "Co-Parent",
+    });
+
+    if (!needsAttention(processed.plan)) {
+      logMsgSage(messageId, "skipped=no_attention");
+      return;
+    }
+
+    let sessionId: string | null = null;
+    const active = await findActiveConversationSession(
+      admin,
+      visibleTo,
+      conversation.id
+    );
+    if (active.error) {
+      logMsgSage(messageId, `skipped=session_lookup_failed error=${active.error}`);
+      return;
+    }
+    sessionId = active.id;
+
+    if (!sessionId) {
+      const title = (conversation.subject ?? "").trim() || "(no subject)";
+      const { data: createdSession, error: sessionErr } = await admin
+        .from("sage_sessions")
+        .insert({
+          user_id: visibleTo,
+          session_type: "private",
+          conversation_id: conversation.id,
+          title,
+          category: conversation.topic,
+        })
+        .select("id")
+        .single();
+      if (sessionErr || !createdSession) {
+        if (isUniqueViolation(sessionErr)) {
+          const raced = await findActiveConversationSession(
+            admin,
+            visibleTo,
+            conversation.id
+          );
+          if (raced.error || !raced.id) {
+            logMsgSage(
+              messageId,
+              `skipped=session_race error=${raced.error ?? "active session not found"}`
+            );
+            return;
+          }
+          sessionId = raced.id;
+        } else {
+          logMsgSage(
+            messageId,
+            `skipped=session_create_failed error=${sessionErr?.message ?? "insert failed"}`
+          );
+          return;
+        }
+      } else {
+        sessionId = (createdSession as { id: string }).id;
+      }
+    }
+
+    const { intent, entities } = processed.interpretation;
+    const { child_ids, resolved_dates, plan: itemPlan } = processed;
+    const { data: sageRow, error: insertError } = await admin
+      .from("sage_items")
+      .insert({
+        case_id: message.case_id,
+        source_type: "message",
+        source_id: message.id,
+        visible_to: visibleTo,
+        item_type: intent.item_type,
+        domain: intent.domain,
+        summary: intent.summary,
+        evidence_excerpt: intent.evidence_excerpt,
+        tool_name: intent.tool_name,
+        action_required: intent.action_required,
+        action_type: intent.action_type,
+        urgency: intent.urgency,
+        confidence: intent.confidence,
+        tool_input: {
+          ...entities,
+          resolved_dates,
+          ...(processed.expense_category
+            ? { expense_category: processed.expense_category }
+            : {}),
+        },
+        child_ids,
+        plan: itemPlan,
+        status: "pending",
+      })
+      .select("id")
+      .single();
+
+    if (insertError || !sageRow) {
+      if (isUniqueViolation(insertError)) {
+        const racedId = await findSageItemForSource(admin, "message", message.id);
+        logMsgSage(
+          messageId,
+          `skipped=sage_item_exists${racedId ? ` sage_item_id=${racedId}` : ""}`
+        );
+        return;
+      }
+      logMsgSage(
+        messageId,
+        `skipped=sage_item_insert_failed error=${insertError?.message ?? "insert failed"}`
+      );
+      return;
+    }
+
+    const sageItemId = (sageRow as { id: string }).id;
+    const content = narrationFor(itemPlan, intent.summary, conversation.id);
+    const { error: journalErr } = await admin.from("sage_journal_messages").insert({
+      user_id: visibleTo,
+      role: "sage",
+      session_id: sessionId,
+      sage_item_id: sageItemId,
+      source_message_id: message.id,
+      content,
+    });
+    if (journalErr) {
+      logMsgSage(
+        messageId,
+        `session_id=${sessionId} sage_item_id=${sageItemId} journal_failed=${journalErr.message}`
+      );
+      return;
+    }
+
+    const { error: touchErr } = await admin
+      .from("sage_sessions")
+      .update({ updated_at: new Date().toISOString() })
+      .eq("id", sessionId);
+    if (touchErr) {
+      logMsgSage(
+        messageId,
+        `session_id=${sessionId} sage_item_id=${sageItemId} touch_failed=${touchErr.message}`
+      );
+      return;
+    }
+
+    logMsgSage(messageId, `session_id=${sessionId} sage_item_id=${sageItemId}`);
+  } catch (e) {
+    const message = e instanceof Error ? e.message : "processInboundMessageForSage failed";
+    logMsgSage(messageId, `skipped=error error=${message}`);
+    console.error("[msg-sage]", e);
   }
 }

@@ -5,6 +5,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { extractPdfText } from "@/lib/pdf-extract";
 import { ingestMessage } from "@/lib/messages/ingest-message";
 import {
+  processInboundMessageForSage,
   processInboxItemForIngest,
   resolveVisibleTo,
 } from "@/lib/sage/process-inbox-item";
@@ -848,6 +849,7 @@ export async function POST(req: NextRequest) {
       subject
     );
     const attachments = Array.isArray(body.Attachments) ? body.Attachments : [];
+    let createdMessageId: string | null = null;
 
     if (conversationId) {
       try {
@@ -862,6 +864,7 @@ export async function POST(req: NextRequest) {
         console.log(
           `[msg-ingest] message_id=${ingested.message_id} created=${ingested.created} delivery_status=${ingested.delivery_status}`
         );
+        if (ingested.created) createdMessageId = ingested.message_id;
       } catch (err) {
         console.error(
           "[msg-ingest]",
@@ -1015,9 +1018,17 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    if (insertedInboxIds.length > 0) {
+    if (insertedInboxIds.length > 0 || createdMessageId) {
+      const messageIdForSage = createdMessageId;
       waitUntil(
         (async () => {
+          if (messageIdForSage) {
+            try {
+              await processInboundMessageForSage(messageIdForSage);
+            } catch (e) {
+              console.error("[msg-sage]", e);
+            }
+          }
           for (const inboxItemId of insertedInboxIds) {
             await processInboxItemForIngest(inboxItemId);
           }

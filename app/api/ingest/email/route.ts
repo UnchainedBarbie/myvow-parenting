@@ -3,6 +3,7 @@ import { waitUntil } from "@vercel/functions";
 import { getServiceRoleClient } from "@/lib/supabase/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { extractPdfText } from "@/lib/pdf-extract";
+import { ingestMessage } from "@/lib/messages/ingest-message";
 import {
   processInboxItemForIngest,
   resolveVisibleTo,
@@ -635,7 +636,7 @@ async function resolveOrCreateConversation(
   thread: ExtractedPostmarkThread,
   from: string | null,
   subject: string
-): Promise<void> {
+): Promise<string | null> {
   try {
     const admin = getServiceRoleClient();
     const candidates = threadIdCandidates(thread);
@@ -651,14 +652,14 @@ async function resolveOrCreateConversation(
 
       if (threadErr) {
         console.error(`[conv-match] step=thread error=${threadErr.message}`);
-        return;
+        return null;
       }
 
       const threadRow = (byThread ?? [])[0] as ConversationStampRow | undefined;
       if (threadRow?.id) {
         await stampMatchedConversation(admin, threadRow, thread, from);
         logConvMatch("thread", threadRow.id, false);
-        return;
+        return threadRow.id;
       }
 
       const { data: byMessage, error: msgErr } = await admin
@@ -672,7 +673,7 @@ async function resolveOrCreateConversation(
 
       if (msgErr) {
         console.error(`[conv-match] step=thread error=${msgErr.message}`);
-        return;
+        return null;
       }
 
       const messageConversationId = (
@@ -688,7 +689,7 @@ async function resolveOrCreateConversation(
           .maybeSingle();
         if (convErr) {
           console.error(`[conv-match] step=thread error=${convErr.message}`);
-          return;
+          return null;
         }
         if (conv?.id) {
           await stampMatchedConversation(
@@ -698,7 +699,7 @@ async function resolveOrCreateConversation(
             from
           );
           logConvMatch("thread", conv.id as string, false);
-          return;
+          return conv.id as string;
         }
       }
     }
@@ -712,7 +713,7 @@ async function resolveOrCreateConversation(
         .order("updated_at", { ascending: false });
       if (subjErr) {
         console.error(`[conv-match] step=subject error=${subjErr.message}`);
-        return;
+        return null;
       }
       const hit = (
         (convs ?? []) as {
@@ -725,7 +726,7 @@ async function resolveOrCreateConversation(
       if (hit) {
         await stampMatchedConversation(admin, hit, thread, from);
         logConvMatch("subject", hit.id, false);
-        return;
+        return hit.id;
       }
     }
 
@@ -736,7 +737,7 @@ async function resolveOrCreateConversation(
       console.error(
         `[conv-match] step=create conversation_id=none created=false error=${visibleTo.error}`
       );
-      return;
+      return null;
     }
 
     const { data: created, error: createErr } = await admin
@@ -758,12 +759,15 @@ async function resolveOrCreateConversation(
       console.error(
         `[conv-match] step=create conversation_id=none created=false error=${createErr?.message ?? "insert failed"}`
       );
-      return;
+      return null;
     }
-    logConvMatch("create", (created as { id: string }).id, true);
+    const createdId = (created as { id: string }).id;
+    logConvMatch("create", createdId, true);
+    return createdId;
   } catch (e) {
     const message = e instanceof Error ? e.message : "resolveOrCreateConversation failed";
     console.error(`[conv-match] error=${message}`);
+    return null;
   }
 }
 
@@ -837,8 +841,36 @@ export async function POST(req: NextRequest) {
     }
 
     const caseId = caseRow.id as string;
-    await resolveOrCreateConversation(caseId, extracted, fromEmail, subject);
+    const conversationId = await resolveOrCreateConversation(
+      caseId,
+      extracted,
+      fromEmail,
+      subject
+    );
     const attachments = Array.isArray(body.Attachments) ? body.Attachments : [];
+
+    if (conversationId) {
+      try {
+        const ingested = await ingestMessage({
+          case_id: caseId,
+          original_content: extracted.bodyText,
+          conversation_id: conversationId,
+          sender_external_email: fromEmail,
+          email_message_id: extracted.messageId,
+          has_attachments: attachments.length > 0,
+        });
+        console.log(
+          `[msg-ingest] message_id=${ingested.message_id} created=${ingested.created} delivery_status=${ingested.delivery_status}`
+        );
+      } catch (err) {
+        console.error(
+          "[msg-ingest]",
+          err instanceof Error ? err.message : err
+        );
+      }
+    } else {
+      console.error("[msg-ingest] skipped: no conversation");
+    }
 
     await ensureInboxBucket(admin);
 

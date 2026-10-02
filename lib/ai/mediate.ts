@@ -61,7 +61,7 @@ export async function rewriteOutboundIntent(intent: string): Promise<string> {
 
 /**
  * Process incoming message: classify, rewrite, and return flags.
- * Used by /api/messages/ingest and full mediation pipeline.
+ * Used by ingestMessage and the full mediation pipeline.
  */
 export async function mediateIncomingMessage(
   rawContent: string,

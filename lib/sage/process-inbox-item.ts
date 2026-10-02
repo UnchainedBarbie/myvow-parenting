@@ -560,7 +560,7 @@ export async function processInboundMessageForSage(messageId: string): Promise<v
           session_type: "private",
           conversation_id: conversation.id,
           title,
-          category: conversation.topic,
+          category: "general",
         })
         .select("id")
         .single();

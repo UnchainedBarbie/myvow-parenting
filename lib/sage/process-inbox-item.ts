@@ -613,6 +613,27 @@ export async function processInboundMessageForSage(messageId: string): Promise<v
     });
 
     if (!needsAttention(processed.plan)) {
+      const intent = processed.interpretation.intent;
+      const plan = processed.plan;
+      console.log(
+        "[msg-sage]",
+        "status=",
+        plan.status,
+        "reasoning=",
+        plan.reasoning,
+        "proposals=",
+        plan.proposals.map((p) => p.type).join(","),
+        "item_type=",
+        intent.item_type,
+        "action_required=",
+        intent.action_required,
+        "action_type=",
+        intent.action_type,
+        "domain=",
+        intent.domain,
+        "confidence=",
+        intent.confidence
+      );
       logMsgSage(messageId, "skipped=no_attention");
       return;
     }

@@ -309,7 +309,12 @@ function parseInterpretation(raw: string): SageInterpretation | null {
     const cleaned = raw.replace(/^```json?\s*|\s*```$/g, "").trim();
     parsed = JSON.parse(cleaned) as Record<string, unknown>;
   } catch (e) {
-    console.error("[sage/understanding] JSON parse failed:", e);
+    console.error(
+      "[sage/understanding] JSON parse failed:",
+      e,
+      "raw=",
+      raw.slice(0, 500)
+    );
     return null;
   }
 

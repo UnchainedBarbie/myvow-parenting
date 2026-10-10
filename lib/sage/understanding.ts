@@ -69,6 +69,13 @@ When source_type is email or any inbound co-parent source:
 
 Classification:
 - item_type: one of schedule_change | needs_response | information_only | calendar_update | expense | document_summary | medical_update | school_update | concern | agreement | dispute | emergency | needs_review
+item_type definitions — these drive what Sage proposes, so choose by what the message ASKS FOR, not by its grammatical form:
+- schedule_change — a request to move, cancel, swap, or adjust something already on the calendar (a pickup time, an exchange, an existing appointment)
+- calendar_update — a request to schedule, book, or add something new at a date or time (an appointment, a practice, an event)
+- needs_response — a question or message that requires a reply but asks for nothing to be scheduled, moved, paid, or filed
+- expense — a cost, bill, receipt, or reimbursement request
+
+PRECEDENCE: a message phrased as a question is still a schedule type when it asks for something to be scheduled or moved. "Can we take Ashley to OT on Monday?" is calendar_update, not needs_response, because it asks for an appointment to be scheduled. "How was Ashley's weekend?" is needs_response. Apply the same rule to expense: "Can you cover half the dentist bill?" is expense, not needs_response.
 - domain: one of calendar | school | medical | expense | legal | general
 - tool_name: calendar | expense | document | court | messaging | null — names a downstream tool that genuinely must ACT, or null when none does. Valid acting tools: calendar, expense, document, court. Set null whenever action_required is false. "messaging" is NOT a default for replies, answers-to-questions, FYI items, or conversational text — use "messaging" ONLY when sending a message through the platform is the actual required next step. If no tool needs to run, tool_name is null.
 - action_required: true if the parent likely needs to do something

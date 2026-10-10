@@ -18,7 +18,7 @@ const SAGE_ITEM_SELECT =
 
 const JOURNAL_SELECT_BASE =
   "id, user_id, role, content, created_at, session_id";
-const JOURNAL_SELECT = `${JOURNAL_SELECT_BASE}, sage_item_id`;
+const JOURNAL_SELECT = `${JOURNAL_SELECT_BASE}, sage_item_id, source_message_id`;
 
 function missingSageItemIdColumn(error: { message?: string } | null): boolean {
   return !!error?.message && /sage_item_id/i.test(error.message);
@@ -35,6 +35,8 @@ type SageMessageRow = {
   created_at: string;
   session_id?: string | null;
   sage_item_id?: string | null;
+  source_message_id?: string | null;
+  source_conversation_id?: string | null;
   sage_item?: unknown | null;
 };
 
@@ -171,6 +173,9 @@ export async function GET(request: NextRequest) {
     };
 
     let { data, error } = await loadJournal(JOURNAL_SELECT);
+    if (error && /source_message_id/i.test(error.message ?? "")) {
+      ({ data, error } = await loadJournal(`${JOURNAL_SELECT_BASE}, sage_item_id`));
+    }
     if (error && missingSageItemIdColumn(error)) {
       ({ data, error } = await loadJournal(JOURNAL_SELECT_BASE));
     }
@@ -218,6 +223,26 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    const sourceMessageIds = [
+      ...new Set(
+        rows
+          .map((m) => m.source_message_id)
+          .filter((id): id is string => typeof id === "string" && id.length > 0)
+      ),
+    ];
+    const conversationByMessageId = new Map<string, string>();
+    if (sourceMessageIds.length > 0) {
+      const { data: sourceMessages } = await admin
+        .from("messages")
+        .select("id, conversation_id")
+        .in("id", sourceMessageIds);
+      for (const row of sourceMessages ?? []) {
+        const id = (row as { id?: string }).id;
+        const conversationId = (row as { conversation_id?: string | null }).conversation_id;
+        if (id && conversationId) conversationByMessageId.set(id, conversationId);
+      }
+    }
+
     const messages: SageMessageRow[] = [];
     let lastUserId: string | null = null;
     for (const m of rows) {
@@ -227,7 +252,14 @@ export async function GET(request: NextRequest) {
         (m.role === "sage" && lastUserId
           ? itemsBySourceId.get(lastUserId) ?? null
           : null);
-      messages.push({ ...m, sage_item: linked ?? null });
+      const sourceConversationId = m.source_message_id
+        ? conversationByMessageId.get(m.source_message_id) ?? null
+        : null;
+      messages.push({
+        ...m,
+        sage_item: linked ?? null,
+        source_conversation_id: sourceConversationId,
+      });
     }
 
     const { data: membership } = await admin

@@ -406,12 +406,10 @@ function needsAttention(plan: Plan): boolean {
   return plan.proposals.some((p) => p.type !== "note_only");
 }
 
-function narrationFor(plan: Plan, summary: string, conversationId: string): string {
+function narrationFor(plan: Plan, summary: string): string {
   const reply = plan.proposals.find((p) => p.type === "reply_coparent")?.draft?.trim();
   const ask = plan.proposals.find((p) => p.type === "ask_clarification")?.draft?.trim();
-  const lead =
-    reply || ask || summary.trim() || "Co-Parent sent something that needs a look.";
-  return `${lead}\n\n/messages?conversation_id=${conversationId}`;
+  return reply || ask || summary.trim() || "Co-Parent sent something that needs a look.";
 }
 
 function logMsgSage(messageId: string, detail: string): void {
@@ -640,7 +638,7 @@ export async function processInboundMessageForSage(messageId: string): Promise<v
     }
 
     const sageItemId = (sageRow as { id: string }).id;
-    const content = narrationFor(itemPlan, intent.summary, conversation.id);
+    const content = narrationFor(itemPlan, intent.summary);
     const { error: journalErr } = await admin.from("sage_journal_messages").insert({
       user_id: visibleTo,
       role: "sage",

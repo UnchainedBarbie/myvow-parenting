@@ -451,7 +451,10 @@ async function loadMessagePdfAttachments(
   const ids = (links ?? [])
     .map((row) => (row as { document_id?: string }).document_id)
     .filter((id): id is string => typeof id === "string" && id.length > 0);
-  if (ids.length === 0) return [];
+  if (ids.length === 0) {
+    console.log(`[msg-sage] message_documents empty message_id=${messageId}`);
+    return [];
+  }
 
   const { data: docs, error: docErr } = await admin
     .from("documents")
@@ -462,19 +465,37 @@ async function loadMessagePdfAttachments(
     return [];
   }
 
+  const docRows = docs ?? [];
+  if (docRows.length === 0) {
+    console.log(`[msg-sage] documents empty ids=${ids.join(",")}`);
+    return [];
+  }
+
   const result: { filename: string; text: string }[] = [];
-  for (const row of docs ?? []) {
+  for (const row of docRows) {
     const doc = row as {
+      id?: string | null;
       file_name?: string | null;
       storage_path?: string | null;
       mime_type?: string | null;
     };
+    const documentId = (doc.id ?? "").trim() || "none";
     const filename = (doc.file_name ?? "").trim();
     const filePath = (doc.storage_path ?? "").trim();
     const mime = (doc.mime_type ?? "").trim().toLowerCase();
     const isPdf =
       mime === PDF_TYPE || filename.toLowerCase().endsWith(".pdf");
-    if (!filename || !filePath || !isPdf) continue;
+    if (!filename || !filePath || !isPdf) {
+      const failed = [
+        !filename ? "missing_filename" : "",
+        !filePath ? "missing_storage_path" : "",
+        !isPdf ? "not_pdf" : "",
+      ].filter(Boolean);
+      console.log(
+        `[msg-sage] attachment skipped document_id=${documentId} reason=${failed.join(",")}`
+      );
+      continue;
+    }
 
     try {
       const { data, error } = await admin.storage
@@ -489,8 +510,16 @@ async function loadMessagePdfAttachments(
       }
       const buf = Buffer.from(await data.arrayBuffer());
       const extracted = await extractPdfText(buf);
-      if (extracted.trim().length > 0) {
-        result.push({ filename, text: extracted.trim() });
+      const extractedText = extracted.trim();
+      if (extractedText.length > 0) {
+        result.push({ filename, text: extractedText });
+        console.log(
+          `[msg-sage] attachment extracted document_id=${documentId} file=${filename} chars=${extractedText.length}`
+        );
+      } else {
+        console.log(
+          `[msg-sage] attachment empty text document_id=${documentId} file=${filename} bytes=${buf.length}`
+        );
       }
     } catch (e) {
       console.error("[msg-sage] attachment PDF extract failed:", e);

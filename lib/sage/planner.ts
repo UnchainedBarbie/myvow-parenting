@@ -282,6 +282,28 @@ export async function plan(ctx: PlanContext): Promise<Plan> {
     ctx.resolved_dates.some((d) => d.status === "needs_clarification") ||
     ctx.unresolved_children.length > 0;
 
+  // Inbound item Understanding could not classify confidently.
+  if (ctx.item_type === "needs_review" && !userCommand(ctx)) {
+    if (ctx.has_attachments) {
+      return {
+        status: "ready",
+        proposals: [proposal("log_document", templateReviewDocument(ctx), null)],
+        reasoning:
+          "Needs review and a document arrived — propose filing it so a person can look.",
+      };
+    }
+    const replyDraft = await draftWithLlm(
+      "reply_coparent",
+      ctx,
+      fallbackReply(ctx)
+    );
+    return {
+      status: "ready",
+      proposals: [proposal("reply_coparent", replyDraft, null)],
+      reasoning: "Needs review — propose a reply so a person can look.",
+    };
+  }
+
   // 2. Informational → no_action
   if (isInformational(ctx)) {
     return {
@@ -400,28 +422,6 @@ export async function plan(ctx: PlanContext): Promise<Plan> {
       status: "ready",
       proposals,
       reasoning: "Expense item — propose logging and a brief acknowledgement.",
-    };
-  }
-
-  // Inbound item Understanding could not classify confidently.
-  if (ctx.item_type === "needs_review" && !userCommand(ctx)) {
-    if (ctx.has_attachments) {
-      return {
-        status: "ready",
-        proposals: [proposal("log_document", templateReviewDocument(ctx), null)],
-        reasoning:
-          "Needs review and a document arrived — propose filing it so a person can look.",
-      };
-    }
-    const replyDraft = await draftWithLlm(
-      "reply_coparent",
-      ctx,
-      fallbackReply(ctx)
-    );
-    return {
-      status: "ready",
-      proposals: [proposal("reply_coparent", replyDraft, null)],
-      reasoning: "Needs review — propose a reply so a person can look.",
     };
   }
 

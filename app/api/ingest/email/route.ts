@@ -392,9 +392,119 @@ export async function POST(req: NextRequest) {
       subject
     );
     const attachments = Array.isArray(body.Attachments) ? body.Attachments : [];
+    const createdDocuments: {
+      id: string;
+      storagePath: string;
+      filename: string;
+    }[] = [];
     let createdMessageId: string | null = null;
 
-    if (conversationId) {
+    if (!conversationId) {
+      console.error("[msg-ingest] skipped: no conversation");
+      if (attachments.length > 0) {
+        console.log("[ingest-attach] skipped no conversation");
+      }
+    } else {
+      let recipientUserId: string | null = null;
+      if (attachments.length > 0) {
+        const visibleTo = await resolveVisibleTo(caseId);
+        if (typeof visibleTo !== "string") {
+          console.error(
+            `[ingest-attach] skipped no recipient error=${visibleTo.error}`
+          );
+        } else {
+          recipientUserId = visibleTo;
+        }
+      }
+
+      if (recipientUserId) {
+        const usedPaths = new Set<string>();
+        const description = subject.trim() || "";
+        for (const att of attachments) {
+          const filename = (att.Name ?? "attachment").toString().slice(0, 255);
+          const contentType = (att.ContentType ?? "application/octet-stream").toString();
+
+          if (!ALLOWED_ATTACHMENT_TYPES.includes(contentType)) {
+            console.log(
+              `[ingest-attach] skipped type=${contentType} file=${filename}`
+            );
+            continue;
+          }
+
+          if (!att.Content || typeof att.Content !== "string") {
+            console.error(`[ingest-attach] no content file=${filename}`);
+            continue;
+          }
+
+          let buf: Buffer;
+          try {
+            buf = Buffer.from(att.Content, "base64");
+          } catch (e) {
+            console.error("[ingest-attach] failed to decode base64:", e);
+            continue;
+          }
+
+          if (buf.length > MAX_ATTACHMENT_BYTES) {
+            console.error(`[ingest-attach] too large file=${filename}`);
+            continue;
+          }
+
+          try {
+            const safeName = filename.replace(/[^a-zA-Z0-9.-]/g, "_");
+            let timestamp = Date.now();
+            let storagePath = `${caseId}/${recipientUserId}/${timestamp}-${safeName}`;
+            while (usedPaths.has(storagePath)) {
+              timestamp += 1;
+              storagePath = `${caseId}/${recipientUserId}/${timestamp}-${safeName}`;
+            }
+            usedPaths.add(storagePath);
+
+            const { error: uploadError } = await admin.storage
+              .from(DOCUMENTS_BUCKET)
+              .upload(storagePath, buf, { contentType, upsert: false });
+            if (uploadError) {
+              console.error(
+                `[ingest-attach] upload failed file=${filename}`,
+                uploadError
+              );
+              continue;
+            }
+
+            const { data: doc, error: docErr } = await admin
+              .from("documents")
+              .insert({
+                case_id: caseId,
+                uploaded_by: recipientUserId,
+                title: titleFromFilename(filename),
+                file_name: filename,
+                file_size_bytes: buf.length,
+                mime_type: contentType,
+                storage_path: storagePath,
+                category: "other",
+                description: description || filename,
+                content_hash: "pending",
+                visibility: "parents_only",
+                ai_processed: false,
+                status: "pending",
+              })
+              .select("id")
+              .single();
+            if (docErr || !doc) {
+              console.error(
+                `[ingest-attach] documents insert failed file=${filename}`,
+                docErr?.message ?? "insert failed"
+              );
+              continue;
+            }
+
+            const documentId = (doc as { id: string }).id;
+            createdDocuments.push({ id: documentId, storagePath, filename });
+          } catch (e) {
+            console.error("[ingest-attach] error:", e);
+          }
+        }
+      }
+
       try {
         const ingested = await ingestMessage({
           case_id: caseId,
@@ -402,7 +512,7 @@ export async function POST(req: NextRequest) {
           conversation_id: conversationId,
           sender_external_email: fromEmail,
           email_message_id: extracted.messageId,
-          has_attachments: false,
+          has_attachments: createdDocuments.length > 0,
         });
         console.log(
           `[msg-ingest] message_id=${ingested.message_id} created=${ingested.created} delivery_status=${ingested.delivery_status}`
@@ -414,154 +524,43 @@ export async function POST(req: NextRequest) {
           err instanceof Error ? err.message : err
         );
       }
-    } else {
-      console.error("[msg-ingest] skipped: no conversation");
-    }
 
-    const prepared: { filename: string; contentType: string; buf: Buffer }[] = [];
-    for (const att of attachments) {
-      const filename = (att.Name ?? "attachment").toString().slice(0, 255);
-      const contentType = (att.ContentType ?? "application/octet-stream").toString();
-
-      if (!ALLOWED_ATTACHMENT_TYPES.includes(contentType)) {
-        console.log(
-          `[ingest-attach] skipped type=${contentType} file=${filename}`
-        );
-        continue;
-      }
-
-      if (!att.Content || typeof att.Content !== "string") {
-        console.error(`[ingest-attach] no content file=${filename}`);
-        continue;
-      }
-
-      let buf: Buffer;
-      try {
-        buf = Buffer.from(att.Content, "base64");
-      } catch (e) {
-        console.error("[ingest-attach] failed to decode base64:", e);
-        continue;
-      }
-
-      if (buf.length > MAX_ATTACHMENT_BYTES) {
-        console.error(`[ingest-attach] too large file=${filename}`);
-        continue;
-      }
-
-      prepared.push({ filename, contentType, buf });
-    }
-
-    let uploadedCount = 0;
-    if (createdMessageId && prepared.length > 0) {
-      const visibleTo = await resolveVisibleTo(caseId);
-      if (typeof visibleTo !== "string") {
+      if (createdDocuments.length > 0 && !createdMessageId) {
         console.error(
-          `[ingest-attach] skipped no recipient error=${visibleTo.error}`
+          `[ingest-attach] orphaned document_ids=${createdDocuments
+            .map((doc) => doc.id)
+            .join(",")}`
         );
-      } else {
-        const usedPaths = new Set<string>();
-        const description = subject.trim() || "";
-        for (const item of prepared) {
-          try {
-            const safeName = item.filename.replace(/[^a-zA-Z0-9.-]/g, "_");
-            let timestamp = Date.now();
-            let storagePath = `${caseId}/${visibleTo}/${timestamp}-${safeName}`;
-            while (usedPaths.has(storagePath)) {
-              timestamp += 1;
-              storagePath = `${caseId}/${visibleTo}/${timestamp}-${safeName}`;
-            }
-            usedPaths.add(storagePath);
+      }
 
-            const { error: uploadError } = await admin.storage
-              .from(DOCUMENTS_BUCKET)
-              .upload(storagePath, item.buf, {
-                contentType: item.contentType,
-                upsert: false,
-              });
-            if (uploadError) {
-              console.error(
-                `[ingest-attach] upload failed file=${item.filename}`,
-                uploadError
-              );
-              continue;
-            }
-
-            const { data: doc, error: docErr } = await admin
-              .from("documents")
-              .insert({
-                case_id: caseId,
-                uploaded_by: visibleTo,
-                title: titleFromFilename(item.filename),
-                file_name: item.filename,
-                file_size_bytes: item.buf.length,
-                mime_type: item.contentType,
-                storage_path: storagePath,
-                category: "other",
-                description: description || item.filename,
-                content_hash: "pending",
-                visibility: "parents_only",
-                ai_processed: false,
-                status: "pending",
-              })
-              .select("id")
-              .single();
-            if (docErr || !doc) {
-              console.error(
-                `[ingest-attach] documents insert failed file=${item.filename}`,
-                docErr?.message ?? "insert failed"
-              );
-              continue;
-            }
-
-            const documentId = (doc as { id: string }).id;
-            const { error: linkErr } = await admin.from("message_documents").insert({
-              message_id: createdMessageId,
-              document_id: documentId,
-            });
-            if (linkErr) {
-              console.error(
-                `[ingest-attach] message_documents insert failed document_id=${documentId}`,
-                linkErr.message
-              );
-              continue;
-            }
-
-            uploadedCount += 1;
-            console.log(
-              `[ingest-attach] document_id=${documentId} path=${storagePath} file=${item.filename}`
+      if (createdMessageId) {
+        for (const doc of createdDocuments) {
+          const { error: linkErr } = await admin.from("message_documents").insert({
+            message_id: createdMessageId,
+            document_id: doc.id,
+          });
+          if (linkErr) {
+            console.error(
+              `[ingest-attach] message_documents insert failed document_id=${doc.id}`,
+              linkErr.message
             );
-          } catch (e) {
-            console.error("[ingest-attach] error:", e);
+            continue;
           }
+          console.log(
+            `[ingest-attach] document_id=${doc.id} path=${doc.storagePath} file=${doc.filename}`
+          );
         }
-      }
-    } else if (!createdMessageId && prepared.length > 0) {
-      console.log("[ingest-attach] skipped no new message");
-    }
 
-    if (createdMessageId && uploadedCount > 0) {
-      const { error: flagErr } = await admin
-        .from("messages")
-        .update({ has_attachments: true })
-        .eq("id", createdMessageId);
-      if (flagErr) {
-        console.error(
-          "[ingest-attach] has_attachments update failed:",
-          flagErr.message
+        waitUntil(
+          (async () => {
+            try {
+              await processInboundMessageForSage(createdMessageId);
+            } catch (e) {
+              console.error("[msg-sage]", e);
+            }
+          })()
         );
       }
-    }
-
-    if (createdMessageId) {
-      waitUntil(
-        (async () => {
-          try {
-            await processInboundMessageForSage(createdMessageId);
-          } catch (e) {
-            console.error("[msg-sage]", e);
-          }
-        })()
-      );
     }
 
     return NextResponse.json({ ok: true });

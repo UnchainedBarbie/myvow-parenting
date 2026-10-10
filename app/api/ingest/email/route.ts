@@ -100,6 +100,17 @@ function extractPostmarkThread(payload: PostmarkPayload): ExtractedPostmarkThrea
   return { messageId, messageIdSource, inReplyTo, references, bodyText };
 }
 
+async function ensureInboxBucket(admin: ReturnType<typeof getServiceRoleClient>) {
+  const bucketList = await admin.storage.listBuckets();
+  const bucketExists = bucketList?.data?.some((b: { name: string }) => b.name === BUCKET);
+  if (!bucketExists) {
+    try {
+      await admin.storage.createBucket(BUCKET, { public: false });
+    } catch {
+      // bucket may already exist
+    }
+  }
+}
 
 const LEADING_REPLY_PREFIX = /^(?:re|fw|fwd)\s*:\s*/i;
 

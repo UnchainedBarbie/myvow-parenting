@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { waitUntil } from "@vercel/functions";
 import { getServiceRoleClient } from "@/lib/supabase/server";
 import { ingestMessage } from "@/lib/messages/ingest-message";
+import { resolveInboundSender } from "@/lib/messages/resolve-inbound-sender";
 import {
   processInboundMessageForSage,
   resolveVisibleTo,
@@ -370,6 +371,15 @@ export async function POST(req: NextRequest) {
     }
 
     const caseId = caseRow.id as string;
+    try {
+      const sender = await resolveInboundSender(caseId, body.From);
+      console.log(
+        `[sender-id] from=${sender.fromEmail ?? "null"} matched=${sender.isKnownCaseMember} case_member_id=${sender.caseMemberId ?? "null"} user_id=${sender.userId ?? "null"}`
+      );
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "lookup failed";
+      console.error(`[sender-id] lookup failed: ${message}`);
+    }
     const conversationId = await resolveOrCreateConversation(
       caseId,
       extracted,

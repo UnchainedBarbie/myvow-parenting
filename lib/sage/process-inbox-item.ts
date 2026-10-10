@@ -438,14 +438,17 @@ async function findActiveConversationSession(
 async function loadMessagePdfAttachments(
   admin: SupabaseClient,
   messageId: string
-): Promise<{ filename: string; text: string }[]> {
+): Promise<{
+  extracted: { filename: string; text: string }[];
+  unreadable: string[];
+}> {
   const { data: links, error: linkErr } = await admin
     .from("message_documents")
     .select("document_id")
     .eq("message_id", messageId);
   if (linkErr) {
     console.error("[msg-sage] message_documents load failed:", linkErr.message);
-    return [];
+    return { extracted: [], unreadable: [] };
   }
 
   const ids = (links ?? [])
@@ -453,7 +456,7 @@ async function loadMessagePdfAttachments(
     .filter((id): id is string => typeof id === "string" && id.length > 0);
   if (ids.length === 0) {
     console.log(`[msg-sage] message_documents empty message_id=${messageId}`);
-    return [];
+    return { extracted: [], unreadable: [] };
   }
 
   const { data: docs, error: docErr } = await admin
@@ -462,16 +465,17 @@ async function loadMessagePdfAttachments(
     .in("id", ids);
   if (docErr) {
     console.error("[msg-sage] documents load failed:", docErr.message);
-    return [];
+    return { extracted: [], unreadable: [] };
   }
 
   const docRows = docs ?? [];
   if (docRows.length === 0) {
     console.log(`[msg-sage] documents empty ids=${ids.join(",")}`);
-    return [];
+    return { extracted: [], unreadable: [] };
   }
 
-  const result: { filename: string; text: string }[] = [];
+  const extracted: { filename: string; text: string }[] = [];
+  const unreadable: string[] = [];
   for (const row of docRows) {
     const doc = row as {
       id?: string | null;
@@ -506,27 +510,29 @@ async function loadMessagePdfAttachments(
           "[msg-sage] attachment PDF download failed:",
           error?.message ?? filename
         );
+        unreadable.push(filename);
         continue;
       }
       const buf = Buffer.from(await data.arrayBuffer());
-      const extracted = await extractPdfText(buf);
-      const extractedText = extracted.trim();
+      const extractedText = (await extractPdfText(buf)).trim();
       if (extractedText.length > 0) {
-        result.push({ filename, text: extractedText });
+        extracted.push({ filename, text: extractedText });
         console.log(
           `[msg-sage] attachment extracted document_id=${documentId} file=${filename} chars=${extractedText.length}`
         );
       } else {
+        unreadable.push(filename);
         console.log(
           `[msg-sage] attachment empty text document_id=${documentId} file=${filename} bytes=${buf.length}`
         );
       }
     } catch (e) {
+      unreadable.push(filename);
       console.error("[msg-sage] attachment PDF extract failed:", e);
     }
   }
 
-  return result;
+  return { extracted, unreadable };
 }
 
 /**
@@ -587,11 +593,15 @@ export async function processInboundMessageForSage(messageId: string): Promise<v
     }
 
     const bodyText = (message.original_content ?? "").trim();
-    const pdfAttachments = await loadMessagePdfAttachments(admin, message.id);
+    const { extracted: pdfAttachments, unreadable } =
+      await loadMessagePdfAttachments(admin, message.id);
     const parts: string[] = [];
     if (bodyText) parts.push(bodyText);
     for (const attachment of pdfAttachments) {
       parts.push(formatAttachmentBlock(attachment));
+    }
+    for (const filename of unreadable) {
+      parts.push(`[Attachment: ${filename} — no readable text]`);
     }
     const text = parts.join("\n\n");
     if (!text) {

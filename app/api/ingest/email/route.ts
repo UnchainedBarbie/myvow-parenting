@@ -11,7 +11,7 @@ export const runtime = "nodejs";
 /** Sage runs after the response. */
 export const maxDuration = 60;
 
-const BUCKET = "inbox";
+const DOCUMENTS_BUCKET = "documents";
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024; // 10MB
 const ALLOWED_ATTACHMENT_TYPES = [
   "application/pdf",
@@ -100,16 +100,11 @@ function extractPostmarkThread(payload: PostmarkPayload): ExtractedPostmarkThrea
   return { messageId, messageIdSource, inReplyTo, references, bodyText };
 }
 
-async function ensureInboxBucket(admin: ReturnType<typeof getServiceRoleClient>) {
-  const bucketList = await admin.storage.listBuckets();
-  const bucketExists = bucketList?.data?.some((b: { name: string }) => b.name === BUCKET);
-  if (!bucketExists) {
-    try {
-      await admin.storage.createBucket(BUCKET, { public: false });
-    } catch {
-      // bucket may already exist
-    }
-  }
+function titleFromFilename(filename: string): string {
+  const base = filename.trim();
+  const dot = base.lastIndexOf(".");
+  const stem = dot > 0 ? base.slice(0, dot).trim() : base;
+  return stem || base || "attachment";
 }
 
 const LEADING_REPLY_PREFIX = /^(?:re|fw|fwd)\s*:\s*/i;
@@ -407,7 +402,7 @@ export async function POST(req: NextRequest) {
           conversation_id: conversationId,
           sender_external_email: fromEmail,
           email_message_id: extracted.messageId,
-          has_attachments: attachments.length > 0,
+          has_attachments: false,
         });
         console.log(
           `[msg-ingest] message_id=${ingested.message_id} created=${ingested.created} delivery_status=${ingested.delivery_status}`
@@ -423,53 +418,137 @@ export async function POST(req: NextRequest) {
       console.error("[msg-ingest] skipped: no conversation");
     }
 
-    await ensureInboxBucket(admin);
-
+    const prepared: { filename: string; contentType: string; buf: Buffer }[] = [];
     for (const att of attachments) {
+      const filename = (att.Name ?? "attachment").toString().slice(0, 255);
+      const contentType = (att.ContentType ?? "application/octet-stream").toString();
+
+      if (!ALLOWED_ATTACHMENT_TYPES.includes(contentType)) {
+        console.log(
+          `[ingest-attach] skipped type=${contentType} file=${filename}`
+        );
+        continue;
+      }
+
+      if (!att.Content || typeof att.Content !== "string") {
+        console.error(`[ingest-attach] no content file=${filename}`);
+        continue;
+      }
+
+      let buf: Buffer;
       try {
-        const filename = (att.Name ?? "attachment").toString().slice(0, 255);
-        const contentType = (att.ContentType ?? "application/octet-stream").toString();
-
-        if (!ALLOWED_ATTACHMENT_TYPES.includes(contentType)) {
-          console.log(
-            `[ingest-attach] skipped type=${contentType} file=${filename}`
-          );
-          continue;
-        }
-
-        if (!att.Content || typeof att.Content !== "string") {
-          console.error(`[ingest-attach] no content file=${filename}`);
-          continue;
-        }
-
-        let buf: Buffer;
-        try {
-          buf = Buffer.from(att.Content, "base64");
-        } catch (e) {
-          console.error("[ingest-attach] failed to decode base64:", e);
-          continue;
-        }
-
-        if (buf.length > MAX_ATTACHMENT_BYTES) {
-          console.error(`[ingest-attach] too large file=${filename}`);
-          continue;
-        }
-
-        const timestamp = Date.now();
-        const safeName = filename.replace(/[^a-zA-Z0-9.-]/g, "_");
-        const storagePath = `${caseId}/email/${timestamp}-${safeName}`;
-
-        const { error: uploadError } = await admin.storage
-          .from(BUCKET)
-          .upload(storagePath, buf, { contentType, upsert: false });
-        if (uploadError) {
-          console.error("[ingest-attach] upload failed:", uploadError);
-          continue;
-        }
-
-        console.log(`[ingest-attach] path=${storagePath} file=${filename}`);
+        buf = Buffer.from(att.Content, "base64");
       } catch (e) {
-        console.error("[ingest-attach] error:", e);
+        console.error("[ingest-attach] failed to decode base64:", e);
+        continue;
+      }
+
+      if (buf.length > MAX_ATTACHMENT_BYTES) {
+        console.error(`[ingest-attach] too large file=${filename}`);
+        continue;
+      }
+
+      prepared.push({ filename, contentType, buf });
+    }
+
+    let uploadedCount = 0;
+    if (createdMessageId && prepared.length > 0) {
+      const visibleTo = await resolveVisibleTo(caseId);
+      if (typeof visibleTo !== "string") {
+        console.error(
+          `[ingest-attach] skipped no recipient error=${visibleTo.error}`
+        );
+      } else {
+        const usedPaths = new Set<string>();
+        const description = subject.trim() || "";
+        for (const item of prepared) {
+          try {
+            const safeName = item.filename.replace(/[^a-zA-Z0-9.-]/g, "_");
+            let timestamp = Date.now();
+            let storagePath = `${caseId}/${visibleTo}/${timestamp}-${safeName}`;
+            while (usedPaths.has(storagePath)) {
+              timestamp += 1;
+              storagePath = `${caseId}/${visibleTo}/${timestamp}-${safeName}`;
+            }
+            usedPaths.add(storagePath);
+
+            const { error: uploadError } = await admin.storage
+              .from(DOCUMENTS_BUCKET)
+              .upload(storagePath, item.buf, {
+                contentType: item.contentType,
+                upsert: false,
+              });
+            if (uploadError) {
+              console.error(
+                `[ingest-attach] upload failed file=${item.filename}`,
+                uploadError
+              );
+              continue;
+            }
+
+            const { data: doc, error: docErr } = await admin
+              .from("documents")
+              .insert({
+                case_id: caseId,
+                uploaded_by: visibleTo,
+                title: titleFromFilename(item.filename),
+                file_name: item.filename,
+                file_size_bytes: item.buf.length,
+                mime_type: item.contentType,
+                storage_path: storagePath,
+                category: "other",
+                description: description || item.filename,
+                content_hash: "pending",
+                visibility: "parents_only",
+                ai_processed: false,
+                status: "pending",
+              })
+              .select("id")
+              .single();
+            if (docErr || !doc) {
+              console.error(
+                `[ingest-attach] documents insert failed file=${item.filename}`,
+                docErr?.message ?? "insert failed"
+              );
+              continue;
+            }
+
+            const documentId = (doc as { id: string }).id;
+            const { error: linkErr } = await admin.from("message_documents").insert({
+              message_id: createdMessageId,
+              document_id: documentId,
+            });
+            if (linkErr) {
+              console.error(
+                `[ingest-attach] message_documents insert failed document_id=${documentId}`,
+                linkErr.message
+              );
+              continue;
+            }
+
+            uploadedCount += 1;
+            console.log(
+              `[ingest-attach] document_id=${documentId} path=${storagePath} file=${item.filename}`
+            );
+          } catch (e) {
+            console.error("[ingest-attach] error:", e);
+          }
+        }
+      }
+    } else if (!createdMessageId && prepared.length > 0) {
+      console.log("[ingest-attach] skipped no new message");
+    }
+
+    if (createdMessageId && uploadedCount > 0) {
+      const { error: flagErr } = await admin
+        .from("messages")
+        .update({ has_attachments: true })
+        .eq("id", createdMessageId);
+      if (flagErr) {
+        console.error(
+          "[ingest-attach] has_attachments update failed:",
+          flagErr.message
+        );
       }
     }
 

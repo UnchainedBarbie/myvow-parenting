@@ -17,6 +17,7 @@ import type { Plan } from "@/lib/sage/planner";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 const INBOX_BUCKET = "inbox";
+const DOCUMENTS_BUCKET = "documents";
 const PDF_TYPE = "application/pdf";
 
 export type InboxItemRow = {
@@ -434,6 +435,71 @@ async function findActiveConversationSession(
   return { id };
 }
 
+async function loadMessagePdfAttachments(
+  admin: SupabaseClient,
+  messageId: string
+): Promise<{ filename: string; text: string }[]> {
+  const { data: links, error: linkErr } = await admin
+    .from("message_documents")
+    .select("document_id")
+    .eq("message_id", messageId);
+  if (linkErr) {
+    console.error("[msg-sage] message_documents load failed:", linkErr.message);
+    return [];
+  }
+
+  const ids = (links ?? [])
+    .map((row) => (row as { document_id?: string }).document_id)
+    .filter((id): id is string => typeof id === "string" && id.length > 0);
+  if (ids.length === 0) return [];
+
+  const { data: docs, error: docErr } = await admin
+    .from("documents")
+    .select("id, file_name, storage_path, mime_type")
+    .in("id", ids);
+  if (docErr) {
+    console.error("[msg-sage] documents load failed:", docErr.message);
+    return [];
+  }
+
+  const result: { filename: string; text: string }[] = [];
+  for (const row of docs ?? []) {
+    const doc = row as {
+      file_name?: string | null;
+      storage_path?: string | null;
+      mime_type?: string | null;
+    };
+    const filename = (doc.file_name ?? "").trim();
+    const filePath = (doc.storage_path ?? "").trim();
+    const mime = (doc.mime_type ?? "").trim().toLowerCase();
+    const isPdf =
+      mime === PDF_TYPE || filename.toLowerCase().endsWith(".pdf");
+    if (!filename || !filePath || !isPdf) continue;
+
+    try {
+      const { data, error } = await admin.storage
+        .from(DOCUMENTS_BUCKET)
+        .download(filePath);
+      if (error || !data) {
+        console.error(
+          "[msg-sage] attachment PDF download failed:",
+          error?.message ?? filename
+        );
+        continue;
+      }
+      const buf = Buffer.from(await data.arrayBuffer());
+      const extracted = await extractPdfText(buf);
+      if (extracted.trim().length > 0) {
+        result.push({ filename, text: extracted.trim() });
+      }
+    } catch (e) {
+      console.error("[msg-sage] attachment PDF extract failed:", e);
+    }
+  }
+
+  return result;
+}
+
 /**
  * Co-Parent inbound message → Sage. Propose only.
  * Does not write a role:'user' journal row.
@@ -491,7 +557,14 @@ export async function processInboundMessageForSage(messageId: string): Promise<v
       return;
     }
 
-    const text = (message.original_content ?? "").trim();
+    const bodyText = (message.original_content ?? "").trim();
+    const pdfAttachments = await loadMessagePdfAttachments(admin, message.id);
+    const parts: string[] = [];
+    if (bodyText) parts.push(bodyText);
+    for (const attachment of pdfAttachments) {
+      parts.push(formatAttachmentBlock(attachment));
+    }
+    const text = parts.join("\n\n");
     if (!text) {
       logMsgSage(messageId, "skipped=empty_body");
       return;
@@ -521,6 +594,7 @@ export async function processInboundMessageForSage(messageId: string): Promise<v
       timestamp: message.created_at ?? new Date().toISOString(),
       text,
       source: "message",
+      ...(pdfAttachments.length > 0 ? { attachments: pdfAttachments } : {}),
     };
     const observation = buildObservation(message.id, [rawItem]);
     const processed = await processObservation(observation, {

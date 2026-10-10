@@ -162,6 +162,7 @@ export async function processObservation(
     item_type: intent.item_type,
     domain: intent.domain,
     action_required: intent.action_required,
+    action_type: intent.action_type,
     summary: intent.summary,
     child_ids,
     unresolved_children,

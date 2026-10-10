@@ -13,6 +13,7 @@ export type PlanContext = {
   item_type: string;
   domain: string;
   action_required: boolean;
+  action_type?: string | null;
   summary: string;
   child_ids: string[];
   unresolved_children: string[];
@@ -392,6 +393,25 @@ export async function plan(ctx: PlanContext): Promise<Plan> {
       status: "ready",
       proposals,
       reasoning: "Expense item — propose logging and a brief acknowledgement.",
+    };
+  }
+
+  // Inbound message that needs a reply, and is not a schedule or expense item.
+  if (
+    !userCommand(ctx) &&
+    ctx.action_required &&
+    ctx.action_type === "respond"
+  ) {
+    const replyDraft = await draftWithLlm(
+      "reply_coparent",
+      ctx,
+      fallbackReply(ctx)
+    );
+    return {
+      status: "ready",
+      proposals: [proposal("reply_coparent", replyDraft, null)],
+      reasoning:
+        "Inbound message requires a response — propose a reply to Co-Parent.",
     };
   }
 

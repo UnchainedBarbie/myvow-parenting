@@ -21,6 +21,8 @@ export type PlanContext = {
   sender: string;
   /** Adapter source ("chat" | "email"). Chat = user command on own records. */
   source_type?: string;
+  /** True when the inbound message included at least one attachment. */
+  has_attachments?: boolean;
   /** Plan-driven co-parent share for expense items, if computed. */
   expense_allocation?: {
     other_parent_share: number | null;
@@ -102,6 +104,11 @@ function describeBlockers(ctx: PlanContext): string {
 function templateNote(ctx: PlanContext): string {
   const summary = ctx.summary.trim() || "an update from Co-Parent";
   return `Noted for awareness: ${summary}`;
+}
+
+function templateReviewDocument(ctx: PlanContext): string {
+  const summary = ctx.summary.trim() || "a document from Co-Parent";
+  return `A document came in that needs a look: ${summary}`;
 }
 
 function userCommand(ctx: PlanContext): boolean {
@@ -393,6 +400,28 @@ export async function plan(ctx: PlanContext): Promise<Plan> {
       status: "ready",
       proposals,
       reasoning: "Expense item — propose logging and a brief acknowledgement.",
+    };
+  }
+
+  // Inbound item Understanding could not classify confidently.
+  if (ctx.item_type === "needs_review" && !userCommand(ctx)) {
+    if (ctx.has_attachments) {
+      return {
+        status: "ready",
+        proposals: [proposal("log_document", templateReviewDocument(ctx), null)],
+        reasoning:
+          "Needs review and a document arrived — propose filing it so a person can look.",
+      };
+    }
+    const replyDraft = await draftWithLlm(
+      "reply_coparent",
+      ctx,
+      fallbackReply(ctx)
+    );
+    return {
+      status: "ready",
+      proposals: [proposal("reply_coparent", replyDraft, null)],
+      reasoning: "Needs review — propose a reply so a person can look.",
     };
   }
 

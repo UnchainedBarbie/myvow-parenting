@@ -158,12 +158,17 @@ export async function processObservation(
     }
   }
 
+  const hasAttachments =
+    observation.messages.some((m) => (m.attachments?.length ?? 0) > 0) ||
+    /\[Attachment:/i.test(observationText);
+
   const itemPlan = await plan({
     item_type: intent.item_type,
     domain: intent.domain,
     action_required: intent.action_required,
     action_type: intent.action_type,
     summary: intent.summary,
+    has_attachments: hasAttachments,
     child_ids,
     unresolved_children,
     resolved_dates: resolved_dates.map((d) => ({

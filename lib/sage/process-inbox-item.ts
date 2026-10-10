@@ -565,12 +565,6 @@ export async function processInboundMessageForSage(messageId: string): Promise<v
       parts.push(formatAttachmentBlock(attachment));
     }
     const text = parts.join("\n\n");
-    console.log(
-      "[msg-sage] attachments=",
-      pdfAttachments.length,
-      "textLength=",
-      text.length
-    );
     if (!text) {
       logMsgSage(messageId, "skipped=empty_body");
       return;

@@ -58,6 +58,11 @@ export type SageMessage = {
 const SAGE_PILL_CLASS =
   "rounded-full border border-[#7C8B6E] bg-transparent px-2.5 py-1 text-[11px] text-[#5B7A52] hover:bg-[#F2F5EF] transition-colors";
 
+/** Drop a stored `/messages?conversation_id=` line. The link under the bubble replaces it. */
+function narrationText(content: string): string {
+  return content.replace(/\n+\/messages\?conversation_id=\S+\s*$/, "").trimEnd();
+}
+
 const SAGE_ACTION_PILL =
   "inline-flex items-center gap-1.5 rounded-full border border-[#7C8B6E] bg-transparent px-2.5 py-1.5 text-[11px] text-[#5B7A52] hover:bg-[#F2F5EF] transition-colors";
 
@@ -915,7 +920,7 @@ export function SageClient({
                               : "bg-[#FDFBF7] text-foreground rounded-bl-sm border border-[#E8E4DC]"
                           )}
                         >
-                          <p className="whitespace-pre-wrap">{msg.content}</p>
+                          <p className="whitespace-pre-wrap">{narrationText(msg.content)}</p>
                           {!isUser &&
                             msg.source_message_id &&
                             msg.source_conversation_id && (

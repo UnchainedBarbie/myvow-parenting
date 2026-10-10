@@ -341,22 +341,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true });
     }
 
-    const raw = body as unknown as Record<string, unknown>;
     const extracted = extractPostmarkThread(body);
-    console.log("[postmark-raw] keys", Object.keys(raw));
-    console.log("[postmark-raw] Headers", raw.Headers ?? null);
-    console.log("[postmark-raw] extracted", {
-      messageId: extracted.messageId,
-      messageIdSource: extracted.messageIdSource,
-      inReplyTo: extracted.inReplyTo,
-      references: extracted.references,
-      bodyTextSource:
-        typeof body.StrippedTextReply === "string" &&
-        body.StrippedTextReply.trim().length > 0
-          ? "StrippedTextReply"
-          : "TextBody",
-      bodyTextLength: extracted.bodyText.length,
-    });
 
     const toAddress = extractEmailFromAddress(body.To);
     const fromEmail = extractEmailFromAddress(body.From);

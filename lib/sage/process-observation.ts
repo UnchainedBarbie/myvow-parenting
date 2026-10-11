@@ -8,10 +8,12 @@ import {
   formatObservationForUnderstanding,
   type Observation,
 } from "@/lib/sage/observation-builder";
+import { reconcileCalendarPlan } from "@/lib/sage/calendar-match";
 import { plan, type Plan } from "@/lib/sage/planner";
 import {
   rawForDateResolver,
   resolveChildren,
+  resolveDate,
   resolveDates,
   type DateResolution,
 } from "@/lib/sage/resolver";
@@ -104,11 +106,29 @@ export async function processObservation(
     .filter((r) => r.child_id === null)
     .map((r) => r.name);
 
+  const today = context.today ?? new Date();
   const resolved_dates = resolveDates(
     entities.dates.map((d) => ({ raw: rawForDateResolver(d) })),
-    context.today ?? new Date(),
-    context.timezone
+    today,
+    context.timezone,
+    observationText
   );
+  if (
+    !resolved_dates.some((d) => d.status === "resolved" && d.iso) &&
+    /\b(?:this|next)?(?:\s+coming)?\s*(?:sun|sunday|mon|monday|tue|tues|tuesday|wed|wednesday|thu|thur|thurs|thursday|fri|friday|sat|saturday)\b/i.test(
+      observationText
+    )
+  ) {
+    const fromText = resolveDate(
+      observationText,
+      today,
+      context.timezone,
+      observationText
+    );
+    if (fromText.status === "resolved" && fromText.iso) {
+      resolved_dates.push(fromText);
+    }
+  }
 
   const expense_category = inferExpenseCategoryFromText(
     categoryBlob,
@@ -162,7 +182,7 @@ export async function processObservation(
     observation.messages.some((m) => (m.attachments?.length ?? 0) > 0) ||
     /\[Attachment:/i.test(observationText);
 
-  const itemPlan = await plan({
+  const draftedPlan = await plan({
     item_type: intent.item_type,
     domain: intent.domain,
     action_required: intent.action_required,
@@ -179,6 +199,16 @@ export async function processObservation(
     sender: context.plan_sender ?? context.sender,
     source_type: context.source_type,
     expense_allocation,
+  });
+  const resolvedIso =
+    resolved_dates.find((d) => d.status === "resolved" && d.iso)?.iso ?? null;
+  const itemPlan = await reconcileCalendarPlan(draftedPlan, {
+    caseId: context.case_id,
+    timezone: context.timezone,
+    iso: resolvedIso,
+    childIds: child_ids,
+    summary: intent.summary,
+    corpus: observationText,
   });
 
   return {

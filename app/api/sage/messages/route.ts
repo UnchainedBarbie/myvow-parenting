@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { ClassifyPayload } from "@/lib/ai-classify";
 import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
+import { reconcileCalendarPlan } from "@/lib/sage/calendar-match";
 import { processChatMessage } from "@/lib/sage/chat";
 import { redraftMessage } from "@/lib/sage/planner";
 import {
@@ -153,7 +154,7 @@ async function persistProcessedPlan(opts: {
 type RevisableDraft = {
   itemId: string;
   summary: string;
-  proposalType: "reply_coparent" | "ask_clarification";
+  proposalType: "reply_coparent" | "ask_clarification" | "calendar_update";
   proposalIndex: number;
   currentDraft: string;
   sourceType: string | null;
@@ -170,10 +171,43 @@ function isNoteOnlyPlan(plan: {
   return proposals.length > 0 && proposals.every((p) => p.type === "note_only");
 }
 
-function revisionReply(proposalType: "reply_coparent" | "ask_clarification"): string {
+function revisionReply(
+  proposalType: "reply_coparent" | "ask_clarification" | "calendar_update"
+): string {
+  if (proposalType === "calendar_update") return "Updated that calendar suggestion.";
   return proposalType === "ask_clarification"
     ? "Added that to your question to Co-Parent."
     : "Added that to your reply to Co-Parent.";
+}
+
+function openCalendarProposal(raw: unknown): {
+  draft?: string;
+  revised_text?: string;
+  date?: string;
+} | null {
+  if (!raw || typeof raw !== "object") return null;
+  const proposal = raw as {
+    type?: string;
+    draft?: string;
+    revised_text?: string;
+    date?: string;
+    executed?: boolean;
+    approved?: boolean;
+    status?: string;
+  };
+  if (proposal.type !== "calendar_update") return null;
+  if (
+    proposal.executed === true ||
+    proposal.approved === true ||
+    proposal.status === "waived_by_user"
+  ) {
+    return null;
+  }
+  return {
+    draft: proposal.draft,
+    revised_text: proposal.revised_text,
+    date: proposal.date,
+  };
 }
 
 function openReplyProposal(raw: unknown): {
@@ -224,7 +258,7 @@ async function latestRevisableDraft(
   admin: AdminClient,
   sessionId: string,
   userId: string,
-  opts?: { blockedOnly?: boolean }
+  opts?: { blockedOnly?: boolean; calendarOnly?: boolean; includeCalendar?: boolean }
 ): Promise<RevisableDraft | null> {
   const { data: journals, error: journalErr } = await admin
     .from("sage_journal_messages")
@@ -261,7 +295,11 @@ async function latestRevisableDraft(
     const proposals = Array.isArray(row.plan.proposals) ? row.plan.proposals : [];
     let chosen: RevisableDraft | null = null;
     proposals.forEach((raw, proposalIndex) => {
-      const proposal = openReplyProposal(raw);
+      const calendar = opts?.calendarOnly || opts?.includeCalendar
+        ? openCalendarProposal(raw)
+        : null;
+      const reply = opts?.calendarOnly ? null : openReplyProposal(raw);
+      const proposal = calendar ?? reply;
       if (!proposal) return;
       if (opts?.blockedOnly && !unsatisfiedDependsOn(raw)) return;
       const currentDraft =
@@ -273,7 +311,9 @@ async function latestRevisableDraft(
       chosen = {
         itemId: row.id as string,
         summary: (row.summary ?? "").trim(),
-        proposalType: proposal.type,
+        proposalType: calendar
+          ? "calendar_update"
+          : (proposal as { type: "reply_coparent" | "ask_clarification" }).type,
         proposalIndex,
         currentDraft,
         sourceType: typeof row.source_type === "string" ? row.source_type : null,
@@ -295,6 +335,7 @@ async function revisePendingDraft(opts: {
   target: RevisableDraft;
   clearDependsOn?: boolean;
 }): Promise<{ reply: string; item: { id: string; plan: Record<string, unknown> } } | null> {
+  if (opts.target.proposalType === "calendar_update") return null;
   const redraft = await redraftMessage({
     summary: opts.target.summary,
     proposalType: opts.target.proposalType,
@@ -327,6 +368,74 @@ async function revisePendingDraft(opts: {
   }
   return {
     reply: revisionReply(opts.target.proposalType),
+    item: { id: opts.target.itemId, plan: updatedPlan },
+  };
+}
+
+async function reviseOpenCalendar(opts: {
+  admin: AdminClient;
+  userId: string;
+  guidance: string;
+  target: RevisableDraft;
+  caseId: string;
+  timezone: string;
+  childIds: string[];
+  resolvedIso: string | null;
+}): Promise<{ reply: string; item: { id: string; plan: Record<string, unknown> } } | null> {
+  const storedDate = opts.target.proposals[opts.target.proposalIndex]?.date;
+  const existingDate = typeof storedDate === "string" && storedDate.trim() ? storedDate.trim() : null;
+  const iso = opts.resolvedIso ?? existingDate;
+  const reconciled = await reconcileCalendarPlan(
+    {
+      status: "ready",
+      proposals: [
+        {
+          type: "calendar_update",
+          draft: opts.target.currentDraft,
+          depends_on: null,
+          requires_approval: true,
+          ...(existingDate ? { date: existingDate } : {}),
+        },
+      ],
+      reasoning: "",
+    },
+    {
+      caseId: opts.caseId,
+      timezone: opts.timezone,
+      iso,
+      childIds: opts.childIds,
+      summary: opts.target.summary,
+      corpus: opts.guidance,
+    }
+  );
+  const next = reconciled.proposals[0];
+  if (!next?.draft?.trim()) return null;
+  const proposals = opts.target.proposals.map((p) => ({ ...p }));
+  const kept = proposals[opts.target.proposalIndex] ?? {};
+  const originalDraft = typeof kept.draft === "string" ? kept.draft : opts.target.currentDraft;
+  proposals[opts.target.proposalIndex] = {
+    ...kept,
+    ...next,
+    draft: originalDraft,
+    revised_text: next.draft,
+    ...(iso ? { date: iso, depends_on: null, date_supplied: true } : {}),
+  };
+  const updatedPlan = { ...opts.target.plan, proposals };
+  const { data, error } = await opts.admin
+    .from("sage_items")
+    .update({ plan: updatedPlan })
+    .eq("id", opts.target.itemId)
+    .eq("visible_to", opts.userId)
+    .select("id");
+  if (error || !data?.length) {
+    console.error(
+      "[sage/messages] revise calendar draft failed:",
+      error?.message ?? "no row updated"
+    );
+    return null;
+  }
+  return {
+    reply: revisionReply("calendar_update"),
     item: { id: opts.target.itemId, plan: updatedPlan },
   };
 }
@@ -768,9 +877,58 @@ export async function POST(request: NextRequest) {
 
           const noteOnly = isNoteOnlyPlan(result.plan);
           let foldedNote = false;
-          if (sessionId && noteOnly) {
-            const latestDraft = await latestRevisableDraft(admin, sessionId, user.id);
-            if (latestDraft) {
+          const turnHasCalendar = result.plan.proposals.some(
+            (p) => p.type === "calendar_update"
+          );
+          if (sessionId && turnHasCalendar) {
+            const openCalendar = await latestRevisableDraft(admin, sessionId, user.id, {
+              calendarOnly: true,
+            });
+            if (openCalendar) {
+              const resolvedIso =
+                result.resolved_dates.find((d) => d.status === "resolved" && d.iso)?.iso ??
+                null;
+              const revised = await reviseOpenCalendar({
+                admin,
+                userId: user.id,
+                guidance: trimmed,
+                target: openCalendar,
+                caseId,
+                timezone,
+                childIds: result.child_ids,
+                resolvedIso,
+              });
+              if (revised) {
+                sageContent = revised.reply;
+                revisedItem = revised.item;
+                foldedNote = true;
+              }
+            }
+          }
+          if (!foldedNote && sessionId && noteOnly) {
+            const latestDraft = await latestRevisableDraft(admin, sessionId, user.id, {
+              includeCalendar: true,
+            });
+            if (latestDraft?.proposalType === "calendar_update") {
+              const resolvedIso =
+                result.resolved_dates.find((d) => d.status === "resolved" && d.iso)?.iso ??
+                null;
+              const revised = await reviseOpenCalendar({
+                admin,
+                userId: user.id,
+                guidance: trimmed,
+                target: latestDraft,
+                caseId,
+                timezone,
+                childIds: result.child_ids,
+                resolvedIso,
+              });
+              if (revised) {
+                sageContent = revised.reply;
+                revisedItem = revised.item;
+                foldedNote = true;
+              }
+            } else if (latestDraft) {
               const revised = await revisePendingDraft({
                 admin,
                 userId: user.id,
@@ -783,7 +941,7 @@ export async function POST(request: NextRequest) {
                 foldedNote = true;
               }
             }
-          } else if (sessionId) {
+          } else if (!foldedNote && sessionId) {
             const blockedDraft = await latestRevisableDraft(
               admin,
               sessionId,

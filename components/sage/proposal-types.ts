@@ -27,6 +27,9 @@ export type SageProposal = {
   description?: string | null;
   category?: string | null;
   date?: string | null;
+  /** offer creates an event; update edits calendar_event_id. Absent when this card is only a question. */
+  calendar_intent?: "offer" | "update";
+  calendar_event_id?: string | null;
 };
 
 export type SagePlan = {

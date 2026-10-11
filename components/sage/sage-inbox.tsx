@@ -876,9 +876,17 @@ export function SageInbox({
 
       {calendarAgree && caseId && (
         <SageAgreeFormModal
-          title="Add to calendar"
+          title={
+            calendarAgree.initialValues.eventId
+              ? "Update calendar event"
+              : "Add to calendar"
+          }
           titleId="sage-add-calendar-title"
-          hint="Review the event details, then click Add Event to put it on your calendar."
+          hint={
+            calendarAgree.initialValues.eventId
+              ? "Review the change, then save it on the existing event."
+              : "Review the event details, then click Add Event to put it on your calendar."
+          }
           onClose={() => setCalendarAgree(null)}
         >
           <AddEventForm

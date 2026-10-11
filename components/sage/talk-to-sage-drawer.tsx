@@ -491,9 +491,17 @@ export function TalkToSageDrawer({
 
       {calendarTarget && caseId && (
         <SageAgreeFormModal
-          title="Add to calendar"
+          title={
+            calendarTarget.initialValues.eventId
+              ? "Update calendar event"
+              : "Add to calendar"
+          }
           titleId="talk-sage-add-calendar-title"
-          hint="Review the event details, then click Add Event to put it on your calendar."
+          hint={
+            calendarTarget.initialValues.eventId
+              ? "Review the change, then save it on the existing event."
+              : "Review the event details, then click Add Event to put it on your calendar."
+          }
           onClose={() => setCalendarTarget(null)}
         >
           <AddEventForm

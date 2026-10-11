@@ -51,6 +51,9 @@ export type Proposal = {
   description?: string;
   category?: string;
   date?: string | null;
+  /** Set after the calendar is checked. offer creates; update edits calendar_event_id. */
+  calendar_intent?: "offer" | "update";
+  calendar_event_id?: string | null;
 };
 
 export type Plan = {
@@ -90,6 +93,15 @@ function isInformational(ctx: PlanContext): boolean {
 
 function isScheduleType(itemType: string): boolean {
   return itemType === "schedule_change" || itemType === "calendar_update";
+}
+
+function resolvedCalendarIso(ctx: PlanContext): string | null {
+  const hit = ctx.resolved_dates.find((d) => d.status === "resolved" && d.iso);
+  return hit?.iso ?? null;
+}
+
+function askForCalendarDate(): Proposal {
+  return proposal("ask_clarification", "Which date should I use?", null);
 }
 
 function describeBlockers(ctx: PlanContext): string {
@@ -367,7 +379,7 @@ export async function plan(ctx: PlanContext): Promise<Plan> {
       proposals.push(proposal("reply_coparent", replyDraft, depends));
     }
 
-    if (isScheduleType(ctx.item_type)) {
+    if (isScheduleType(ctx.item_type) && resolvedCalendarIso(ctx)) {
       proposals.push(
         proposal("calendar_update", templateCalendar(ctx), depends)
       );
@@ -382,8 +394,24 @@ export async function plan(ctx: PlanContext): Promise<Plan> {
     };
   }
 
-  // 5. Schedule / calendar → ready
+  // 5. Schedule / calendar → ready. No resolved date: ask, do not invent one.
   if (isScheduleType(ctx.item_type)) {
+    if (!resolvedCalendarIso(ctx)) {
+      const proposals: Proposal[] = [askForCalendarDate()];
+      if (!userCommand(ctx)) {
+        const replyDraft = await draftWithLlm(
+          "reply_coparent",
+          ctx,
+          fallbackReply(ctx)
+        );
+        proposals.unshift(proposal("reply_coparent", replyDraft, null));
+      }
+      return {
+        status: "awaiting_clarification",
+        proposals,
+        reasoning: "No date resolved from the message — ask before proposing a calendar change.",
+      };
+    }
     if (userCommand(ctx)) {
       return {
         status: "ready",

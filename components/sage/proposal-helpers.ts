@@ -455,7 +455,7 @@ export function buildCalendarInitialValues(
       : proposal.draft) ?? "";
   const summary = (item.summary ?? "").trim();
   const date =
-    (chosenDate ?? proposal.chosen_date ?? resolvedCalendarIso(item) ?? "").trim() ||
+    (chosenDate ?? proposal.chosen_date ?? proposal.date ?? resolvedCalendarIso(item) ?? "").trim() ||
     undefined;
   const startTime = parseTargetTimeFromDraft(
     [draftSource, summary].filter(Boolean).join(" ")
@@ -468,6 +468,9 @@ export function buildCalendarInitialValues(
     title: buildCalendarTitle(item, proposal),
     eventType,
     description: summary || undefined,
+    ...(proposal.calendar_event_id
+      ? { eventId: proposal.calendar_event_id }
+      : {}),
   };
 }
 

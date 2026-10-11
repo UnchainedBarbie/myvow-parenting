@@ -397,14 +397,101 @@ function coerceUpcomingYear(
   return { ymd, reasonSuffix: "" };
 }
 
-function weekdayNeedsClarification(raw: string, weekday: string): DateResolution {
+function weekdayIndex(ymd: Ymd): number {
+  const dt = new Date(Date.UTC(ymd.y, ymd.m - 1, ymd.d, 12, 0, 0));
+  return dt.getUTCDay();
+}
+
+function minutesNow(date: Date, timezone: string): number {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date);
+  const hour = Number(parts.find((p) => p.type === "hour")?.value ?? NaN);
+  const minute = Number(parts.find((p) => p.type === "minute")?.value ?? NaN);
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return 0;
+  return hour * 60 + minute;
+}
+
+/** Clock time in the phrase, if one was written. Last clock wins ("from 5:45 to 5:30"). */
+export function parseClockMinutes(text: string): number | null {
+  const pattern =
+    /\b(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)?\b/gi;
+  let found: number | null = null;
+  for (const match of text.matchAll(pattern)) {
+    const meridiem = match[3]?.toLowerCase() ?? "";
+    const hasMeridiem = meridiem.startsWith("a") || meridiem.startsWith("p");
+    const minute = match[2];
+    if (!hasMeridiem && minute == null) continue;
+    let hour = Number(match[1]);
+    const mins = minute != null ? Number(minute) : 0;
+    if (!Number.isFinite(hour) || !Number.isFinite(mins) || mins > 59) continue;
+    if (hasMeridiem) {
+      if (hour < 1 || hour > 12) continue;
+      if (meridiem.startsWith("p") && hour < 12) hour += 12;
+      if (meridiem.startsWith("a") && hour === 12) hour = 0;
+    } else if (hour > 23) {
+      continue;
+    }
+    found = hour * 60 + mins;
+  }
+  return found;
+}
+
+/**
+ * Bare, "this", and "next" weekdays.
+ * "Tuesday" / "this Tuesday" = the next occurrence that has not passed.
+ * "Next Tuesday" = that weekday in the following calendar week.
+ * On that weekday, today counts only when a still-later time was given.
+ */
+function resolveWeekdayPhrase(
+  raw: string,
+  text: string,
+  today: Date,
+  timezone: string,
+  todayYmd: Ymd,
+  corpus?: string
+): DateResolution | null {
+  const lower = text.trim().toLowerCase();
+  const nextWeek = lower.match(
+    /\b(sun|sunday|mon|monday|tue|tues|tuesday|wed|wednesday|thu|thur|thurs|thursday|fri|friday|sat|saturday)\s+next\s+week\b/
+  );
+  const match = nextWeek
+    ? (["", "next", nextWeek[1]] as const)
+    : lower.match(
+        /\b(this|next)?(?:\s+coming)?\s*(sun|sunday|mon|monday|tue|tues|tuesday|wed|wednesday|thu|thur|thurs|thursday|fri|friday|sat|saturday)\b/
+      );
+  if (!match) return null;
+  const weekday = resolveWeekdayToken(match[2]);
+  if (!weekday) return null;
+  const target = WEEKDAYS.indexOf(weekday as (typeof WEEKDAYS)[number]);
+  if (target < 0) return null;
+
+  const todayDow = weekdayIndex(todayYmd);
+  const which = match[1] ?? "";
+  const clock = parseClockMinutes(corpus ? `${text} ${corpus}` : text);
+  let delta = (target - todayDow + 7) % 7;
+  if (which === "next") {
+    const daysToNextSunday = todayDow === 0 ? 7 : 7 - todayDow;
+    delta = daysToNextSunday + target;
+  } else if (delta === 0) {
+    const laterToday = clock != null && clock > minutesNow(today, timezone);
+    delta = laterToday ? 0 : 7;
+  }
+
+  const ymd = addCalendarDays(todayYmd, delta);
   const label = weekday.charAt(0).toUpperCase() + weekday.slice(1);
-  return {
+  return resolved(
     raw,
-    status: "needs_clarification",
-    iso: null,
-    reason: `Which ${label}? Please confirm the date.`,
-  };
+    ymd,
+    which === "next"
+      ? `Weekday: next ${label}`
+      : delta === 0
+        ? `Weekday: ${label} later today`
+        : `Weekday: upcoming ${label}`
+  );
 }
 
 function resolveMonthDayNoYear(
@@ -456,7 +543,8 @@ export function rawForDateResolver(d: { raw?: string; value?: string }): string 
 export function resolveDate(
   raw: string,
   today: Date,
-  timezone: string = "America/Denver"
+  timezone: string = "America/Denver",
+  corpus?: string
 ): DateResolution {
   const original = raw;
   const text = raw.trim().replace(/\s+/g, " ");
@@ -522,25 +610,15 @@ export function resolveDate(
     };
   }
 
-  // this/next <weekday>, <weekday> next week
-  const thisNext = lower.match(
-    /^(this|next)\s+([a-z]+)$/
+  const weekdayHit = resolveWeekdayPhrase(
+    original,
+    text,
+    today,
+    timezone,
+    todayYmd,
+    corpus
   );
-  if (thisNext) {
-    const wd = resolveWeekdayToken(thisNext[2]);
-    if (wd) return weekdayNeedsClarification(original, wd);
-  }
-  const nextWeek = lower.match(/^([a-z]+)\s+next\s+week$/);
-  if (nextWeek) {
-    const wd = resolveWeekdayToken(nextWeek[1]);
-    if (wd) return weekdayNeedsClarification(original, wd);
-  }
-
-  // Bare weekday (including abbreviations)
-  const bareWd = resolveWeekdayToken(lower);
-  if (bareWd && WEEKDAYS.includes(bareWd as (typeof WEEKDAYS)[number])) {
-    return weekdayNeedsClarification(original, bareWd);
-  }
+  if (weekdayHit) return weekdayHit;
 
   // ISO YYYY-MM-DD (full string). Keep the stated year as-is.
   const isoMatch = lower.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:[t\s].*)?$/);
@@ -648,7 +726,8 @@ export function resolveDate(
 export function resolveDates(
   raws: { raw: string }[],
   today: Date,
-  timezone: string = "America/Denver"
+  timezone: string = "America/Denver",
+  corpus?: string
 ): DateResolution[] {
-  return raws.map((r) => resolveDate(r.raw, today, timezone));
+  return raws.map((r) => resolveDate(r.raw, today, timezone, corpus));
 }

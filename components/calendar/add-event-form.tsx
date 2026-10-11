@@ -85,6 +85,8 @@ export type AddEventFormInitialValues = {
   visibility?: "family" | "parents_only" | "just_me_and_kids" | "private";
   eventType?: string;
   childId?: string;
+  /** When set, saving edits this event instead of creating another. */
+  eventId?: string;
 };
 
 interface AddEventFormProps {
@@ -303,28 +305,47 @@ export function AddEventForm({
     }
     setLoading(true);
     try {
-      const res = await fetch("/api/calendar/create", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          case_id: caseId,
-          title: title.trim(),
-          description: description.trim() || undefined,
-          event_type: eventType,
-          child_id: childId || undefined,
-          start_time: start,
-          end_time: end,
-          all_day: false,
-          visibility,
-          is_private: visibility === "private",
-          recurring_rule: isRepeating ? repeat : undefined,
-          kid_title: kidTitle.trim() || undefined,
-          ...(sourceMessageId && { source: "photo", source_message_id: sourceMessageId }),
-        }),
-      });
+      const editingId = initialValues?.eventId?.trim() || "";
+      const res = editingId
+        ? await fetch("/api/calendar/event/update", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              event_id: editingId,
+              title: title.trim(),
+              description: description.trim() || null,
+              event_type: eventType,
+              child_id: childId || null,
+              start_time: start,
+              end_time: end,
+              all_day: false,
+              visibility,
+              kid_title: kidTitle.trim() || null,
+              recurring_rule: isRepeating ? repeat : null,
+            }),
+          })
+        : await fetch("/api/calendar/create", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              case_id: caseId,
+              title: title.trim(),
+              description: description.trim() || undefined,
+              event_type: eventType,
+              child_id: childId || undefined,
+              start_time: start,
+              end_time: end,
+              all_day: false,
+              visibility,
+              is_private: visibility === "private",
+              recurring_rule: isRepeating ? repeat : undefined,
+              kid_title: kidTitle.trim() || undefined,
+              ...(sourceMessageId && { source: "photo", source_message_id: sourceMessageId }),
+            }),
+          });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.message || "Create failed");
-      const eventId = data.event_id as string | undefined;
+      if (!res.ok) throw new Error(data.message || data.error || "Save failed");
+      const eventId = editingId || (data.event_id as string | undefined);
       if (onSuccess && eventId) {
         await onSuccess(eventId);
       } else {
@@ -707,7 +728,11 @@ export function AddEventForm({
             disabled={loading}
             className="rounded-full h-8 px-4 text-xs bg-[#7B9E87] hover:bg-[#6A8A78] text-white"
           >
-            {loading ? "Adding…" : "Add event"}
+            {loading
+              ? "Saving…"
+              : initialValues?.eventId
+                ? "Save change"
+                : "Add event"}
           </Button>
         </form>
       </CardContent>

@@ -146,11 +146,39 @@ function logConvMatch(
   );
 }
 
+/**
+ * Reply address for the other member on this case: is_reply, and not the sender's member.
+ * Null when that address is missing or more than one member qualifies.
+ */
+async function coparentReplyEmail(
+  admin: ReturnType<typeof getServiceRoleClient>,
+  caseId: string,
+  senderCaseMemberId: string | null
+): Promise<string | null> {
+  let query = admin
+    .from("case_member_emails")
+    .select("email, case_member_id")
+    .eq("case_id", caseId)
+    .eq("is_reply", true);
+  if (senderCaseMemberId) {
+    query = query.neq("case_member_id", senderCaseMemberId);
+  }
+  const { data, error } = await query;
+  if (error) {
+    console.error(`[conv-match] coparent_email lookup failed: ${error.message}`);
+    return null;
+  }
+  const emails = ((data ?? []) as { email?: string | null }[])
+    .map((row) => (row.email ?? "").trim())
+    .filter((email) => email.length > 0);
+  return emails.length === 1 ? emails[0] : null;
+}
+
 async function stampMatchedConversation(
   admin: ReturnType<typeof getServiceRoleClient>,
   row: ConversationStampRow,
   thread: ExtractedPostmarkThread,
-  from: string | null
+  coparentEmail: string | null
 ): Promise<void> {
   const patch: {
     updated_at: string;
@@ -162,8 +190,8 @@ async function stampMatchedConversation(
   if (!(row.email_thread_id ?? "").trim() && thread.messageId) {
     patch.email_thread_id = thread.messageId;
   }
-  if (!(row.coparent_email ?? "").trim() && from) {
-    patch.coparent_email = from;
+  if (!(row.coparent_email ?? "").trim() && coparentEmail) {
+    patch.coparent_email = coparentEmail;
   }
   const { error } = await admin.from("conversations").update(patch).eq("id", row.id);
   if (error) {
@@ -180,11 +208,12 @@ async function stampMatchedConversation(
 async function resolveOrCreateConversation(
   caseId: string,
   thread: ExtractedPostmarkThread,
-  from: string | null,
+  senderCaseMemberId: string | null,
   subject: string
 ): Promise<string | null> {
   try {
     const admin = getServiceRoleClient();
+    const coparentEmail = await coparentReplyEmail(admin, caseId, senderCaseMemberId);
     const candidates = threadIdCandidates(thread);
 
     if (candidates.length > 0) {
@@ -203,7 +232,7 @@ async function resolveOrCreateConversation(
 
       const threadRow = (byThread ?? [])[0] as ConversationStampRow | undefined;
       if (threadRow?.id) {
-        await stampMatchedConversation(admin, threadRow, thread, from);
+        await stampMatchedConversation(admin, threadRow, thread, coparentEmail);
         logConvMatch("thread", threadRow.id, false);
         return threadRow.id;
       }
@@ -242,7 +271,7 @@ async function resolveOrCreateConversation(
             admin,
             conv as ConversationStampRow,
             thread,
-            from
+            coparentEmail
           );
           logConvMatch("thread", conv.id as string, false);
           return conv.id as string;
@@ -270,7 +299,7 @@ async function resolveOrCreateConversation(
         }[]
       ).find((c) => normalizeConversationSubject(c.subject ?? "") === normalized);
       if (hit) {
-        await stampMatchedConversation(admin, hit, thread, from);
+        await stampMatchedConversation(admin, hit, thread, coparentEmail);
         logConvMatch("subject", hit.id, false);
         return hit.id;
       }
@@ -294,7 +323,7 @@ async function resolveOrCreateConversation(
         topic: "General",
         category: "General",
         created_by: visibleTo,
-        coparent_email: from,
+        coparent_email: coparentEmail,
         email_thread_id: thread.messageId,
         child_id: null,
       })
@@ -371,8 +400,10 @@ export async function POST(req: NextRequest) {
     }
 
     const caseId = caseRow.id as string;
+    let senderCaseMemberId: string | null = null;
     try {
       const sender = await resolveInboundSender(caseId, body.From);
+      senderCaseMemberId = sender.caseMemberId;
       console.log(
         `[sender-id] from=${sender.fromEmail ?? "null"} matched=${sender.isKnownCaseMember} case_member_id=${sender.caseMemberId ?? "null"} user_id=${sender.userId ?? "null"}`
       );
@@ -383,7 +414,7 @@ export async function POST(req: NextRequest) {
     const conversationId = await resolveOrCreateConversation(
       caseId,
       extracted,
-      fromEmail,
+      senderCaseMemberId,
       subject
     );
     const attachments = Array.isArray(body.Attachments) ? body.Attachments : [];

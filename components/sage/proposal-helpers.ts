@@ -5,7 +5,8 @@ import {
   inferExpenseCategoryFromText,
   parseExpenseAmountFromText,
 } from "@/lib/expenses-share";
-import { eventSubjectFromTexts, formatClockLabel, parseScheduleTimes } from "@/lib/sage/event-subject";
+import { eventSubjectFromTexts, formatClockLabel } from "@/lib/sage/event-subject";
+import { scheduleClocks } from "@/lib/sage/outbound-facts";
 import { isCalendarUpdateProposal, isFormExecuteProposal, isLogDocumentProposal } from "@/lib/sage/proposal-kind";
 import type { SageItem, SageProposal } from "./proposal-types";
 
@@ -488,13 +489,10 @@ export function buildCalendarTitle(
   return title.slice(0, 60);
 }
 
-function factualCalendarDescription(item: SageItem): string | undefined {
-  const times = parseScheduleTimes(
-    [item.evidence_excerpt ?? "", item.summary ?? ""].filter(Boolean).join("\n")
-  );
-  if (!times.arrival) return undefined;
-  const when = formatClockLabel(times.arrival);
-  const child = displayName(childNamesFromItem(item)[0] ?? "");
+function factualCalendarDescription(blob: string, child: string): string | undefined {
+  const arrival = scheduleClocks(blob).find((clock) => clock.role === "arrival");
+  if (!arrival) return undefined;
+  const when = formatClockLabel(arrival.hhmm);
   return child ? `${child} arrives ${when}.` : `Arrives ${when}.`;
 }
 
@@ -515,15 +513,19 @@ export function buildCalendarInitialValues(
   const date =
     (chosenDate ?? proposal.chosen_date ?? proposal.date ?? resolvedCalendarIso(item) ?? "").trim() ||
     undefined;
-  const stated = parseScheduleTimes(
-    [item.evidence_excerpt ?? "", summary].filter(Boolean).join("\n")
-  );
+  const blob = [draftSource, item.evidence_excerpt ?? "", summary].filter(Boolean).join("\n");
+  const clocks = scheduleClocks(blob);
+  const startClock =
+    clocks.find((clock) => clock.role === "start") ??
+    clocks.find((clock) => clock.role === "other");
   const startTime =
-    stated.start ??
-    stated.arrival ??
+    startClock?.hhmm ??
     parseTargetTimeFromDraft([draftSource, summary].filter(Boolean).join(" "));
   const eventType = inferCalendarEventType(item, proposal);
-  const description = factualCalendarDescription(item);
+  const description = factualCalendarDescription(
+    blob,
+    displayName(childNamesFromItem(item)[0] ?? "")
+  );
   return {
     childId,
     date,

@@ -290,7 +290,15 @@ export function AddEventForm({
       setError("Please enter a title.");
       return;
     }
-    const startTimeValue = startTime || "00:00";
+    if (!date) {
+      setError("Please enter a date.");
+      return;
+    }
+    if (!startTime.trim()) {
+      setError("Please enter a start time.");
+      return;
+    }
+    const startTimeValue = startTime;
     const endTimeValue = endTime || "";
     // date is "YYYY-MM-DD", times are "HH:mm" — interpret as LOCAL, convert to UTC
     const [sy, sm, sd] = date.split("-").map(Number);
@@ -330,7 +338,7 @@ export function AddEventForm({
             body: JSON.stringify({
               case_id: caseId,
               title: title.trim(),
-              description: description.trim() || undefined,
+              description: description.trim() || null,
               event_type: eventType,
               child_id: childId || undefined,
               start_time: start,
@@ -571,7 +579,6 @@ export function AddEventForm({
                 setDescription(e.target.value);
               }}
               placeholder="Notes"
-              required
               rows={4}
               className={cn(
                 "flex w-full rounded-card border border-input bg-background px-2 py-1 text-xs",
@@ -666,6 +673,7 @@ export function AddEventForm({
                   type="time"
                   value={startTime}
                   onChange={(e) => setStartTime(e.target.value)}
+                  required
                   className={cn(
                     "flex h-8 w-full min-w-[120px] rounded-card border border-input bg-background px-2 py-1 text-xs",
                     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"

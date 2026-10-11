@@ -46,9 +46,11 @@ export async function POST(request: NextRequest) {
       source?: "manual" | "email" | "photo";
       source_message_id?: string;
     };
-    if (!case_id || !title || !start_time) {
+    const titleValue = typeof title === "string" ? title.trim() : "";
+    const startValue = typeof start_time === "string" ? start_time.trim() : "";
+    if (!case_id || !titleValue || !startValue || Number.isNaN(Date.parse(startValue))) {
       return NextResponse.json(
-        { message: "Missing case_id, title, or start_time" },
+        { message: "Title, date, and start time are required." },
         { status: 400 }
       );
     }
@@ -58,7 +60,7 @@ export async function POST(request: NextRequest) {
     const privateFlag =
       visibilityValue === "private" || (!!is_private && !visibility);
     const descriptionValue =
-      description && description.trim().length > 0
+      typeof description === "string" && description.trim().length > 0
         ? description.trim()
         : null;
     const storedDescription = privateFlag
@@ -68,11 +70,11 @@ export async function POST(request: NextRequest) {
     const insertPayload: Record<string, unknown> = {
       case_id,
       created_by: user.id,
-      title,
+      title: titleValue,
       description: storedDescription,
       event_type: event_type ?? null,
       child_id: child_id ?? null,
-      start_time,
+      start_time: startValue,
       end_time: end_time ?? null,
       all_day: all_day ?? false,
       recurring_rule: recurring_rule ?? null,

@@ -237,3 +237,277 @@ export function unsupportedFacts(draft: string, sources: string): string[] {
   missing.push(...missingFrom(amountFacts(draftText), amountFacts(sourceText), "amount"));
   return missing;
 }
+
+type TimeRole = "start" | "arrival" | "other";
+
+type PlacedTime = Fact & { role: TimeRole };
+
+const NEVER_IN_VOICE = [
+  { re: /\bactually\b/i, label: "actually" },
+  { re: /just a heads-up/i, label: "just a heads-up" },
+  { re: /just so you know/i, label: "just so you know" },
+  { re: /\bfyi\b/i, label: "FYI" },
+];
+
+const WARMTH_UNLESS_ASKED = [
+  { re: /hope that helps/i, label: "hope that helps" },
+  { re: /let me know if you need/i, label: "let me know if you need anything" },
+];
+
+/** Exclamation points and managing phrases. Warmth is allowed only when the user asked for that phrase. */
+export function voiceProblems(draft: string, userAsked: string): string[] {
+  const problems: string[] = [];
+  if (draft.includes("!")) problems.push("exclamation point");
+  for (const item of NEVER_IN_VOICE) {
+    if (item.re.test(draft)) problems.push(item.label);
+  }
+  for (const item of WARMTH_UNLESS_ASKED) {
+    if (item.re.test(draft) && !item.re.test(userAsked)) problems.push(item.label);
+  }
+  return problems;
+}
+
+function timeRole(text: string, index: number): TimeRole {
+  const before = text.slice(Math.max(0, index - 48), index).toLowerCase();
+  if (/arriv|be there|there by|needs to be/.test(before)) return "arrival";
+  if (/start|begin|it'?s at|it is at|is at/.test(before)) return "start";
+  return "other";
+}
+
+function placedTimes(text: string): PlacedTime[] {
+  const facts: PlacedTime[] = [];
+  const seen = new Set<string>();
+  const pattern =
+    /\b(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)\b|\b([01]?\d|2[0-3]):([0-5]\d)\b/gi;
+  for (const match of text.matchAll(pattern)) {
+    const meridiem = (match[3] ?? "").toLowerCase();
+    const hasMeridiem = meridiem.startsWith("a") || meridiem.startsWith("p");
+    let hour: number;
+    let minute: number;
+    if (hasMeridiem) {
+      hour = Number(match[1]);
+      minute = match[2] != null ? Number(match[2]) : 0;
+      if (hour < 1 || hour > 12 || minute > 59) continue;
+      if (meridiem.startsWith("p") && hour < 12) hour += 12;
+      if (meridiem.startsWith("a") && hour === 12) hour = 0;
+    } else if (match[4] != null) {
+      hour = Number(match[4]);
+      minute = Number(match[5]);
+      if (hour > 23 || minute > 59) continue;
+    } else {
+      continue;
+    }
+    const key = `time:${hour * 60 + minute}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const hour12 = hour % 12 || 12;
+    const label = `${hour12}:${String(minute).padStart(2, "0")} ${hour >= 12 ? "PM" : "AM"}`;
+    facts.push({
+      key,
+      label,
+      role: timeRole(text, match.index ?? 0),
+    });
+  }
+  return facts;
+}
+
+function compactClock(key: string): string {
+  const minutes = Number(key.slice("time:".length));
+  const hour24 = Math.floor(minutes / 60) % 24;
+  const minute = minutes % 60;
+  const hour12 = hour24 % 12 || 12;
+  const suffix = hour24 >= 12 ? "pm" : "am";
+  if (minute === 0) return `${hour12}${suffix}`;
+  return `${hour12}:${String(minute).padStart(2, "0")}${suffix}`;
+}
+
+function hhmmFromKey(key: string): string {
+  const minutes = Number(key.slice("time:".length));
+  const hour24 = Math.floor(minutes / 60) % 24;
+  const minute = minutes % 60;
+  return `${String(hour24).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
+/** Clocks in a text, with start vs arrival taken from the words beside each one. */
+export function scheduleClocks(text: string): { role: TimeRole; hhmm: string }[] {
+  return placedTimes(text).map((time) => ({ role: time.role, hhmm: hhmmFromKey(time.key) }));
+}
+
+function retractedTimeKeys(guidance: string, known: PlacedTime[]): Set<string> {
+  const keys = new Set<string>();
+  const pattern =
+    /\b(?:not|instead of|rather than|no longer(?:\s+at)?)\s+(\d{1,2}(?::\d{2})?(?:\s*(?:a\.?m\.?|p\.?m\.?))?)/gi;
+  for (const match of guidance.matchAll(pattern)) {
+    const token = match[1].trim();
+    const parsed = placedTimes(token);
+    if (parsed.length > 0) {
+      for (const time of parsed) keys.add(time.key);
+      continue;
+    }
+    const hour = Number(token);
+    if (!Number.isFinite(hour)) continue;
+    for (const time of known) {
+      const minutes = Number(time.key.slice("time:".length));
+      const hour24 = Math.floor(minutes / 60) % 24;
+      const hour12 = hour24 % 12 || 12;
+      if (hour === hour12 || hour === hour24) keys.add(time.key);
+    }
+  }
+  return keys;
+}
+
+function retractedDateKeys(guidance: string): Set<string> {
+  const slice = guidance.match(
+    /\b(?:not|instead of|rather than|no longer(?:\s+on)?)\s+([^.,]+)/i
+  );
+  if (!slice) return new Set();
+  return new Set(dateFacts(slice[1]).map((fact) => fact.key));
+}
+
+function retractedAmountKeys(guidance: string): Set<string> {
+  const keys = new Set<string>();
+  const pattern = /\b(?:not|instead of|rather than|no longer)\s+(\$\s*\d[\d,]*(?:\.\d{1,2})?)/gi;
+  for (const match of guidance.matchAll(pattern)) {
+    for (const fact of amountFacts(match[1])) keys.add(fact.key);
+  }
+  return keys;
+}
+
+function replacesStart(guidance: string, added: PlacedTime[]): boolean {
+  const addsStart = added.some((time) => time.role === "start" || time.role === "other");
+  if (!addsStart) return false;
+  return /\b(?:actually|instead|rather|change|switch|make it)\b/i.test(guidance);
+}
+
+export type MergedFacts = {
+  times: PlacedTime[];
+  dates: Fact[];
+  amounts: Fact[];
+};
+
+/**
+ * Facts from the current draft, plus facts the new turn adds.
+ * A time, date, or amount drops only when the new turn corrects or retracts it.
+ * An arrival time does not replace a start time.
+ */
+export function mergeFacts(previous: string, guidance: string): MergedFacts {
+  const priorTimes = placedTimes(previous);
+  const addedTimes = placedTimes(guidance);
+  const dropTimes = retractedTimeKeys(guidance, priorTimes);
+  const keptTimes = priorTimes.filter((time) => !dropTimes.has(time.key));
+  const incoming = addedTimes.filter((time) => !dropTimes.has(time.key));
+  let times = keptTimes;
+  if (replacesStart(guidance, incoming)) {
+    times = times.filter((time) => time.role === "arrival");
+  }
+  for (const time of incoming) {
+    if (!times.some((kept) => kept.key === time.key)) times.push(time);
+  }
+
+  const dropDates = retractedDateKeys(guidance);
+  const dates = [...dateFacts(previous), ...dateFacts(guidance)].filter(
+    (fact, index, all) =>
+      !dropDates.has(fact.key) && all.findIndex((item) => item.key === fact.key) === index
+  );
+  const dropAmounts = retractedAmountKeys(guidance);
+  const amounts = [...amountFacts(previous), ...amountFacts(guidance)].filter(
+    (fact, index, all) =>
+      !dropAmounts.has(fact.key) && all.findIndex((item) => item.key === fact.key) === index
+  );
+  return { times, dates, amounts };
+}
+
+/** Labels of facts the revision dropped even though the user did not retract them. */
+export function droppedFactLabels(next: string, previous: string, guidance: string): string[] {
+  const kept = mergeFacts(previous, guidance);
+  const present = new Set([
+    ...timeFacts(next).map((fact) => fact.key),
+    ...dateFacts(next).map((fact) => fact.key),
+    ...amountFacts(next).map((fact) => fact.key),
+  ]);
+  const missing: string[] = [];
+  for (const time of kept.times) {
+    if (!present.has(time.key)) missing.push(time.label);
+  }
+  const weekdayKept = kept.dates.some(
+    (fact) => fact.key.startsWith("dow:") && present.has(fact.key)
+  );
+  for (const date of kept.dates) {
+    if (present.has(date.key)) continue;
+    if (weekdayKept && !date.key.startsWith("dow:")) continue;
+    missing.push(date.label);
+  }
+  for (const amount of kept.amounts) {
+    if (!present.has(amount.key)) missing.push(amount.label);
+  }
+  return missing;
+}
+
+function personName(child: string | null | undefined, text: string): string {
+  const named = child?.trim();
+  if (named) return named;
+  if (/\bshe\b/i.test(text)) return "She";
+  if (/\bhe\b/i.test(text)) return "He";
+  return "They";
+}
+
+/** Plain sentences for the facts that should remain after a revision. */
+export function composeFactualReply(input: {
+  currentDraft: string;
+  guidance: string;
+  event?: string | null;
+  child?: string | null;
+}): string {
+  const kept = mergeFacts(input.currentDraft, input.guidance);
+  const event = (
+    input.event?.trim() ||
+    eventSubjectFromTexts([input.currentDraft, input.guidance]) ||
+    "event"
+  ).toLowerCase();
+  const date =
+    kept.dates.find((fact) => fact.key.startsWith("dow:"))?.label ??
+    kept.dates.find((fact) => fact.key.startsWith("md:") && !/^\d{4}-/.test(fact.label))?.label ??
+    null;
+  const start =
+    kept.times.find((time) => time.role === "start") ??
+    kept.times.find((time) => time.role === "other") ??
+    null;
+  const arrivals = kept.times.filter((time) => time.role === "arrival");
+  const sentences: string[] = [];
+  if (start) {
+    const when = date ? ` on ${date}` : "";
+    sentences.push(`The ${event} is at ${compactClock(start.key)}${when}.`);
+  }
+  const who = personName(input.child, `${input.currentDraft}\n${input.guidance}`);
+  for (const arrival of arrivals) {
+    sentences.push(`${who} needs to be there by ${compactClock(arrival.key)}.`);
+  }
+  if (!start && date && arrivals.length === 0) {
+    sentences.push(`The ${event} is on ${date}.`);
+  }
+  for (const amount of kept.amounts) {
+    sentences.push(`The amount is ${amount.label}.`);
+  }
+  return sentences.join(" ");
+}
+
+/** Sentences stating the schedule facts to put on an open calendar proposal. */
+export function scheduleSentences(
+  previous: string,
+  guidance: string,
+  child?: string | null,
+  event?: string | null
+): string {
+  return composeFactualReply({
+    currentDraft: previous,
+    guidance,
+    child,
+    event,
+  });
+}
+
+/** Start time introduced by this turn, for a calendar move. An arrival time is not a new start. */
+export function replacementStartLabel(text: string): string | null {
+  const starts = placedTimes(text).filter((time) => time.role === "start");
+  return starts.length > 0 ? starts[starts.length - 1].label : null;
+}

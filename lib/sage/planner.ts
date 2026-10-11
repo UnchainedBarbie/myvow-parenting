@@ -5,7 +5,13 @@
  */
 
 import { isUserCommand } from "@/lib/sage/observation-builder";
-import { NO_DETAIL_REPLY, unsupportedFacts } from "@/lib/sage/outbound-facts";
+import {
+  composeFactualReply,
+  droppedFactLabels,
+  NO_DETAIL_REPLY,
+  unsupportedFacts,
+  voiceProblems,
+} from "@/lib/sage/outbound-facts";
 import { coparentShareInvolves } from "@/lib/expenses-share";
 
 const SAGE_MODEL = "claude-sonnet-4-6";
@@ -83,22 +89,39 @@ No red flags, shame, or escalation. No markdown. No quotes around the sentence.
 Respond with ONLY the single sentence — no preamble.`;
 
 /** Text the parent will send. Address the co-parent as "you"; do not name them. */
-const OUTBOUND_DRAFT_SYSTEM = `You are drafting ONE short sentence that the parent will send to their co-parent.
+const OUTBOUND_DRAFT_SYSTEM = `You are drafting the message the parent will send to their co-parent.
 Write in the parent's first-person voice. Address the co-parent directly as "you".
 Never refer to the co-parent in the third person. Never use their name or email.
-Voice: warm, calm — never corporate, never blaming.
-No red flags, shame, or escalation. No markdown. No quotes around the sentence.
+Voice: plain, calm, factual.
+No red flags, shame, or escalation. No markdown. No quotes around the sentences.
 
-This sentence is a written record that will be sent to the other parent. A reply may state only facts present in one of: the inbound message, the conversation context, or the case ledgers supplied in the allowed sources (calendar_events, expenses, documents).
+This text is a written record that will be sent to the other parent. A reply may state only facts present in one of: the inbound message, the conversation context, the current draft, or the case ledgers supplied in the allowed sources (calendar_events, expenses, documents).
 Do not supply a time, date, place, amount, or name that is not in those sources.
 Do not claim that the parent or Sage checked, confirmed, looked up, verified, or spoke to anyone.
 If the co-parent asked for a detail that is not in those sources, say only that you will confirm and follow up. Never state a missing value as if it were known.
+
+When revising, keep every fact already in the current draft and add the new one. A fact leaves only when the user corrects or removes it. An arrival time does not replace a start time. "She needs to be there at 7pm" adds an arrival; it does not drop an 8pm start. "Actually it's at 9pm, not 8" replaces the start time.
+
+Write one to three short sentences, as few as the facts allow.
+
+Voice prohibitions, with no exceptions:
+- No exclamation points. Not one, anywhere.
+- No "actually", "just a heads-up", "just so you know", or "FYI". These imply the other parent was wrong or needs managing.
+- No filler warmth — "hope that helps", "let me know if you need anything else" — unless the user's own message asked for that phrase.
 
 Negative example — do not write this when no source says 2:00 PM:
 "I just checked and the recital starts at 2:00 PM on Saturday — let me know if you need any other details to plan your day."
 That sentence invents a start time and claims a check that did not happen.
 
-Respond with ONLY the single sentence — no preamble.`;
+Negative example — do not drop a fact that is already true, and do not brighten the tone:
+"The recital is at 8pm on Saturday!"
+"Just a heads-up that she actually needs to be there by 7pm on Saturday for the recital."
+The second sentence drops the 8pm start and talks down to the co-parent.
+
+Positive example, when the start is 8pm and the arrival is 7pm:
+"The recital is at 8pm on Saturday. Ashley needs to be there by 7pm."
+
+Respond with ONLY the sentences — no preamble.`;
 
 function proposal(
   type: Proposal["type"],
@@ -266,7 +289,8 @@ function replyPrompt(ctx: PlanContext): string {
   const recordLine = record
     ? `State this from the record, and no other time, date, place, amount, or name: ${record}`
     : "If a requested detail is not in the allowed sources, say only that you will confirm and follow up.";
-  return `Draft ONE short calm message the parent is sending to their co-parent, responding to what the co-parent said. Do not commit to unapproved calendar changes.
+  return `Draft the message the parent is sending to their co-parent, responding to what the co-parent said. Do not commit to unapproved calendar changes.
+Write plain declarative sentences. No exclamation point. No "actually", "just a heads-up", "just so you know", or "FYI".
 State only facts from the allowed sources. Do not supply a time, date, place, amount, or name that is not in those sources. Do not claim that anyone checked, confirmed, looked up, verified, or spoke to anyone.
 ${recordLine}
 Context summary: ${ctx.summary}
@@ -274,32 +298,68 @@ Item type: ${ctx.item_type}
 Domain: ${ctx.domain}`;
 }
 
+type RetainFacts = {
+  draft: string;
+  guidance: string;
+  event?: string | null;
+  child?: string | null;
+};
+
+function draftProblems(
+  text: string,
+  sources: string,
+  retain: RetainFacts | undefined,
+  userAsked: string
+): string[] {
+  return [
+    ...unsupportedFacts(text, sources),
+    ...voiceProblems(text, userAsked),
+    ...(retain ? droppedFactLabels(text, retain.draft, retain.guidance).map((label) => `dropped ${label}`) : []),
+  ];
+}
+
 /**
- * Two generations at most. A draft whose time, date, or amount is not in the
- * sources is not returned. The second failure becomes the no-detail sentence.
+ * Two generations at most. A draft that invents a fact, drops a kept fact,
+ * or breaks the voice rules is not returned.
  */
-async function draftCheckedOutbound(userPrompt: string, sources: string): Promise<string> {
+async function draftCheckedOutbound(
+  userPrompt: string,
+  sources: string,
+  opts?: { retain?: RetainFacts; userAsked?: string }
+): Promise<string> {
   const allowed = sources.trim() || "(none)";
+  const userAsked = opts?.userAsked ?? "";
   const base = `${userPrompt}\n\nAllowed sources (the only facts you may use):\n${allowed}`;
   const first = await callAnthropicDraft(base, OUTBOUND_DRAFT_SYSTEM);
-  const firstMissing = first ? unsupportedFacts(first, sources) : null;
+  const firstMissing = first ? draftProblems(first, sources, opts?.retain, userAsked) : null;
   if (first && firstMissing && firstMissing.length === 0) return first;
   if (first && firstMissing && firstMissing.length > 0) {
-    console.error("[sage/outbound] invented fact rejected", {
+    console.error("[sage/outbound] draft rejected", {
       draft: first,
       missing: firstMissing,
     });
   }
   const retryPrompt = first
-    ? `${base}\n\nThe previous sentence was rejected because it included ${firstMissing?.join("; ")} which is not in the allowed sources. Write the sentence again using only those sources. If the detail is missing, say only that you will confirm and follow up. Do not claim that anyone checked, confirmed, looked up, verified, or spoke to anyone.`
+    ? `${base}\n\nThe previous draft was rejected: ${firstMissing?.join("; ")}. Keep every fact already in the current draft unless the user retracted it, and add the new fact. An arrival time does not replace a start time. No exclamation points. No "actually", "just a heads-up", "just so you know", or "FYI". Write declarative sentences. If a requested detail is missing from the sources, say only that you will confirm and follow up.`
     : base;
   const second = await callAnthropicDraft(retryPrompt, OUTBOUND_DRAFT_SYSTEM);
-  const secondMissing = second ? unsupportedFacts(second, sources) : null;
+  const secondMissing = second ? draftProblems(second, sources, opts?.retain, userAsked) : null;
   if (second && secondMissing && secondMissing.length === 0) return second;
-  console.error("[sage/outbound] fact check failed twice; no-detail fallback", {
+  console.error("[sage/outbound] fact check failed twice; fallback", {
     draft: second ?? first,
     missing: secondMissing ?? firstMissing ?? ["no draft"],
   });
+  if (opts?.retain) {
+    const accumulated = composeFactualReply({
+      currentDraft: opts.retain.draft,
+      guidance: opts.retain.guidance,
+      event: opts.retain.event,
+      child: opts.retain.child,
+    });
+    if (accumulated && draftProblems(accumulated, sources, opts.retain, "").length === 0) {
+      return accumulated;
+    }
+  }
   return NO_DETAIL_REPLY;
 }
 
@@ -353,8 +413,10 @@ export async function redraftMessage(params: {
   sourceType?: string | null;
   /** parent = Sage asking the user. That question is not an outbound draft. */
   audience?: "parent" | "coparent" | null;
-  /** Inbound message, conversation, ledger lines, and this turn's guidance. Not the current draft. */
+  /** Inbound message, conversation, and ledger lines. The current draft is added as a source of facts already stated. */
   sources?: string | null;
+  event?: string | null;
+  child?: string | null;
 }): Promise<string | null> {
   const parentFacingClarification =
     params.proposalType === "ask_clarification" &&
@@ -366,18 +428,34 @@ export async function redraftMessage(params: {
       ? "clarification the parent is sending to their co-parent"
       : "message the parent is sending to their co-parent";
   const guidance = params.guidance.trim() || "(no specific guidance — improve clarity and calm tone)";
-  const userPrompt = `Redraft this ${kindLabel} as ONE short calm sentence.
-The current draft is not a source of facts. Use only the allowed sources and the user guidance.
+  const who = params.child?.trim() ? `Child: ${params.child.trim()}` : "";
+  const event = params.event?.trim() ? `Event: ${params.event.trim()}` : "";
+  const userPrompt = `Redraft this ${kindLabel}.
+Keep every fact already in the current draft. Add facts from the user guidance.
+An arrival time does not replace a start time. Remove a fact only when the guidance corrects or retracts it, such as "not 8" or "instead of 8pm".
+Write plain declarative sentences. No exclamation point. No "actually", "just a heads-up", "just so you know", or "FYI".
+${who}
+${event}
 Context summary: ${params.summary}
 Current draft: ${params.currentDraft}
-User guidance for the rewrite: ${guidance}`;
+User guidance: ${guidance}`;
   if (parentFacingClarification) {
     const first = await callAnthropicDraft(userPrompt, DRAFT_SYSTEM);
     if (first) return first;
     return callAnthropicDraft(userPrompt, DRAFT_SYSTEM);
   }
-  const sources = [params.sources, guidance].filter((part) => part && part.trim()).join("\n");
-  return draftCheckedOutbound(userPrompt, sources);
+  const sources = [params.sources, params.currentDraft, guidance]
+    .filter((part) => part && part.trim())
+    .join("\n");
+  return draftCheckedOutbound(userPrompt, sources, {
+    retain: {
+      draft: params.currentDraft,
+      guidance,
+      event: params.event,
+      child: params.child,
+    },
+    userAsked: guidance,
+  });
 }
 
 /**

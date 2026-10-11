@@ -6,7 +6,7 @@
 import { getServiceRoleClient } from "@/lib/supabase/server";
 import type { Plan, Proposal } from "@/lib/sage/planner";
 import { eventSubjectFromTexts } from "@/lib/sage/event-subject";
-import { parseClockMinutes } from "@/lib/sage/resolver";
+import { replacementStartLabel, scheduleSentences } from "@/lib/sage/outbound-facts";
 
 const STOPWORDS = new Set([
   "a",
@@ -80,6 +80,8 @@ export type CalendarMatchInput = {
   corpus: string;
   subject?: string | null;
   childName?: string | null;
+  /** Facts already stated on the open reply or calendar proposal. */
+  priorText?: string | null;
 };
 
 function significantWords(text: string): Set<string> {
@@ -196,14 +198,6 @@ function formatClock(iso: string, timezone: string): string {
   }).format(date);
 }
 
-function formatMinutes(total: number): string {
-  const hour24 = Math.floor(total / 60) % 24;
-  const minute = total % 60;
-  const meridiem = hour24 >= 12 ? "PM" : "AM";
-  const hour12 = hour24 % 12 || 12;
-  return `${hour12}:${String(minute).padStart(2, "0")} ${meridiem}`;
-}
-
 function ask(draft: string): Proposal {
   return {
     type: "ask_clarification",
@@ -252,10 +246,15 @@ function outcomeFor(
       `I couldn't check the calendar for ${label} on ${when}. Want to tell me which event you mean?`
     );
   }
-  const proposed = significantWords(`${input.summary} ${proposal.draft} ${input.corpus}`);
+  const proposed = significantWords(`${input.summary} ${proposal.draft} ${input.corpus} ${input.priorText ?? ""}`);
   const hits = rows.filter((row) => sharesDistinctiveWord(proposed, row.title ?? ""));
-  const newMinutes = parseClockMinutes(input.corpus);
-  const newClock = newMinutes != null ? formatMinutes(newMinutes) : null;
+  const newClock = replacementStartLabel(input.corpus);
+  const details = scheduleSentences(
+    input.priorText ?? "",
+    `${proposal.draft}\n${input.corpus}`,
+    input.childName,
+    input.subject
+  );
 
   if (hits.length > 1) {
     const list = hits
@@ -274,12 +273,13 @@ function outcomeFor(
     const hit = hits[0];
     const oldClock = formatClock(hit.start_time, input.timezone);
     const title = (hit.title ?? label).trim() || label;
-    const draft =
+    const base =
       oldClock && newClock
         ? `Move ${title} from ${oldClock} to ${newClock}.`
         : oldClock
           ? `Update ${title} on ${when}. It is currently at ${oldClock}.`
           : `Update ${title} on ${when}.`;
+    const draft = details && !base.includes(details) ? `${base} ${details}` : base;
     return {
       ...proposal,
       type: "calendar_update",
@@ -293,7 +293,13 @@ function outcomeFor(
   return {
     ...proposal,
     type: "calendar_update",
-    draft: `Nothing on your calendar for ${label} on ${when}. Want me to add it?`,
+    draft: [
+      `Nothing on your calendar for ${label} on ${when}.`,
+      details,
+      "Want me to add it?",
+    ]
+      .filter(Boolean)
+      .join(" "),
     date: input.iso,
     calendar_intent: "offer",
     calendar_event_id: null,

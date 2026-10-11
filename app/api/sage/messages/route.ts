@@ -371,6 +371,8 @@ async function revisePendingDraft(opts: {
   target: RevisableDraft;
   clearDependsOn?: boolean;
   sources?: string;
+  event?: string | null;
+  child?: string | null;
 }): Promise<{ reply: string; item: { id: string; plan: Record<string, unknown> } } | null> {
   if (opts.target.proposalType === "calendar_update") return null;
   const { data: fresh } = await opts.admin
@@ -397,6 +399,8 @@ async function revisePendingDraft(opts: {
     sourceType: opts.target.sourceType,
     audience: opts.target.audience,
     sources: opts.sources,
+    event: opts.event,
+    child: opts.child,
   });
   const revisedText = redraft?.trim() ?? "";
   if (!revisedText) return null;
@@ -440,6 +444,8 @@ async function reviseOpenCalendar(opts: {
   resolvedIso: string | null;
   subject?: string | null;
   childName?: string | null;
+  /** Reply and calendar text already stating facts. The new turn is guidance. */
+  priorText?: string | null;
 }): Promise<{ reply: string; item: { id: string; plan: Record<string, unknown> } } | null> {
   const { data: fresh } = await opts.admin
     .from("sage_items")
@@ -486,6 +492,7 @@ async function reviseOpenCalendar(opts: {
       corpus: opts.guidance,
       subject: opts.subject ?? null,
       childName: opts.childName ?? null,
+      priorText: opts.priorText ?? opts.target.currentDraft,
     }
   );
   const next = reconciled.proposals[0];
@@ -978,9 +985,12 @@ export async function POST(request: NextRequest) {
             conversation,
             guidance: trimmed,
           });
+          let establishedReply = "";
+          const eventName = result.event_subject ?? conversation?.event.subject ?? null;
           if (sessionId && (noteOnly || turnHasCalendar)) {
             const openReply = await latestRevisableDraft(admin, sessionId, user.id);
             if (openReply && openReply.proposalType !== "calendar_update") {
+              establishedReply = openReply.currentDraft;
               const revisedReply = await revisePendingDraft({
                 admin,
                 userId: user.id,
@@ -988,6 +998,8 @@ export async function POST(request: NextRequest) {
                 target: openReply,
                 clearDependsOn: unsatisfiedDependsOn(openReply.proposals[openReply.proposalIndex]),
                 sources: outboundSources,
+                event: eventName,
+                child: childName,
               });
               if (revisedReply) {
                 foldedReply = true;
@@ -1010,8 +1022,9 @@ export async function POST(request: NextRequest) {
                 timezone,
                 childIds: result.child_ids,
                 resolvedIso,
-                subject: result.event_subject ?? conversation?.event.subject ?? null,
+                subject: eventName,
                 childName,
+                priorText: [establishedReply, openCalendar.currentDraft].filter(Boolean).join("\n"),
               });
               if (revised) {
                 foldedCalendar = true;
@@ -1037,8 +1050,9 @@ export async function POST(request: NextRequest) {
                 timezone,
                 childIds: result.child_ids,
                 resolvedIso,
-                subject: result.event_subject ?? conversation?.event.subject ?? null,
+                subject: eventName,
                 childName,
+                priorText: [establishedReply, openCalendar.currentDraft].filter(Boolean).join("\n"),
               });
               if (revised) {
                 foldedCalendar = true;
@@ -1065,6 +1079,8 @@ export async function POST(request: NextRequest) {
                 target: blockedDraft,
                 clearDependsOn: true,
                 sources: outboundSources,
+                event: eventName,
+                child: childName,
               });
               if (revised) {
                 revisionNarration = revised.reply;

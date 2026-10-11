@@ -1,8 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { waitUntil } from "@vercel/functions";
 import { getServiceRoleClient } from "@/lib/supabase/server";
+import { authorizeInboundIntake } from "@/lib/messages/authorize-inbound-intake";
 import { ingestMessage } from "@/lib/messages/ingest-message";
+import {
+  findOrCreateSelfSession,
+  runSelfEmailComposer,
+} from "@/lib/messages/process-self-inbound";
+import { recordEmailIntake } from "@/lib/messages/record-email-intake";
 import { resolveInboundSender } from "@/lib/messages/resolve-inbound-sender";
+import { resolveIntakeCase } from "@/lib/messages/resolve-intake-case";
 import {
   processInboundMessageForSage,
   resolveVisibleTo,
@@ -361,6 +368,100 @@ async function resolveOrCreateConversation(
   }
 }
 
+async function storePendingDocuments(opts: {
+  admin: ReturnType<typeof getServiceRoleClient>;
+  caseId: string;
+  uploadedBy: string;
+  emailIntakeId: string;
+  subject: string;
+  attachments: PostmarkAttachment[];
+}): Promise<{ id: string; storagePath: string; filename: string }[]> {
+  const { admin, caseId, uploadedBy, emailIntakeId, subject, attachments } = opts;
+  const created: { id: string; storagePath: string; filename: string }[] = [];
+  const usedPaths = new Set<string>();
+  const description = subject.trim() || "";
+  for (const att of attachments) {
+    const filename = (att.Name ?? "attachment").toString().slice(0, 255);
+    const contentType = (att.ContentType ?? "application/octet-stream").toString();
+
+    if (!ALLOWED_ATTACHMENT_TYPES.includes(contentType)) {
+      console.log(`[ingest-attach] skipped type=${contentType} file=${filename}`);
+      continue;
+    }
+    if (!att.Content || typeof att.Content !== "string") {
+      console.error(`[ingest-attach] no content file=${filename}`);
+      continue;
+    }
+
+    let buf: Buffer;
+    try {
+      buf = Buffer.from(att.Content, "base64");
+    } catch (e) {
+      console.error("[ingest-attach] failed to decode base64:", e);
+      continue;
+    }
+    if (buf.length > MAX_ATTACHMENT_BYTES) {
+      console.error(`[ingest-attach] too large file=${filename}`);
+      continue;
+    }
+
+    try {
+      const safeName = filename.replace(/[^a-zA-Z0-9.-]/g, "_");
+      let timestamp = Date.now();
+      let storagePath = `${caseId}/${uploadedBy}/${timestamp}-${safeName}`;
+      while (usedPaths.has(storagePath)) {
+        timestamp += 1;
+        storagePath = `${caseId}/${uploadedBy}/${timestamp}-${safeName}`;
+      }
+      usedPaths.add(storagePath);
+
+      const { error: uploadError } = await admin.storage
+        .from(DOCUMENTS_BUCKET)
+        .upload(storagePath, buf, { contentType, upsert: false });
+      if (uploadError) {
+        console.error(`[ingest-attach] upload failed file=${filename}`, uploadError);
+        continue;
+      }
+
+      const { data: doc, error: docErr } = await admin
+        .from("documents")
+        .insert({
+          case_id: caseId,
+          uploaded_by: uploadedBy,
+          title: titleFromFilename(filename),
+          file_name: filename,
+          file_size_bytes: buf.length,
+          mime_type: contentType,
+          storage_path: storagePath,
+          category: "other",
+          description: description || filename,
+          content_hash: "pending",
+          visibility: "parents_only",
+          ai_processed: false,
+          email_intake_id: emailIntakeId,
+          status: "pending",
+        })
+        .select("id")
+        .single();
+      if (docErr || !doc) {
+        console.error(
+          `[ingest-attach] documents insert failed file=${filename}`,
+          docErr?.message ?? "insert failed"
+        );
+        continue;
+      }
+      created.push({
+        id: (doc as { id: string }).id,
+        storagePath,
+        filename,
+      });
+    } catch (e) {
+      console.error("[ingest-attach] error:", e);
+    }
+  }
+  return created;
+}
+
 export async function POST(req: NextRequest) {
   try {
     const secret = process.env.POSTMARK_WEBHOOK_SECRET;
@@ -398,38 +499,104 @@ export async function POST(req: NextRequest) {
     }
 
     const admin = getServiceRoleClient();
-    const { data: caseRow, error: caseError } = await admin
-      .from("cases")
-      .select("id")
-      .eq("ingest_email", toAddress)
-      .limit(1)
-      .maybeSingle();
-
-    if (caseError) {
-      console.error("[ingest/email] Error looking up case by ingest_email:", caseError);
+    const intakeCase = await resolveIntakeCase(toAddress);
+    if (intakeCase && "error" in intakeCase) {
+      console.error("[ingest/email] Error looking up case by ingest_email:", intakeCase.error);
       return NextResponse.json({ ok: true });
     }
-
-    if (!caseRow?.id) {
+    if (!intakeCase) {
       return NextResponse.json({ ok: true });
     }
+    const caseId = intakeCase.caseId;
 
-    const caseId = caseRow.id as string;
+    let sender;
     try {
-      const sender = await resolveInboundSender(caseId, body.From);
+      sender = await resolveInboundSender(caseId, body.From);
       console.log(
         `[sender-id] from=${sender.fromEmail ?? "null"} matched=${sender.isKnownCaseMember} case_member_id=${sender.caseMemberId ?? "null"} user_id=${sender.userId ?? "null"}`
       );
     } catch (e) {
       const message = e instanceof Error ? e.message : "lookup failed";
       console.error(`[sender-id] lookup failed: ${message}`);
+      return NextResponse.json({ ok: true });
     }
+
+    const visibleTo = await resolveVisibleTo(caseId);
+    if (typeof visibleTo !== "string") {
+      console.error(`[sender-id] unresolved recipient error=${visibleTo.error}`);
+      return NextResponse.json({ ok: true });
+    }
+
+    const decision = authorizeInboundIntake(sender, visibleTo);
+    if (!decision.authorized) {
+      console.log(`[sender-id] dropped from=${sender.fromEmail ?? "null"}`);
+      return NextResponse.json({ ok: true });
+    }
+
+    const recorded = await recordEmailIntake(admin, {
+      caseId,
+      caseMemberId: decision.caseMemberId,
+      fromEmail: decision.fromEmail,
+      subject,
+      messageId: extracted.messageId,
+      inReplyTo: extracted.inReplyTo,
+      referencesHeader: extracted.references.length > 0 ? extracted.references.join(" ") : null,
+      branch: decision.branch,
+      submittedByUserId: decision.branch === "self" ? visibleTo : decision.userId,
+    });
+    if ("error" in recorded) {
+      console.error(`[sender-id] intake failed: ${recorded.error}`);
+      return NextResponse.json({ ok: true });
+    }
+    if ("duplicate" in recorded) {
+      console.log(`[sender-id] duplicate message_id=${extracted.messageId ?? "null"}`);
+      return NextResponse.json({ ok: true });
+    }
+
+    const attachments = Array.isArray(body.Attachments) ? body.Attachments : [];
+
+    if (decision.branch === "self") {
+      const sessionId = await findOrCreateSelfSession(admin, {
+        caseId,
+        userId: visibleTo,
+        subject,
+        thread: extracted,
+      });
+      if (!sessionId) {
+        return NextResponse.json({ ok: true });
+      }
+      const { error: linkSessionErr } = await admin
+        .from("email_intake")
+        .update({ sage_session_id: sessionId })
+        .eq("id", recorded.id);
+      if (linkSessionErr) {
+        console.error(`[sender-id] intake session link failed: ${linkSessionErr.message}`);
+      }
+      const createdDocuments = await storePendingDocuments({
+        admin,
+        caseId,
+        uploadedBy: visibleTo,
+        emailIntakeId: recorded.id,
+        subject,
+        attachments,
+      });
+      await runSelfEmailComposer({
+        admin,
+        caseId,
+        userId: visibleTo,
+        intakeId: recorded.id,
+        sessionId,
+        bodyText: extracted.bodyText,
+        documents: createdDocuments.map((doc) => ({ id: doc.id, filename: doc.filename })),
+      });
+      return NextResponse.json({ ok: true });
+    }
+
     const conversationId = await resolveOrCreateConversation(
       caseId,
       extracted,
       subject
     );
-    const attachments = Array.isArray(body.Attachments) ? body.Attachments : [];
     const createdDocuments: {
       id: string;
       storagePath: string;
@@ -445,102 +612,27 @@ export async function POST(req: NextRequest) {
     } else {
       let recipientUserId: string | null = null;
       if (attachments.length > 0) {
-        const visibleTo = await resolveVisibleTo(caseId);
-        if (typeof visibleTo !== "string") {
+        const attachmentRecipient = await resolveVisibleTo(caseId);
+        if (typeof attachmentRecipient !== "string") {
           console.error(
-            `[ingest-attach] skipped no recipient error=${visibleTo.error}`
+            `[ingest-attach] skipped no recipient error=${attachmentRecipient.error}`
           );
         } else {
-          recipientUserId = visibleTo;
+          recipientUserId = attachmentRecipient;
         }
       }
 
       if (recipientUserId) {
-        const usedPaths = new Set<string>();
-        const description = subject.trim() || "";
-        for (const att of attachments) {
-          const filename = (att.Name ?? "attachment").toString().slice(0, 255);
-          const contentType = (att.ContentType ?? "application/octet-stream").toString();
-
-          if (!ALLOWED_ATTACHMENT_TYPES.includes(contentType)) {
-            console.log(
-              `[ingest-attach] skipped type=${contentType} file=${filename}`
-            );
-            continue;
-          }
-
-          if (!att.Content || typeof att.Content !== "string") {
-            console.error(`[ingest-attach] no content file=${filename}`);
-            continue;
-          }
-
-          let buf: Buffer;
-          try {
-            buf = Buffer.from(att.Content, "base64");
-          } catch (e) {
-            console.error("[ingest-attach] failed to decode base64:", e);
-            continue;
-          }
-
-          if (buf.length > MAX_ATTACHMENT_BYTES) {
-            console.error(`[ingest-attach] too large file=${filename}`);
-            continue;
-          }
-
-          try {
-            const safeName = filename.replace(/[^a-zA-Z0-9.-]/g, "_");
-            let timestamp = Date.now();
-            let storagePath = `${caseId}/${recipientUserId}/${timestamp}-${safeName}`;
-            while (usedPaths.has(storagePath)) {
-              timestamp += 1;
-              storagePath = `${caseId}/${recipientUserId}/${timestamp}-${safeName}`;
-            }
-            usedPaths.add(storagePath);
-
-            const { error: uploadError } = await admin.storage
-              .from(DOCUMENTS_BUCKET)
-              .upload(storagePath, buf, { contentType, upsert: false });
-            if (uploadError) {
-              console.error(
-                `[ingest-attach] upload failed file=${filename}`,
-                uploadError
-              );
-              continue;
-            }
-
-            const { data: doc, error: docErr } = await admin
-              .from("documents")
-              .insert({
-                case_id: caseId,
-                uploaded_by: recipientUserId,
-                title: titleFromFilename(filename),
-                file_name: filename,
-                file_size_bytes: buf.length,
-                mime_type: contentType,
-                storage_path: storagePath,
-                category: "other",
-                description: description || filename,
-                content_hash: "pending",
-                visibility: "parents_only",
-                ai_processed: false,
-                status: "pending",
-              })
-              .select("id")
-              .single();
-            if (docErr || !doc) {
-              console.error(
-                `[ingest-attach] documents insert failed file=${filename}`,
-                docErr?.message ?? "insert failed"
-              );
-              continue;
-            }
-
-            const documentId = (doc as { id: string }).id;
-            createdDocuments.push({ id: documentId, storagePath, filename });
-          } catch (e) {
-            console.error("[ingest-attach] error:", e);
-          }
-        }
+        createdDocuments.push(
+          ...(await storePendingDocuments({
+            admin,
+            caseId,
+            uploadedBy: recipientUserId,
+            emailIntakeId: recorded.id,
+            subject,
+            attachments,
+          }))
+        );
       }
 
       try {

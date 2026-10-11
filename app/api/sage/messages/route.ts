@@ -3,7 +3,7 @@ import type { ClassifyPayload } from "@/lib/ai-classify";
 import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
 import { reconcileCalendarPlan } from "@/lib/sage/calendar-match";
 import { processChatMessage } from "@/lib/sage/chat";
-import { eventSubjectFromTexts, preferEventSubject } from "@/lib/sage/event-subject";
+import { loadConversationContext } from "@/lib/sage/conversation-context";
 import { redraftMessage } from "@/lib/sage/planner";
 import {
   forcedTypeFromProposal,
@@ -483,112 +483,6 @@ async function reviseOpenCalendar(opts: {
   };
 }
 
-function isoDate(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  return /^\d{4}-\d{2}-\d{2}$/.test(trimmed) ? trimmed : null;
-}
-
-/** Newest date and event subject already established on sage items in this session. */
-async function establishedInSession(
-  admin: AdminClient,
-  sessionId: string,
-  userId: string
-): Promise<{
-  date: { iso: string; raw: string } | null;
-  subject: string | null;
-  child: string | null;
-}> {
-  const { data: journals, error: journalErr } = await admin
-    .from("sage_journal_messages")
-    .select("sage_item_id")
-    .eq("session_id", sessionId)
-    .eq("user_id", userId)
-    .not("sage_item_id", "is", null);
-  if (journalErr || !journals) return { date: null, subject: null, child: null };
-  const itemIds = [
-    ...new Set(
-      (journals as { sage_item_id?: string | null }[])
-        .map((row) => row.sage_item_id)
-        .filter((id): id is string => typeof id === "string" && id.length > 0)
-    ),
-  ];
-  if (itemIds.length === 0) return { date: null, subject: null, child: null };
-  const { data: items, error: itemErr } = await admin
-    .from("sage_items")
-    .select("summary, evidence_excerpt, plan, tool_input, created_at")
-    .in("id", itemIds)
-    .eq("visible_to", userId)
-    .order("created_at", { ascending: false });
-  if (itemErr || !items) return { date: null, subject: null, child: null };
-
-  let date: { iso: string; raw: string } | null = null;
-  let subject: string | null = null;
-  let child: string | null = null;
-  for (const row of items as {
-    summary?: string | null;
-    evidence_excerpt?: string | null;
-    plan?: { proposals?: unknown[] } | null;
-    tool_input?: {
-      resolved_dates?: unknown;
-      event_subject?: unknown;
-      children?: unknown;
-    } | null;
-  }[]) {
-    if (!date && row.tool_input && Array.isArray(row.tool_input.resolved_dates)) {
-      for (const entry of row.tool_input.resolved_dates) {
-        if (!entry || typeof entry !== "object") continue;
-        const rec = entry as { status?: unknown; iso?: unknown; raw?: unknown };
-        const iso = isoDate(rec.iso);
-        if (rec.status === "resolved" && iso) {
-          date = {
-            iso,
-            raw: typeof rec.raw === "string" && rec.raw.trim() ? rec.raw.trim() : iso,
-          };
-          break;
-        }
-      }
-    }
-    const proposals = Array.isArray(row.plan?.proposals) ? row.plan.proposals : [];
-    if (!date) {
-      for (const raw of proposals) {
-        if (!raw || typeof raw !== "object") continue;
-        const iso = isoDate((raw as { date?: unknown }).date);
-        if (iso) {
-          date = { iso, raw: iso };
-          break;
-        }
-      }
-    }
-    const storedSubject =
-      typeof row.tool_input?.event_subject === "string"
-        ? row.tool_input.event_subject
-        : "";
-    const found = eventSubjectFromTexts([
-      storedSubject,
-      row.summary ?? "",
-      row.evidence_excerpt ?? "",
-      ...proposals.map((p) =>
-        p && typeof p === "object" && typeof (p as { draft?: unknown }).draft === "string"
-          ? (p as { draft: string }).draft
-          : ""
-      ),
-    ]);
-    subject = preferEventSubject(subject, found);
-    if (!child && Array.isArray(row.tool_input?.children)) {
-      for (const entry of row.tool_input.children) {
-        if (!entry || typeof entry !== "object") continue;
-        const name = (entry as { name?: unknown }).name;
-        if (typeof name === "string" && name.trim()) {
-          child = name.trim();
-          break;
-        }
-      }
-    }
-  }
-  return { date, subject, child };
-}
-
 export async function GET(request: NextRequest) {
   try {
     const supabase = await createClient();
@@ -1016,17 +910,15 @@ export async function POST(request: NextRequest) {
             processed,
           });
         } else {
-          const established = sessionId
-            ? await establishedInSession(admin, sessionId, user.id)
-            : { date: null, subject: null, child: null };
+          const conversation = sessionId
+            ? await loadConversationContext(admin, sessionId, user.id, timezone)
+            : null;
           const { reply, result } = await processChatMessage({
             message: trimmed,
             case_id: caseId,
             timezone,
             source_id: (userRow as { id: string }).id,
-            established_date: established.date,
-            established_subject: established.subject,
-            established_child: established.child,
+            conversation,
           });
           if (reply.trim()) sageContent = reply;
 
@@ -1038,7 +930,8 @@ export async function POST(request: NextRequest) {
           );
           const childName =
             result.interpretation.entities.children.find((c) => c.name?.trim())?.name?.trim() ??
-            established.child;
+            conversation?.event.child ??
+            null;
           const resolvedIso =
             result.resolved_dates.find((d) => d.status === "resolved" && d.iso)?.iso ?? null;
           if (sessionId && (noteOnly || turnHasCalendar)) {
@@ -1072,7 +965,7 @@ export async function POST(request: NextRequest) {
                 timezone,
                 childIds: result.child_ids,
                 resolvedIso,
-                subject: result.event_subject ?? established.subject,
+                subject: result.event_subject ?? conversation?.event.subject ?? null,
                 childName,
               });
               if (revised) {
@@ -1099,7 +992,7 @@ export async function POST(request: NextRequest) {
                 timezone,
                 childIds: result.child_ids,
                 resolvedIso,
-                subject: result.event_subject ?? established.subject,
+                subject: result.event_subject ?? conversation?.event.subject ?? null,
                 childName,
               });
               if (revised) {

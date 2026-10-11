@@ -3,6 +3,7 @@
  * Propose only; does not execute tools or write sage_items.
  */
 
+import type { ConversationContext } from "@/lib/sage/conversation-context";
 import { buildObservationFromChat } from "@/lib/sage/observation-builder";
 import {
   processObservation,
@@ -25,11 +26,8 @@ export type ProcessChatMessageInput = {
   timezone: string;
   /** Journal message UUID — used as Observation / processObservation source_id. */
   source_id?: string;
-  /** Optional conversation metadata (unused in v1 single-intent). */
-  conversation_context?: unknown;
-  established_date?: { iso: string; raw: string } | null;
-  established_subject?: string | null;
-  established_child?: string | null;
+  /** Compact thread context. Replaces carrying a date forward on its own. */
+  conversation?: ConversationContext | null;
 };
 
 function buildReply(result: ProcessObservationResult): string {
@@ -69,9 +67,7 @@ export async function processChatMessage(
     source_id: input.source_id ?? observation.target_id,
     sender: "You",
     plan_sender: "You",
-    established_date: input.established_date ?? null,
-    established_subject: input.established_subject ?? null,
-    established_child: input.established_child ?? null,
+    conversation: input.conversation ?? null,
   });
 
   const actions: ChatAction[] = result.plan.proposals.map((p) => ({

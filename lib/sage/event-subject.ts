@@ -4,6 +4,7 @@
  */
 
 const SUBJECTS = [
+  "track meet",
   "wrestling match",
   "swim meet",
   "choir concert",

@@ -9,6 +9,13 @@ import {
   type Observation,
 } from "@/lib/sage/observation-builder";
 import { reconcileCalendarPlan } from "@/lib/sage/calendar-match";
+import {
+  bareCorrection,
+  formatConversationContext,
+  hasEstablishedEvent,
+  missingEventQuestion,
+  type ConversationContext,
+} from "@/lib/sage/conversation-context";
 import { eventSubjectFromTexts, preferEventSubject } from "@/lib/sage/event-subject";
 import { plan, type Plan } from "@/lib/sage/planner";
 import {
@@ -46,14 +53,10 @@ export type ObservationProcessContext = {
   /** Optional override for "today" in date resolution (tests). */
   today?: Date;
   /**
-   * Date already resolved earlier in this session or thread.
-   * Used only when this turn's own message has no date.
+   * Compact context for a chat turn. Date, subject, and child already
+   * established in the session come from here — not from a separate carry-forward.
    */
-  established_date?: { iso: string; raw: string } | null;
-  /** More specific event subject from earlier in the conversation, if any. */
-  established_subject?: string | null;
-  /** Child named earlier in the conversation, when this turn does not repeat the name. */
-  established_child?: string | null;
+  conversation?: ConversationContext | null;
 };
 
 export type ProcessObservationResult = {
@@ -77,7 +80,11 @@ export async function processObservation(
   observation: Observation,
   context: ObservationProcessContext
 ): Promise<ProcessObservationResult> {
-  const observationText = formatObservationForUnderstanding(observation);
+  const turnText = formatObservationForUnderstanding(observation);
+  const contextBlock = context.conversation
+    ? formatConversationContext(context.conversation)
+    : "";
+  const observationText = contextBlock ? `${contextBlock}\n\n${turnText}` : turnText;
 
   const interpretation = await interpret({
     source_type: context.source_type,
@@ -105,6 +112,7 @@ export async function processObservation(
       children: entities.children,
       dates: entities.dates,
       schedule_item: scheduleItem,
+      context: contextBlock || null,
     })
   );
   const categoryBlob = [
@@ -132,8 +140,8 @@ export async function processObservation(
     context.case_id,
     childNames
   );
-  if (child_ids.length === 0 && context.established_child?.trim()) {
-    const carried = context.established_child.trim();
+  if (child_ids.length === 0 && context.conversation?.event.child?.trim()) {
+    const carried = context.conversation.event.child.trim();
     const extra = await resolveChildren(context.case_id, [carried]);
     if (extra.child_ids.length > 0) {
       child_ids = extra.child_ids;
@@ -197,23 +205,23 @@ export async function processObservation(
   resolved_dates.length = 0;
   resolved_dates.push(...fromMessage);
 
-  const established = context.established_date;
+  const contextDate = context.conversation?.event.date ?? null;
   if (
     !resolved_dates.some((d) => d.status === "resolved" && d.iso) &&
-    established?.iso &&
-    /^\d{4}-\d{2}-\d{2}$/.test(established.iso)
+    contextDate &&
+    /^\d{4}-\d{2}-\d{2}$/.test(contextDate)
   ) {
     resolved_dates.push({
-      raw: established.raw || established.iso,
+      raw: contextDate,
       status: "resolved",
-      iso: established.iso,
-      reason: "Inherited from earlier in the conversation",
+      iso: contextDate,
+      reason: "From conversation context",
     });
     console.log(
       "[sage/dates]",
       JSON.stringify({
         source_type: context.source_type,
-        inherited: { raw: established.raw, iso: established.iso, source: "conversation" },
+        inherited: { iso: contextDate, source: "conversation" },
       })
     );
   }
@@ -293,15 +301,43 @@ export async function processObservation(
   const event_subject =
     preferEventSubject(
       eventSubjectFromTexts([messageBodies, intent.evidence_excerpt ?? ""]),
-      context.established_subject ?? null
+      context.conversation?.event.subject ?? null
     ) ?? undefined;
   const namedChild = childResolutions.find((r) => r.child_id)?.name
     ?? childNames[0]
     ?? null;
-  const childName = namedChild ?? context.established_child ?? null;
+  const childName = namedChild ?? context.conversation?.event.child ?? null;
+  const correction = bareCorrection(messageBodies);
+  const knownEvent = hasEstablishedEvent(context.conversation);
+  if (correction && !knownEvent) {
+    draftedPlan = {
+      status: "awaiting_clarification",
+      proposals: [
+        {
+          type: "ask_clarification",
+          draft: missingEventQuestion(correction),
+          depends_on: null,
+          requires_approval: true,
+        },
+      ],
+      reasoning: "The turn names a value and the session has no event under discussion.",
+    };
+  }
   const clockMinutes = parseClockMinutes(messageBodies);
   const alreadyCalendar = draftedPlan.proposals.some((p) => p.type === "calendar_update");
-  if (!alreadyCalendar && resolvedIso && event_subject && clockMinutes != null) {
+  const correctionNeedsCalendar =
+    !!correction &&
+    knownEvent &&
+    (correction.kind === "time" || correction.kind === "date" || correction.kind === "place");
+  if (correction && knownEvent) {
+    draftedPlan = {
+      ...draftedPlan,
+      proposals: draftedPlan.proposals.filter(
+        (p) => p.type !== "note_only" && p.type !== "ask_clarification"
+      ),
+    };
+  }
+  if (!alreadyCalendar && resolvedIso && event_subject && (clockMinutes != null || correctionNeedsCalendar)) {
     draftedPlan = {
       ...draftedPlan,
       status: "ready",

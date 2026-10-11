@@ -69,7 +69,6 @@ export async function POST(req: NextRequest) {
       message,
       case_id: caseId,
       timezone,
-      conversation_context: body?.conversation_context,
     });
 
     return NextResponse.json({

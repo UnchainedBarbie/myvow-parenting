@@ -812,8 +812,20 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    if (!sageItem && revisedItem) {
+      const { data: revisedRow } = await admin
+        .from("sage_items")
+        .select(SAGE_ITEM_SELECT)
+        .eq("id", revisedItem.id)
+        .eq("visible_to", user.id)
+        .maybeSingle();
+      if (revisedRow) sageItem = revisedRow as Record<string, unknown>;
+    }
+
     const sageItemId =
-      sageItem && typeof sageItem.id === "string" ? sageItem.id : null;
+      (sageItem && typeof sageItem.id === "string" ? sageItem.id : null) ??
+      revisedItem?.id ??
+      null;
 
     const sagePayload = {
       user_id: user.id,

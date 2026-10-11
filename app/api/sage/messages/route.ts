@@ -175,21 +175,53 @@ function revisionReply(proposalType: "reply_coparent" | "ask_clarification"): st
     : "Added that to your reply to Co-Parent.";
 }
 
+function openReplyProposal(raw: unknown): {
+  type: "reply_coparent" | "ask_clarification";
+  draft?: string;
+  revised_text?: string;
+} | null {
+  if (!raw || typeof raw !== "object") return null;
+  const proposal = raw as {
+    type?: string;
+    draft?: string;
+    revised_text?: string;
+    executed?: boolean;
+    approved?: boolean;
+    status?: string;
+  };
+  if (
+    proposal.executed === true ||
+    proposal.approved === true ||
+    proposal.status === "waived_by_user"
+  ) {
+    return null;
+  }
+  if (proposal.type !== "reply_coparent" && proposal.type !== "ask_clarification") {
+    return null;
+  }
+  return {
+    type: proposal.type,
+    draft: proposal.draft,
+    revised_text: proposal.revised_text,
+  };
+}
+
 /**
- * Pending reply or clarification drafts in this session that the revise action can still edit.
+ * The reply or clarification most recently added in this session that is still waiting.
+ * Item status is ignored: approving one proposal marks the whole item in_progress.
  */
-async function revisablePendingDrafts(
+async function latestRevisableDraft(
   admin: AdminClient,
   sessionId: string,
   userId: string
-): Promise<RevisableDraft[]> {
+): Promise<RevisableDraft | null> {
   const { data: journals, error: journalErr } = await admin
     .from("sage_journal_messages")
     .select("sage_item_id")
     .eq("session_id", sessionId)
     .eq("user_id", userId)
     .not("sage_item_id", "is", null);
-  if (journalErr || !journals) return [];
+  if (journalErr || !journals) return null;
 
   const itemIds = [
     ...new Set(
@@ -198,17 +230,16 @@ async function revisablePendingDrafts(
         .filter((id): id is string => typeof id === "string" && id.length > 0)
     ),
   ];
-  if (itemIds.length === 0) return [];
+  if (itemIds.length === 0) return null;
 
   const { data: items, error: itemErr } = await admin
     .from("sage_items")
-    .select("id, summary, plan, status")
+    .select("id, summary, plan, created_at")
     .in("id", itemIds)
     .eq("visible_to", userId)
-    .eq("status", "pending");
-  if (itemErr || !items) return [];
+    .order("created_at", { ascending: false });
+  if (itemErr || !items) return null;
 
-  const drafts: RevisableDraft[] = [];
   for (const row of items as {
     id?: string;
     summary?: string | null;
@@ -216,25 +247,17 @@ async function revisablePendingDrafts(
   }[]) {
     if (!row.id || !row.plan || typeof row.plan !== "object") continue;
     const proposals = Array.isArray(row.plan.proposals) ? row.plan.proposals : [];
+    let chosen: RevisableDraft | null = null;
     proposals.forEach((raw, proposalIndex) => {
-      if (!raw || typeof raw !== "object") return;
-      const proposal = raw as {
-        type?: string;
-        draft?: string;
-        revised_text?: string;
-        executed?: boolean;
-      };
-      if (proposal.executed === true) return;
-      if (proposal.type !== "reply_coparent" && proposal.type !== "ask_clarification") {
-        return;
-      }
+      const proposal = openReplyProposal(raw);
+      if (!proposal) return;
       const currentDraft =
         typeof proposal.revised_text === "string" && proposal.revised_text.trim()
           ? proposal.revised_text.trim()
           : typeof proposal.draft === "string"
             ? proposal.draft.trim()
             : "";
-      drafts.push({
+      chosen = {
         itemId: row.id as string,
         summary: (row.summary ?? "").trim(),
         proposalType: proposal.type,
@@ -244,10 +267,11 @@ async function revisablePendingDrafts(
         proposals: proposals.map((p) =>
           p && typeof p === "object" ? { ...(p as Record<string, unknown>) } : {}
         ),
-      });
+      };
     });
+    if (chosen) return chosen;
   }
-  return drafts;
+  return null;
 }
 
 async function revisePendingDraft(opts: {
@@ -276,12 +300,11 @@ async function revisePendingDraft(opts: {
     .update({ plan: updatedPlan })
     .eq("id", opts.target.itemId)
     .eq("visible_to", opts.userId)
-    .eq("status", "pending")
     .select("id");
   if (error || !data?.length) {
     console.error(
       "[sage/messages] revise pending draft failed:",
-      error?.message ?? "no pending row updated"
+      error?.message ?? "no row updated"
     );
     return null;
   }
@@ -725,16 +748,16 @@ export async function POST(request: NextRequest) {
           });
           if (reply.trim()) sageContent = reply;
 
-          const pendingDrafts =
+          const latestDraft =
             sessionId && isNoteOnlyPlan(result.plan)
-              ? await revisablePendingDrafts(admin, sessionId, user.id)
-              : [];
-          if (pendingDrafts.length === 1) {
+              ? await latestRevisableDraft(admin, sessionId, user.id)
+              : null;
+          if (latestDraft) {
             const revised = await revisePendingDraft({
               admin,
               userId: user.id,
               guidance: trimmed,
-              target: pendingDrafts[0],
+              target: latestDraft,
             });
             if (revised) {
               sageContent = revised.reply;

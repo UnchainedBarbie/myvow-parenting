@@ -407,10 +407,33 @@ function needsAttention(plan: Plan): boolean {
   return plan.proposals.some((p) => p.type !== "note_only");
 }
 
+function asSentence(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed) return "";
+  return /[.!?]$/.test(trimmed) ? trimmed : `${trimmed}.`;
+}
+
+/** Inbound summaries say "your co-parent"; Sage's narration uses the Co-Parent label. */
+function coparentLabel(text: string): string {
+  return text
+    .replace(/\byour\s+co-parent\b/gi, "Co-Parent")
+    .replace(/\bco-parent\b/gi, "Co-Parent");
+}
+
+/**
+ * Sage speaking to the parent. Never the outbound draft: reply_coparent and the
+ * clarification this path asks Co-Parent are the parent's message to send.
+ */
 function narrationFor(plan: Plan, summary: string): string {
-  const reply = plan.proposals.find((p) => p.type === "reply_coparent")?.draft?.trim();
-  const ask = plan.proposals.find((p) => p.type === "ask_clarification")?.draft?.trim();
-  return reply || ask || summary.trim() || "Co-Parent sent something that needs a look.";
+  const about = asSentence(coparentLabel(summary));
+  const topic = about || "Co-Parent sent a message.";
+  const hasOutboundDraft = plan.proposals.some(
+    (p) => p.type === "reply_coparent" || p.type === "ask_clarification"
+  );
+  if (hasOutboundDraft) {
+    return `${topic} A reply is ready for you to review.`;
+  }
+  return about || "Co-Parent sent something that needs a look.";
 }
 
 function logMsgSage(messageId: string, detail: string): void {

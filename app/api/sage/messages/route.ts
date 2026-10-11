@@ -309,7 +309,7 @@ async function revisePendingDraft(opts: {
   proposals[opts.target.proposalIndex] = {
     ...proposals[opts.target.proposalIndex],
     revised_text: revisedText,
-    ...(opts.clearDependsOn ? { depends_on: null } : {}),
+    ...(opts.clearDependsOn ? { depends_on: null, date_supplied: true } : {}),
   };
   const updatedPlan = { ...opts.target.plan, proposals };
   const { data, error } = await opts.admin

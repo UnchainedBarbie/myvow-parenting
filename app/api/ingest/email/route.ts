@@ -146,10 +146,19 @@ type ConversationStampRow = {
 function logConvMatch(
   step: "thread" | "subject" | "create",
   conversationId: string | null,
-  created: boolean
+  created: boolean,
+  threadSubject?: "accepted" | "rejected"
 ): void {
+  const decision = threadSubject ? ` thread_subject=${threadSubject}` : "";
   console.log(
-    `[conv-match] step=${step} conversation_id=${conversationId ?? "none"} created=${created}`
+    `[conv-match] step=${step} conversation_id=${conversationId ?? "none"} created=${created}${decision}`
+  );
+}
+
+function subjectsMatch(inboundSubject: string, conversationSubject: string | null): boolean {
+  return (
+    normalizeConversationSubject(inboundSubject) ===
+    normalizeConversationSubject(conversationSubject ?? "")
   );
 }
 
@@ -238,11 +247,12 @@ async function resolveOrCreateConversation(
     const recipientUserId = typeof visibleTo === "string" ? visibleTo : null;
     const coparentEmail = await coparentReplyEmail(admin, caseId, recipientUserId);
     const candidates = threadIdCandidates(thread);
+    let threadSubjectRejected = false;
 
     if (candidates.length > 0) {
       const { data: byThread, error: threadErr } = await admin
         .from("conversations")
-        .select("id, email_thread_id, coparent_email")
+        .select("id, subject, email_thread_id, coparent_email")
         .eq("case_id", caseId)
         .in("email_thread_id", candidates)
         .order("updated_at", { ascending: false })
@@ -253,51 +263,58 @@ async function resolveOrCreateConversation(
         return null;
       }
 
-      const threadRow = (byThread ?? [])[0] as ConversationStampRow | undefined;
+      const threadRow = (byThread ?? [])[0] as
+        | (ConversationStampRow & { subject?: string | null })
+        | undefined;
       if (threadRow?.id) {
-        await stampMatchedConversation(admin, threadRow, thread, coparentEmail);
-        logConvMatch("thread", threadRow.id, false);
-        return threadRow.id;
+        if (subjectsMatch(subject, threadRow.subject ?? null)) {
+          await stampMatchedConversation(admin, threadRow, thread, coparentEmail);
+          logConvMatch("thread", threadRow.id, false, "accepted");
+          return threadRow.id;
+        }
+        logConvMatch("thread", threadRow.id, false, "rejected");
+        threadSubjectRejected = true;
       }
 
-      const { data: byMessage, error: msgErr } = await admin
-        .from("messages")
-        .select("conversation_id")
-        .eq("case_id", caseId)
-        .in("email_message_id", candidates)
-        .not("conversation_id", "is", null)
-        .order("created_at", { ascending: false })
-        .limit(1);
-
-      if (msgErr) {
-        console.error(`[conv-match] step=thread error=${msgErr.message}`);
-        return null;
-      }
-
-      const messageConversationId = (
-        (byMessage ?? [])[0] as { conversation_id?: string | null } | undefined
-      )?.conversation_id;
-
-      if (messageConversationId) {
-        const { data: conv, error: convErr } = await admin
-          .from("conversations")
-          .select("id, email_thread_id, coparent_email")
-          .eq("id", messageConversationId)
+      if (!threadSubjectRejected) {
+        const { data: byMessage, error: msgErr } = await admin
+          .from("messages")
+          .select("conversation_id")
           .eq("case_id", caseId)
-          .maybeSingle();
-        if (convErr) {
-          console.error(`[conv-match] step=thread error=${convErr.message}`);
+          .in("email_message_id", candidates)
+          .not("conversation_id", "is", null)
+          .order("created_at", { ascending: false })
+          .limit(1);
+
+        if (msgErr) {
+          console.error(`[conv-match] step=thread error=${msgErr.message}`);
           return null;
         }
-        if (conv?.id) {
-          await stampMatchedConversation(
-            admin,
-            conv as ConversationStampRow,
-            thread,
-            coparentEmail
-          );
-          logConvMatch("thread", conv.id as string, false);
-          return conv.id as string;
+
+        const messageConversationId = (
+          (byMessage ?? [])[0] as { conversation_id?: string | null } | undefined
+        )?.conversation_id;
+
+        if (messageConversationId) {
+          const { data: conv, error: convErr } = await admin
+            .from("conversations")
+            .select("id, subject, email_thread_id, coparent_email")
+            .eq("id", messageConversationId)
+            .eq("case_id", caseId)
+            .maybeSingle();
+          if (convErr) {
+            console.error(`[conv-match] step=thread error=${convErr.message}`);
+            return null;
+          }
+          if (conv?.id) {
+            const matched = conv as ConversationStampRow & { subject?: string | null };
+            if (subjectsMatch(subject, matched.subject ?? null)) {
+              await stampMatchedConversation(admin, matched, thread, coparentEmail);
+              logConvMatch("thread", matched.id, false, "accepted");
+              return matched.id;
+            }
+            logConvMatch("thread", matched.id, false, "rejected");
+          }
         }
       }
     }

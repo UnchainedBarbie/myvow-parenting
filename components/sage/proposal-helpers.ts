@@ -153,6 +153,7 @@ export function resolvedCalendarIso(
 /**
  * Show the manual date field only when a calendar_update has no chosen_date
  * AND the engine did not already resolve a real date.
+ * date_supplied is set only by the chat-fold path when it clears a gate.
  */
 export function needsDateField(
   p: SageProposal,
@@ -170,6 +171,7 @@ export function needsDateField(
   if (isLogDocumentProposal(p.type)) return false;
   if ((p.chosen_date ?? "").trim()) return false;
   if (resolvedCalendarIso(item)) return false;
+  if (p.date_supplied === true) return false;
   return true;
 }
 

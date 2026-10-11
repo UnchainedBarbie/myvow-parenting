@@ -3,6 +3,11 @@ export type SageProposal = {
   draft: string;
   revised_text?: string | null;
   depends_on: string | null;
+  /**
+   * Set only when the chat-fold path clears depends_on.
+   * The parent already supplied the missing detail, so the card does not ask for a date.
+   */
+  date_supplied?: boolean;
   requires_approval?: boolean;
   approved?: boolean;
   approved_at?: string;

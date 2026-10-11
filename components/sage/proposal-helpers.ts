@@ -18,11 +18,11 @@ export {
 
 export function proposalTypeLabel(
   type: string,
-  proposal?: { calendar_intent?: string | null }
+  proposal?: { calendar_intent?: string | null; audience?: string | null }
 ): string {
   switch (type) {
     case "ask_clarification":
-      return "Ask Co-Parent";
+      return proposal?.audience === "parent" ? "Ask you" : "Ask Co-Parent";
     case "reply_coparent":
       return "Reply to Co-Parent";
     case "calendar_update":

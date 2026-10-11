@@ -55,9 +55,20 @@ const STOPWORDS = new Set([
 type CalendarRow = {
   id: string;
   title: string | null;
+  description: string | null;
   child_id: string | null;
   start_time: string;
+  all_day: boolean | null;
   status: string | null;
+};
+
+export type CalendarFact = {
+  id: string;
+  title: string;
+  description: string;
+  /** Clock from start_time, such as "2:00 PM". Absent for all-day events. */
+  timeLabel: string | null;
+  dateLabel: string;
 };
 
 export type CalendarMatchInput = {
@@ -78,6 +89,10 @@ function significantWords(text: string): Set<string> {
     .split(/\s+/)
     .filter((word) => word.length > 2 && !STOPWORDS.has(word));
   return new Set(cleaned);
+}
+
+export function eventWordsOverlap(corpus: string, title: string): boolean {
+  return sharesDistinctiveWord(significantWords(corpus), title);
 }
 
 function sharesDistinctiveWord(proposed: Set<string>, title: string): boolean {
@@ -160,6 +175,17 @@ function formatDateLabel(iso: string, timezone: string): string {
   }).format(noon);
 }
 
+function formatInstantDate(iso: string, timezone: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    weekday: "long",
+    month: "short",
+    day: "numeric",
+  }).format(date);
+}
+
 function formatClock(iso: string, timezone: string): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return "";
@@ -195,7 +221,7 @@ async function loadCandidates(input: CalendarMatchInput): Promise<CalendarRow[] 
   const admin = getServiceRoleClient();
   const { data, error } = await admin
     .from("calendar_events")
-    .select("id, title, child_id, start_time, status")
+    .select("id, title, description, child_id, start_time, all_day, status")
     .eq("case_id", input.caseId)
     .is("deleted_at", null)
     .gte("start_time", start.toISOString())
@@ -272,6 +298,36 @@ function outcomeFor(
     calendar_intent: "offer",
     calendar_event_id: null,
   };
+}
+
+/**
+ * Same match the calendar check uses: case, not deleted, not canceled,
+ * start_time within a day of the resolved date, child filter, one shared distinctive word.
+ * Empty when there is no resolved date. Null when the query fails.
+ */
+export async function findMatchingEvents(
+  input: CalendarMatchInput
+): Promise<CalendarFact[] | null> {
+  if (!input.iso || !parseIso(input.iso)) return [];
+  const rows = await loadCandidates(input);
+  if (rows == null) return null;
+  const proposed = significantWords(
+    `${input.summary} ${input.corpus} ${input.subject ?? ""}`
+  );
+  return rows
+    .filter((row) => sharesDistinctiveWord(proposed, row.title ?? ""))
+    .map((row) => {
+      const title = (row.title ?? "").trim() || "Untitled";
+      const allDay = row.all_day === true;
+      const clock = formatClock(row.start_time, input.timezone);
+      return {
+        id: row.id,
+        title,
+        description: (row.description ?? "").trim(),
+        timeLabel: allDay || !clock ? null : clock,
+        dateLabel: formatInstantDate(row.start_time, input.timezone),
+      };
+    });
 }
 
 export async function reconcileCalendarPlan(

@@ -5,6 +5,7 @@
  */
 
 import { isUserCommand } from "@/lib/sage/observation-builder";
+import { NO_DETAIL_REPLY, unsupportedFacts } from "@/lib/sage/outbound-facts";
 import { coparentShareInvolves } from "@/lib/expenses-share";
 
 const SAGE_MODEL = "claude-sonnet-4-6";
@@ -29,6 +30,17 @@ export type PlanContext = {
     allocation_status?: string;
     notify_coparent?: boolean;
   };
+  /**
+   * Inbound message, conversation context, and case-ledger lines.
+   * The only facts an outbound draft may repeat.
+   */
+  outbound_sources?: string;
+  /** Set when the co-parent asked for a time, date, place, or amount. */
+  detail_request?: {
+    question: string;
+    /** Fact copied from a case record, or null when the sources do not have it. */
+    record_line: string | null;
+  } | null;
 };
 
 export type Proposal = {
@@ -46,6 +58,8 @@ export type Proposal = {
   attached_document_id?: string;
   attached_file_name?: string;
   attached_file_url?: string;
+  /** ask_clarification aimed at the parent, not the co-parent. */
+  audience?: "parent" | "coparent";
   /** Classify fields carried on a log_document proposal. */
   title?: string;
   description?: string;
@@ -74,14 +88,25 @@ Write in the parent's first-person voice. Address the co-parent directly as "you
 Never refer to the co-parent in the third person. Never use their name or email.
 Voice: warm, calm — never corporate, never blaming.
 No red flags, shame, or escalation. No markdown. No quotes around the sentence.
+
+This sentence is a written record that will be sent to the other parent. A reply may state only facts present in one of: the inbound message, the conversation context, or the case ledgers supplied in the allowed sources (calendar_events, expenses, documents).
+Do not supply a time, date, place, amount, or name that is not in those sources.
+Do not claim that the parent or Sage checked, confirmed, looked up, verified, or spoke to anyone.
+If the co-parent asked for a detail that is not in those sources, say only that you will confirm and follow up. Never state a missing value as if it were known.
+
+Negative example — do not write this when no source says 2:00 PM:
+"I just checked and the recital starts at 2:00 PM on Saturday — let me know if you need any other details to plan your day."
+That sentence invents a start time and claims a check that did not happen.
+
 Respond with ONLY the single sentence — no preamble.`;
 
 function proposal(
   type: Proposal["type"],
   draft: string,
-  depends_on: string | null = null
+  depends_on: string | null = null,
+  extra?: Pick<Proposal, "audience">
 ): Proposal {
-  return { type, draft, depends_on, requires_approval: true };
+  return { type, draft, depends_on, requires_approval: true, ...extra };
 }
 
 function isInformational(ctx: PlanContext): boolean {
@@ -236,6 +261,48 @@ export async function callAnthropicDraft(
   }
 }
 
+function replyPrompt(ctx: PlanContext): string {
+  const record = ctx.detail_request?.record_line?.trim();
+  const recordLine = record
+    ? `State this from the record, and no other time, date, place, amount, or name: ${record}`
+    : "If a requested detail is not in the allowed sources, say only that you will confirm and follow up.";
+  return `Draft ONE short calm message the parent is sending to their co-parent, responding to what the co-parent said. Do not commit to unapproved calendar changes.
+State only facts from the allowed sources. Do not supply a time, date, place, amount, or name that is not in those sources. Do not claim that anyone checked, confirmed, looked up, verified, or spoke to anyone.
+${recordLine}
+Context summary: ${ctx.summary}
+Item type: ${ctx.item_type}
+Domain: ${ctx.domain}`;
+}
+
+/**
+ * Two generations at most. A draft whose time, date, or amount is not in the
+ * sources is not returned. The second failure becomes the no-detail sentence.
+ */
+async function draftCheckedOutbound(userPrompt: string, sources: string): Promise<string> {
+  const allowed = sources.trim() || "(none)";
+  const base = `${userPrompt}\n\nAllowed sources (the only facts you may use):\n${allowed}`;
+  const first = await callAnthropicDraft(base, OUTBOUND_DRAFT_SYSTEM);
+  const firstMissing = first ? unsupportedFacts(first, sources) : null;
+  if (first && firstMissing && firstMissing.length === 0) return first;
+  if (first && firstMissing && firstMissing.length > 0) {
+    console.error("[sage/outbound] invented fact rejected", {
+      draft: first,
+      missing: firstMissing,
+    });
+  }
+  const retryPrompt = first
+    ? `${base}\n\nThe previous sentence was rejected because it included ${firstMissing?.join("; ")} which is not in the allowed sources. Write the sentence again using only those sources. If the detail is missing, say only that you will confirm and follow up. Do not claim that anyone checked, confirmed, looked up, verified, or spoke to anyone.`
+    : base;
+  const second = await callAnthropicDraft(retryPrompt, OUTBOUND_DRAFT_SYSTEM);
+  const secondMissing = second ? unsupportedFacts(second, sources) : null;
+  if (second && secondMissing && secondMissing.length === 0) return second;
+  console.error("[sage/outbound] fact check failed twice; no-detail fallback", {
+    draft: second ?? first,
+    missing: secondMissing ?? firstMissing ?? ["no draft"],
+  });
+  return NO_DETAIL_REPLY;
+}
+
 async function draftWithLlm(
   kind: "ask_clarification" | "reply_coparent",
   ctx: PlanContext,
@@ -254,6 +321,7 @@ Unclear dates: ${ctx.resolved_dates
   .map((d) => d.raw)
   .join(", ") || "(none)"}`
         : `Draft ONE short calm question the parent is sending to their co-parent, asking for the missing detail.
+State only facts from the allowed sources. Do not supply a time, date, place, amount, or name that is not in those sources.
 Context summary: ${ctx.summary}
 What needs clarifying: ${blocker}
 Unresolved children: ${ctx.unresolved_children.join(", ") || "(none)"}
@@ -261,18 +329,14 @@ Unclear dates: ${ctx.resolved_dates
   .filter((d) => d.status === "needs_clarification")
   .map((d) => d.raw)
   .join(", ") || "(none)"}`
-      : `Draft ONE short calm message the parent is sending to their co-parent, responding to what the co-parent said. Do not commit to unapproved calendar changes.
-Context summary: ${ctx.summary}
-Item type: ${ctx.item_type}
-Domain: ${ctx.domain}`;
+      : replyPrompt(ctx);
 
   const outbound =
     kind === "reply_coparent" || (kind === "ask_clarification" && !userCommand(ctx));
-  const system = outbound ? OUTBOUND_DRAFT_SYSTEM : DRAFT_SYSTEM;
-  const first = await callAnthropicDraft(userPrompt, system);
+  if (outbound) return draftCheckedOutbound(userPrompt, ctx.outbound_sources ?? "");
+  const first = await callAnthropicDraft(userPrompt, DRAFT_SYSTEM);
   if (first) return first;
-  // one retry — same pattern as Understanding
-  const second = await callAnthropicDraft(userPrompt, system);
+  const second = await callAnthropicDraft(userPrompt, DRAFT_SYSTEM);
   if (second) return second;
   return fallback;
 }
@@ -287,10 +351,15 @@ export async function redraftMessage(params: {
   guidance: string;
   /** Item source. A chat clarification is Sage asking the parent; any other clarification is outbound. */
   sourceType?: string | null;
+  /** parent = Sage asking the user. That question is not an outbound draft. */
+  audience?: "parent" | "coparent" | null;
+  /** Inbound message, conversation, ledger lines, and this turn's guidance. Not the current draft. */
+  sources?: string | null;
 }): Promise<string | null> {
   const parentFacingClarification =
     params.proposalType === "ask_clarification" &&
-    (params.sourceType ?? "").trim().toLowerCase() === "chat";
+    (params.audience === "parent" ||
+      (params.sourceType ?? "").trim().toLowerCase() === "chat");
   const kindLabel = parentFacingClarification
     ? "clarification question to the parent"
     : params.proposalType === "ask_clarification"
@@ -298,21 +367,50 @@ export async function redraftMessage(params: {
       : "message the parent is sending to their co-parent";
   const guidance = params.guidance.trim() || "(no specific guidance — improve clarity and calm tone)";
   const userPrompt = `Redraft this ${kindLabel} as ONE short calm sentence.
+The current draft is not a source of facts. Use only the allowed sources and the user guidance.
 Context summary: ${params.summary}
 Current draft: ${params.currentDraft}
 User guidance for the rewrite: ${guidance}`;
-  const system = parentFacingClarification ? DRAFT_SYSTEM : OUTBOUND_DRAFT_SYSTEM;
-
-  const first = await callAnthropicDraft(userPrompt, system);
-  if (first) return first;
-  const second = await callAnthropicDraft(userPrompt, system);
-  return second;
+  if (parentFacingClarification) {
+    const first = await callAnthropicDraft(userPrompt, DRAFT_SYSTEM);
+    if (first) return first;
+    return callAnthropicDraft(userPrompt, DRAFT_SYSTEM);
+  }
+  const sources = [params.sources, guidance].filter((part) => part && part.trim()).join("\n");
+  return draftCheckedOutbound(userPrompt, sources);
 }
 
 /**
  * Produce a Plan of proposals. Deterministic routing; LLM only drafts ask/reply text.
  */
 export async function plan(ctx: PlanContext): Promise<Plan> {
+  if (ctx.detail_request && !userCommand(ctx)) {
+    if (ctx.detail_request.record_line) {
+      const replyDraft = await draftWithLlm("reply_coparent", ctx, NO_DETAIL_REPLY);
+      return {
+        status: "ready",
+        proposals: [proposal("reply_coparent", replyDraft, null)],
+        reasoning:
+          "Co-parent asked for a detail that is in the case record. The reply states that record.",
+      };
+    }
+    console.log(
+      "[sage/outbound] detail missing; asking the parent",
+      JSON.stringify({ question: ctx.detail_request.question })
+    );
+    return {
+      status: "awaiting_clarification",
+      proposals: [
+        proposal("ask_clarification", ctx.detail_request.question, null, {
+          audience: "parent",
+        }),
+        proposal("reply_coparent", NO_DETAIL_REPLY, ctx.detail_request.question),
+      ],
+      reasoning:
+        "Co-parent asked for a detail that is not in the message, the conversation, or the case records. Asked the parent and did not guess.",
+    };
+  }
+
   const blocked =
     ctx.resolved_dates.some((d) => d.status === "needs_clarification") ||
     ctx.unresolved_children.length > 0;

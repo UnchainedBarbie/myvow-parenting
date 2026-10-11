@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
+import { matchingLedgerText } from "@/lib/sage/ledger-facts";
 import { redraftMessage } from "@/lib/sage/planner";
 
 export const runtime = "nodejs";
@@ -43,7 +44,7 @@ export async function POST(req: NextRequest) {
     const admin = getServiceRoleClient();
     const { data: row, error: fetchError } = await admin
       .from("sage_items")
-      .select("id, summary, plan, source_type")
+      .select("id, summary, plan, source_type, case_id, evidence_excerpt, child_ids, tool_input")
       .eq("id", id)
       .eq("visible_to", user.id)
       .maybeSingle();
@@ -59,7 +60,14 @@ export async function POST(req: NextRequest) {
 
     const plan =
       row.plan && typeof row.plan === "object"
-        ? (row.plan as { proposals?: Array<{ type?: string; draft?: string; revised_text?: string }> })
+        ? (row.plan as {
+            proposals?: Array<{
+              type?: string;
+              draft?: string;
+              revised_text?: string;
+              audience?: string;
+            }>;
+          })
         : null;
     const proposals = Array.isArray(plan?.proposals) ? plan!.proposals! : [];
     const proposal = proposals[idx];
@@ -78,12 +86,54 @@ export async function POST(req: NextRequest) {
         ? proposal.revised_text
         : proposal.draft) ?? "";
 
+    const item = row as {
+      summary?: string | null;
+      source_type?: string | null;
+      case_id?: string | null;
+      evidence_excerpt?: string | null;
+      child_ids?: string[] | null;
+      tool_input?: { resolved_dates?: { status?: string; iso?: string | null }[] } | null;
+    };
+    const resolved = item.tool_input?.resolved_dates?.find(
+      (date) => date.status === "resolved" && date.iso
+    );
+    const { data: profile } = await admin
+      .from("users")
+      .select("timezone")
+      .eq("id", user.id)
+      .maybeSingle();
+    const timezone =
+      profile && typeof (profile as { timezone?: string }).timezone === "string"
+        ? (profile as { timezone: string }).timezone.trim() || "America/Denver"
+        : "America/Denver";
+    const ledger =
+      item.case_id
+        ? await matchingLedgerText({
+            caseId: item.case_id,
+            timezone,
+            iso: resolved?.iso ?? null,
+            childIds: Array.isArray(item.child_ids) ? item.child_ids : [],
+            corpus: [item.evidence_excerpt ?? "", item.summary ?? "", guidance].join("\n"),
+            subject: null,
+          })
+        : "";
+    const sources = [item.evidence_excerpt ?? "", guidance, ledger]
+      .map((part) => part.trim())
+      .filter(Boolean)
+      .join("\n");
+    const audience =
+      proposal.audience === "parent" || proposal.audience === "coparent"
+        ? proposal.audience
+        : null;
+
     const draft = await redraftMessage({
-      summary: (row.summary as string | null) ?? "",
+      summary: item.summary ?? "",
       proposalType: proposal.type as "reply_coparent" | "ask_clarification",
       currentDraft,
       guidance,
-      sourceType: (row.source_type as string | null) ?? null,
+      sourceType: item.source_type ?? null,
+      audience,
+      sources,
     });
 
     if (!draft) {

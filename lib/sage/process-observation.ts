@@ -4,10 +4,13 @@
  * No writes. Adapters (email, chat) call this then persist/respond as needed.
  */
 
+import { resolveAskedDetail } from "@/lib/sage/ledger-facts";
 import {
   formatObservationForUnderstanding,
+  isUserCommand,
   type Observation,
 } from "@/lib/sage/observation-builder";
+import { detectDetailQuestion } from "@/lib/sage/outbound-facts";
 import { reconcileCalendarPlan } from "@/lib/sage/calendar-match";
 import {
   bareCorrection,
@@ -278,6 +281,46 @@ export async function processObservation(
     observation.messages.some((m) => (m.attachments?.length ?? 0) > 0) ||
     /\[Attachment:/i.test(observationText);
 
+  const inbound = !isUserCommand({
+    sender: context.plan_sender ?? context.sender,
+    source_type: context.source_type,
+  });
+  const asked = inbound ? detectDetailQuestion(messageBodies) : null;
+  const lookupIso =
+    resolved_dates.find((d) => d.status === "resolved" && d.iso)?.iso ?? null;
+  const lookupSubject = preferEventSubject(
+    eventSubjectFromTexts([messageBodies]),
+    context.conversation?.event.subject ?? null
+  );
+  let recordLine: string | null = null;
+  let ledgerText = "";
+  if (asked) {
+    const found = await resolveAskedDetail({
+      caseId: context.case_id,
+      timezone: context.timezone,
+      iso: lookupIso,
+      childIds: child_ids,
+      corpus: messageBodies,
+      subject: asked.subject ?? lookupSubject,
+      asked,
+      conversation: context.conversation ?? null,
+    });
+    recordLine = found.recordLine;
+    ledgerText = found.ledgerText;
+    console.log(
+      "[sage/outbound]",
+      JSON.stringify({
+        asked: asked.kind,
+        subject: asked.subject,
+        record: recordLine,
+      })
+    );
+  }
+  const outboundSources = [messageBodies, contextBlock, ledgerText]
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .join("\n");
+
   let draftedPlan = await plan({
     item_type: intent.item_type,
     domain: intent.domain,
@@ -295,6 +338,10 @@ export async function processObservation(
     sender: context.plan_sender ?? context.sender,
     source_type: context.source_type,
     expense_allocation,
+    outbound_sources: outboundSources,
+    detail_request: asked
+      ? { question: asked.question, record_line: recordLine }
+      : null,
   });
   const resolvedIso =
     resolved_dates.find((d) => d.status === "resolved" && d.iso)?.iso ?? null;

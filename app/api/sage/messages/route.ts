@@ -3,7 +3,12 @@ import type { ClassifyPayload } from "@/lib/ai-classify";
 import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
 import { reconcileCalendarPlan } from "@/lib/sage/calendar-match";
 import { processChatMessage } from "@/lib/sage/chat";
-import { loadConversationContext } from "@/lib/sage/conversation-context";
+import {
+  formatConversationContext,
+  loadConversationContext,
+  type ConversationContext,
+} from "@/lib/sage/conversation-context";
+import { matchingLedgerText } from "@/lib/sage/ledger-facts";
 import { redraftMessage } from "@/lib/sage/planner";
 import {
   forcedTypeFromProposal,
@@ -159,6 +164,7 @@ type RevisableDraft = {
   proposalIndex: number;
   currentDraft: string;
   sourceType: string | null;
+  audience: "parent" | "coparent" | null;
   plan: Record<string, unknown>;
   proposals: Record<string, unknown>[];
 };
@@ -311,6 +317,8 @@ async function latestRevisableDraft(
           : typeof proposal.draft === "string"
             ? proposal.draft.trim()
             : "";
+      const audienceRaw =
+        raw && typeof raw === "object" ? (raw as { audience?: unknown }).audience : null;
       chosen = {
         itemId: row.id as string,
         summary: (row.summary ?? "").trim(),
@@ -320,6 +328,7 @@ async function latestRevisableDraft(
         proposalIndex,
         currentDraft,
         sourceType: typeof row.source_type === "string" ? row.source_type : null,
+        audience: audienceRaw === "parent" || audienceRaw === "coparent" ? audienceRaw : null,
         plan: row.plan as Record<string, unknown>,
         proposals: proposals.map((p) =>
           p && typeof p === "object" ? { ...(p as Record<string, unknown>) } : {}
@@ -331,12 +340,37 @@ async function latestRevisableDraft(
   return null;
 }
 
+async function sourcesForOutboundRedraft(opts: {
+  caseId: string | null;
+  timezone: string;
+  iso: string | null;
+  childIds: string[];
+  conversation: ConversationContext | null;
+  guidance: string;
+}): Promise<string> {
+  const parts = [opts.guidance];
+  if (opts.conversation) parts.push(formatConversationContext(opts.conversation));
+  if (opts.caseId) {
+    const ledger = await matchingLedgerText({
+      caseId: opts.caseId,
+      timezone: opts.timezone,
+      iso: opts.iso,
+      childIds: opts.childIds,
+      corpus: [opts.guidance, opts.conversation?.event.subject ?? ""].filter(Boolean).join(" "),
+      subject: opts.conversation?.event.subject ?? null,
+    });
+    if (ledger.trim()) parts.push(ledger);
+  }
+  return parts.map((part) => part.trim()).filter(Boolean).join("\n");
+}
+
 async function revisePendingDraft(opts: {
   admin: AdminClient;
   userId: string;
   guidance: string;
   target: RevisableDraft;
   clearDependsOn?: boolean;
+  sources?: string;
 }): Promise<{ reply: string; item: { id: string; plan: Record<string, unknown> } } | null> {
   if (opts.target.proposalType === "calendar_update") return null;
   const { data: fresh } = await opts.admin
@@ -361,6 +395,8 @@ async function revisePendingDraft(opts: {
     currentDraft: opts.target.currentDraft,
     guidance: opts.guidance,
     sourceType: opts.target.sourceType,
+    audience: opts.target.audience,
+    sources: opts.sources,
   });
   const revisedText = redraft?.trim() ?? "";
   if (!revisedText) return null;
@@ -934,6 +970,14 @@ export async function POST(request: NextRequest) {
             null;
           const resolvedIso =
             result.resolved_dates.find((d) => d.status === "resolved" && d.iso)?.iso ?? null;
+          const outboundSources = await sourcesForOutboundRedraft({
+            caseId,
+            timezone,
+            iso: conversation?.event.date ?? resolvedIso,
+            childIds: result.child_ids,
+            conversation,
+            guidance: trimmed,
+          });
           if (sessionId && (noteOnly || turnHasCalendar)) {
             const openReply = await latestRevisableDraft(admin, sessionId, user.id);
             if (openReply && openReply.proposalType !== "calendar_update") {
@@ -943,6 +987,7 @@ export async function POST(request: NextRequest) {
                 guidance: trimmed,
                 target: openReply,
                 clearDependsOn: unsatisfiedDependsOn(openReply.proposals[openReply.proposalIndex]),
+                sources: outboundSources,
               });
               if (revisedReply) {
                 foldedReply = true;
@@ -1019,6 +1064,7 @@ export async function POST(request: NextRequest) {
                 guidance: trimmed,
                 target: blockedDraft,
                 clearDependsOn: true,
+                sources: outboundSources,
               });
               if (revised) {
                 revisionNarration = revised.reply;

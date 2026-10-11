@@ -323,7 +323,7 @@ async function resolveOrCreateConversation(
 
     const trimmedSubject = subject.trim();
     const createdSubject = trimmedSubject.length > 0 ? trimmedSubject : "(no subject)";
-    if (!recipientUserId) {
+    if (typeof visibleTo !== "string") {
       console.error(
         `[conv-match] step=create conversation_id=none created=false error=${visibleTo.error}`
       );
@@ -337,7 +337,7 @@ async function resolveOrCreateConversation(
         subject: createdSubject,
         topic: "General",
         category: "General",
-        created_by: recipientUserId,
+        created_by: visibleTo,
         coparent_email: coparentEmail,
         email_thread_id: thread.messageId,
         child_id: null,

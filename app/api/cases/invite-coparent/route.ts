@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { registerCaseMemberEmail } from "@/lib/cases/register-member-email";
 import { createClient } from "@/lib/supabase/server";
 import { getServiceRoleClient } from "@/lib/supabase/server";
 
@@ -32,12 +33,19 @@ export async function POST(req: NextRequest) {
 
     const { data: existing } = await admin
       .from("case_members")
-      .select("id")
+      .select("id, external_email, display_name, invitation_status")
       .eq("case_id", case_id)
       .is("user_id", null)
       .maybeSingle();
 
-    if (existing) {
+    let memberId: string;
+    if (existing?.id) {
+      const previous = existing as {
+        id: string;
+        external_email: string | null;
+        display_name: string | null;
+        invitation_status: string | null;
+      };
       const { error: updateErr } = await admin
         .from("case_members")
         .update({
@@ -45,10 +53,27 @@ export async function POST(req: NextRequest) {
           display_name: name,
           invitation_status: "invited",
         })
-        .eq("id", existing.id);
+        .eq("id", previous.id);
       if (updateErr) return NextResponse.json({ error: updateErr.message }, { status: 500 });
+      memberId = previous.id;
+      const registered = await registerCaseMemberEmail(admin, {
+        caseId: case_id,
+        caseMemberId: memberId,
+        email,
+      });
+      if (!registered.ok) {
+        await admin
+          .from("case_members")
+          .update({
+            external_email: previous.external_email,
+            display_name: previous.display_name,
+            invitation_status: previous.invitation_status,
+          })
+          .eq("id", previous.id);
+        return NextResponse.json({ error: registered.message }, { status: 500 });
+      }
     } else {
-      const { error: insertErr } = await admin
+      const { data: created, error: insertErr } = await admin
         .from("case_members")
         .insert({
           case_id,
@@ -58,8 +83,25 @@ export async function POST(req: NextRequest) {
           external_email: email,
           display_name: name,
           invitation_status: "invited",
-        });
-      if (insertErr) return NextResponse.json({ error: insertErr.message }, { status: 500 });
+        })
+        .select("id")
+        .single();
+      if (insertErr || !created) {
+        return NextResponse.json(
+          { error: insertErr?.message ?? "Could not invite co-parent" },
+          { status: 500 }
+        );
+      }
+      memberId = (created as { id: string }).id;
+      const registered = await registerCaseMemberEmail(admin, {
+        caseId: case_id,
+        caseMemberId: memberId,
+        email,
+      });
+      if (!registered.ok) {
+        await admin.from("case_members").delete().eq("id", memberId);
+        return NextResponse.json({ error: registered.message }, { status: 500 });
+      }
     }
 
     return NextResponse.json({ ok: true });

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { registerEmailsForUser } from "@/lib/cases/register-member-email";
 import { getServiceRoleClient } from "@/lib/supabase/server";
 
 /**
@@ -27,6 +28,10 @@ export async function POST(request: NextRequest) {
     });
     if (error) {
       if (error.code === "23505") {
+        const registered = await registerEmailsForUser(supabase, id, email);
+        if (!registered.ok) {
+          return NextResponse.json({ message: registered.message }, { status: 500 });
+        }
         return NextResponse.json(
           { message: "User profile already exists" },
           { status: 200 }
@@ -36,6 +41,11 @@ export async function POST(request: NextRequest) {
         { message: error.message },
         { status: 500 }
       );
+    }
+    const registered = await registerEmailsForUser(supabase, id, email);
+    if (!registered.ok) {
+      await supabase.from("users").delete().eq("id", id);
+      return NextResponse.json({ message: registered.message }, { status: 500 });
     }
     return NextResponse.json({ ok: true });
   } catch (e) {

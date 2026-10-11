@@ -65,6 +65,14 @@ Always refer to the other parent as "Co-Parent" (never a name or email).
 No red flags, shame, or escalation. No markdown. No quotes around the sentence.
 Respond with ONLY the single sentence — no preamble.`;
 
+/** Text the parent will send. Address the co-parent as "you"; do not name them. */
+const OUTBOUND_DRAFT_SYSTEM = `You are drafting ONE short sentence that the parent will send to their co-parent.
+Write in the parent's first-person voice. Address the co-parent directly as "you".
+Never refer to the co-parent in the third person. Never use their name or email.
+Voice: warm, calm — never corporate, never blaming.
+No red flags, shame, or escalation. No markdown. No quotes around the sentence.
+Respond with ONLY the single sentence — no preamble.`;
+
 function proposal(
   type: Proposal["type"],
   draft: string,
@@ -165,10 +173,15 @@ function fallbackAsk(ctx: PlanContext): string {
 }
 
 function fallbackReply(ctx: PlanContext): string {
-  return `Thanks for letting me know — I'm aligning with this: ${ctx.summary.trim() || "your update"}.`;
+  const summary = ctx.summary.trim().replace(/\.$/, "");
+  if (summary) return `Thanks for letting me know about ${summary}.`;
+  return "Thanks for letting me know.";
 }
 
-export async function callAnthropicDraft(userPrompt: string): Promise<string | null> {
+export async function callAnthropicDraft(
+  userPrompt: string,
+  system: string = DRAFT_SYSTEM
+): Promise<string | null> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
     console.error("[sage/planner] ANTHROPIC_API_KEY not configured");
@@ -187,7 +200,7 @@ export async function callAnthropicDraft(userPrompt: string): Promise<string | n
         model: SAGE_MODEL,
         max_tokens: 200,
         temperature: 0,
-        system: DRAFT_SYSTEM,
+        system,
         messages: [{ role: "user", content: userPrompt }],
       }),
     });
@@ -228,7 +241,7 @@ Unclear dates: ${ctx.resolved_dates
   .filter((d) => d.status === "needs_clarification")
   .map((d) => d.raw)
   .join(", ") || "(none)"}`
-        : `Draft ONE short calm question asking Co-Parent for clarification.
+        : `Draft ONE short calm question the parent is sending to their co-parent, asking for the missing detail.
 Context summary: ${ctx.summary}
 What needs clarifying: ${blocker}
 Unresolved children: ${ctx.unresolved_children.join(", ") || "(none)"}
@@ -236,15 +249,18 @@ Unclear dates: ${ctx.resolved_dates
   .filter((d) => d.status === "needs_clarification")
   .map((d) => d.raw)
   .join(", ") || "(none)"}`
-      : `Draft ONE short calm reply acknowledging Co-Parent's message and aligning with the plan (not committing to unapproved calendar changes).
+      : `Draft ONE short calm message the parent is sending to their co-parent, responding to what the co-parent said. Do not commit to unapproved calendar changes.
 Context summary: ${ctx.summary}
 Item type: ${ctx.item_type}
 Domain: ${ctx.domain}`;
 
-  const first = await callAnthropicDraft(userPrompt);
+  const outbound =
+    kind === "reply_coparent" || (kind === "ask_clarification" && !userCommand(ctx));
+  const system = outbound ? OUTBOUND_DRAFT_SYSTEM : DRAFT_SYSTEM;
+  const first = await callAnthropicDraft(userPrompt, system);
   if (first) return first;
   // one retry — same pattern as Understanding
-  const second = await callAnthropicDraft(userPrompt);
+  const second = await callAnthropicDraft(userPrompt, system);
   if (second) return second;
   return fallback;
 }
@@ -257,20 +273,27 @@ export async function redraftMessage(params: {
   proposalType: "reply_coparent" | "ask_clarification";
   currentDraft: string;
   guidance: string;
+  /** Item source. A chat clarification is Sage asking the parent; any other clarification is outbound. */
+  sourceType?: string | null;
 }): Promise<string | null> {
-  const kindLabel =
-    params.proposalType === "ask_clarification"
-      ? "clarification question to Co-Parent"
-      : "reply to Co-Parent";
+  const parentFacingClarification =
+    params.proposalType === "ask_clarification" &&
+    (params.sourceType ?? "").trim().toLowerCase() === "chat";
+  const kindLabel = parentFacingClarification
+    ? "clarification question to the parent"
+    : params.proposalType === "ask_clarification"
+      ? "clarification the parent is sending to their co-parent"
+      : "message the parent is sending to their co-parent";
   const guidance = params.guidance.trim() || "(no specific guidance — improve clarity and calm tone)";
   const userPrompt = `Redraft this ${kindLabel} as ONE short calm sentence.
 Context summary: ${params.summary}
 Current draft: ${params.currentDraft}
 User guidance for the rewrite: ${guidance}`;
+  const system = parentFacingClarification ? DRAFT_SYSTEM : OUTBOUND_DRAFT_SYSTEM;
 
-  const first = await callAnthropicDraft(userPrompt);
+  const first = await callAnthropicDraft(userPrompt, system);
   if (first) return first;
-  const second = await callAnthropicDraft(userPrompt);
+  const second = await callAnthropicDraft(userPrompt, system);
   return second;
 }
 

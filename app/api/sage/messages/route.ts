@@ -156,6 +156,7 @@ type RevisableDraft = {
   proposalType: "reply_coparent" | "ask_clarification";
   proposalIndex: number;
   currentDraft: string;
+  sourceType: string | null;
   plan: Record<string, unknown>;
   proposals: Record<string, unknown>[];
 };
@@ -234,7 +235,7 @@ async function latestRevisableDraft(
 
   const { data: items, error: itemErr } = await admin
     .from("sage_items")
-    .select("id, summary, plan, created_at")
+    .select("id, summary, plan, created_at, source_type")
     .in("id", itemIds)
     .eq("visible_to", userId)
     .order("created_at", { ascending: false });
@@ -243,6 +244,7 @@ async function latestRevisableDraft(
   for (const row of items as {
     id?: string;
     summary?: string | null;
+    source_type?: string | null;
     plan?: { proposals?: unknown[] } | null;
   }[]) {
     if (!row.id || !row.plan || typeof row.plan !== "object") continue;
@@ -263,6 +265,7 @@ async function latestRevisableDraft(
         proposalType: proposal.type,
         proposalIndex,
         currentDraft,
+        sourceType: typeof row.source_type === "string" ? row.source_type : null,
         plan: row.plan as Record<string, unknown>,
         proposals: proposals.map((p) =>
           p && typeof p === "object" ? { ...(p as Record<string, unknown>) } : {}
@@ -285,6 +288,7 @@ async function revisePendingDraft(opts: {
     proposalType: opts.target.proposalType,
     currentDraft: opts.target.currentDraft,
     guidance: opts.guidance,
+    sourceType: opts.target.sourceType,
   });
   const revisedText = redraft?.trim() ?? "";
   if (!revisedText) return null;

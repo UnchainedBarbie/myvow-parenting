@@ -43,7 +43,7 @@ export async function POST(req: NextRequest) {
     const admin = getServiceRoleClient();
     const { data: row, error: fetchError } = await admin
       .from("sage_items")
-      .select("id, summary, plan")
+      .select("id, summary, plan, source_type")
       .eq("id", id)
       .eq("visible_to", user.id)
       .maybeSingle();
@@ -83,6 +83,7 @@ export async function POST(req: NextRequest) {
       proposalType: proposal.type as "reply_coparent" | "ask_clarification",
       currentDraft,
       guidance,
+      sourceType: (row.source_type as string | null) ?? null,
     });
 
     if (!draft) {

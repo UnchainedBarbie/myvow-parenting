@@ -369,6 +369,22 @@ export async function POST(req: NextRequest) {
           { status: 400 }
         );
       }
+      if (isCalendarUpdateProposal(p.type)) {
+        const caseId = (row as { case_id?: string | null }).case_id;
+        const { data: eventRow, error: eventErr } = await admin
+          .from("calendar_events")
+          .select("id")
+          .eq("id", eventId)
+          .eq("case_id", caseId ?? "")
+          .is("deleted_at", null)
+          .maybeSingle();
+        if (eventErr || !eventRow) {
+          return NextResponse.json(
+            { success: false, error: "Calendar event was not saved." },
+            { status: 400 }
+          );
+        }
+      }
       if (isLogExpenseProposal(p.type) && !expenseId) {
         return NextResponse.json(
           { success: false, error: "Invalid expense_id" },

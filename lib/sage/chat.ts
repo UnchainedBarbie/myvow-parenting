@@ -27,6 +27,8 @@ export type ProcessChatMessageInput = {
   source_id?: string;
   /** Optional conversation metadata (unused in v1 single-intent). */
   conversation_context?: unknown;
+  established_date?: { iso: string; raw: string } | null;
+  established_subject?: string | null;
 };
 
 function buildReply(result: ProcessObservationResult): string {
@@ -66,6 +68,8 @@ export async function processChatMessage(
     source_id: input.source_id ?? observation.target_id,
     sender: "You",
     plan_sender: "You",
+    established_date: input.established_date ?? null,
+    established_subject: input.established_subject ?? null,
   });
 
   const actions: ChatAction[] = result.plan.proposals.map((p) => ({

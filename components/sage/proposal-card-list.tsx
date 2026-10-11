@@ -15,6 +15,7 @@ import {
   displayDraft,
   isActionable,
   isBlocked,
+  isCommitted,
   isRevisable,
   isWaived,
   needsDateField,
@@ -113,6 +114,7 @@ export function ProposalCardList({
           const approved = p.approved === true;
           const waived = isWaived(p);
           const executed = p.executed === true;
+          const done = isCalendarUpdateProposal(p.type) ? isCommitted(p) : executed;
           const noteOnly = p.type === "note_only";
           const actionable = isActionable(p);
           const showDate = !historical && actionable && needsDateField(p, item);
@@ -120,7 +122,7 @@ export function ProposalCardList({
           const isChecked = checked.includes(idx);
           const rowBusy = busyKey === `${itemId}:${idx}` || itemBusy;
           const formPending =
-            isFormExecuteProposal(p.type) && !executed && !waived && !blocked;
+            isFormExecuteProposal(p.type) && !done && !waived && !blocked;
           const showUndoOnly = canUndo(p) && !formPending;
 
           return (
@@ -150,7 +152,7 @@ export function ProposalCardList({
                   checked={isChecked}
                   disabled={rowBusy}
                   onChange={() => onToggleSelected?.(idx)}
-                  aria-label={`Select: ${proposalTypeLabel(p.type)}`}
+                  aria-label={`Select: ${proposalTypeLabel(p.type, p)}`}
                 />
               ) : (
                 <div className="flex shrink-0 items-start gap-1">
@@ -203,14 +205,16 @@ export function ProposalCardList({
               <div className="min-w-0 flex-1 space-y-1">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="inline-flex items-center rounded-full bg-[#EEF2E9] px-2 py-0.5 text-[10px] font-medium text-[#5B7A52]">
-                    {proposalTypeLabel(p.type)}
+                    {proposalTypeLabel(p.type, p)}
                   </span>
-                  {executed ? (
+                  {done ? (
                     <span className="text-[10px] font-medium text-[#5B7A52]">
                       {isLogExpenseProposal(p.type)
                         ? "✓ done"
                         : isCalendarUpdateProposal(p.type)
-                          ? "✓ done · added to calendar"
+                          ? p.calendar_intent === "update"
+                            ? "✓ done · updated on calendar"
+                            : "✓ done · added to calendar"
                           : isLogDocumentProposal(p.type)
                             ? "✓ filed"
                             : "✓ done"}

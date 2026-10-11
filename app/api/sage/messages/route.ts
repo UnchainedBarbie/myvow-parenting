@@ -3,6 +3,7 @@ import type { ClassifyPayload } from "@/lib/ai-classify";
 import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
 import { reconcileCalendarPlan } from "@/lib/sage/calendar-match";
 import { processChatMessage } from "@/lib/sage/chat";
+import { eventSubjectFromTexts, preferEventSubject } from "@/lib/sage/event-subject";
 import { redraftMessage } from "@/lib/sage/planner";
 import {
   forcedTypeFromProposal,
@@ -381,8 +382,29 @@ async function reviseOpenCalendar(opts: {
   timezone: string;
   childIds: string[];
   resolvedIso: string | null;
+  subject?: string | null;
+  childName?: string | null;
 }): Promise<{ reply: string; item: { id: string; plan: Record<string, unknown> } } | null> {
-  const storedDate = opts.target.proposals[opts.target.proposalIndex]?.date;
+  const { data: fresh } = await opts.admin
+    .from("sage_items")
+    .select("plan")
+    .eq("id", opts.target.itemId)
+    .eq("visible_to", opts.userId)
+    .maybeSingle();
+  const freshPlan =
+    fresh &&
+    typeof (fresh as { plan?: unknown }).plan === "object" &&
+    (fresh as { plan?: unknown }).plan
+      ? ((fresh as { plan: Record<string, unknown> }).plan)
+      : opts.target.plan;
+  const proposals = Array.isArray(freshPlan.proposals)
+    ? (freshPlan.proposals as unknown[]).map((p) =>
+        p && typeof p === "object" ? { ...(p as Record<string, unknown>) } : {}
+      )
+    : opts.target.proposals.map((p) => ({ ...p }));
+  let proposalIndex = proposals.findIndex((p) => p.type === "calendar_update" && p.executed !== true && p.approved !== true && p.status !== "waived_by_user");
+  if (proposalIndex < 0) proposalIndex = opts.target.proposalIndex;
+  const storedDate = proposals[proposalIndex]?.date;
   const existingDate = typeof storedDate === "string" && storedDate.trim() ? storedDate.trim() : null;
   const iso = opts.resolvedIso ?? existingDate;
   const reconciled = await reconcileCalendarPlan(
@@ -406,21 +428,22 @@ async function reviseOpenCalendar(opts: {
       childIds: opts.childIds,
       summary: opts.target.summary,
       corpus: opts.guidance,
+      subject: opts.subject ?? null,
+      childName: opts.childName ?? null,
     }
   );
   const next = reconciled.proposals[0];
   if (!next?.draft?.trim()) return null;
-  const proposals = opts.target.proposals.map((p) => ({ ...p }));
-  const kept = proposals[opts.target.proposalIndex] ?? {};
+  const kept = proposals[proposalIndex] ?? {};
   const originalDraft = typeof kept.draft === "string" ? kept.draft : opts.target.currentDraft;
-  proposals[opts.target.proposalIndex] = {
+  proposals[proposalIndex] = {
     ...kept,
     ...next,
     draft: originalDraft,
     revised_text: next.draft,
     ...(iso ? { date: iso, depends_on: null, date_supplied: true } : {}),
   };
-  const updatedPlan = { ...opts.target.plan, proposals };
+  const updatedPlan = { ...freshPlan, proposals };
   const { data, error } = await opts.admin
     .from("sage_items")
     .update({ plan: updatedPlan })
@@ -438,6 +461,93 @@ async function reviseOpenCalendar(opts: {
     reply: revisionReply("calendar_update"),
     item: { id: opts.target.itemId, plan: updatedPlan },
   };
+}
+
+function isoDate(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(trimmed) ? trimmed : null;
+}
+
+/** Newest date and event subject already established on sage items in this session. */
+async function establishedInSession(
+  admin: AdminClient,
+  sessionId: string,
+  userId: string
+): Promise<{ date: { iso: string; raw: string } | null; subject: string | null }> {
+  const { data: journals, error: journalErr } = await admin
+    .from("sage_journal_messages")
+    .select("sage_item_id")
+    .eq("session_id", sessionId)
+    .eq("user_id", userId)
+    .not("sage_item_id", "is", null);
+  if (journalErr || !journals) return { date: null, subject: null };
+  const itemIds = [
+    ...new Set(
+      (journals as { sage_item_id?: string | null }[])
+        .map((row) => row.sage_item_id)
+        .filter((id): id is string => typeof id === "string" && id.length > 0)
+    ),
+  ];
+  if (itemIds.length === 0) return { date: null, subject: null };
+  const { data: items, error: itemErr } = await admin
+    .from("sage_items")
+    .select("summary, evidence_excerpt, plan, tool_input, created_at")
+    .in("id", itemIds)
+    .eq("visible_to", userId)
+    .order("created_at", { ascending: false });
+  if (itemErr || !items) return { date: null, subject: null };
+
+  let date: { iso: string; raw: string } | null = null;
+  let subject: string | null = null;
+  for (const row of items as {
+    summary?: string | null;
+    evidence_excerpt?: string | null;
+    plan?: { proposals?: unknown[] } | null;
+    tool_input?: { resolved_dates?: unknown; event_subject?: unknown } | null;
+  }[]) {
+    if (!date && row.tool_input && Array.isArray(row.tool_input.resolved_dates)) {
+      for (const entry of row.tool_input.resolved_dates) {
+        if (!entry || typeof entry !== "object") continue;
+        const rec = entry as { status?: unknown; iso?: unknown; raw?: unknown };
+        const iso = isoDate(rec.iso);
+        if (rec.status === "resolved" && iso) {
+          date = {
+            iso,
+            raw: typeof rec.raw === "string" && rec.raw.trim() ? rec.raw.trim() : iso,
+          };
+          break;
+        }
+      }
+    }
+    const proposals = Array.isArray(row.plan?.proposals) ? row.plan.proposals : [];
+    if (!date) {
+      for (const raw of proposals) {
+        if (!raw || typeof raw !== "object") continue;
+        const iso = isoDate((raw as { date?: unknown }).date);
+        if (iso) {
+          date = { iso, raw: iso };
+          break;
+        }
+      }
+    }
+    const storedSubject =
+      typeof row.tool_input?.event_subject === "string"
+        ? row.tool_input.event_subject
+        : "";
+    const found = eventSubjectFromTexts([
+      storedSubject,
+      row.summary ?? "",
+      row.evidence_excerpt ?? "",
+      ...proposals.map((p) =>
+        p && typeof p === "object" && typeof (p as { draft?: unknown }).draft === "string"
+          ? (p as { draft: string }).draft
+          : ""
+      ),
+    ]);
+    subject = preferEventSubject(subject, found);
+  }
+  return { date, subject };
 }
 
 export async function GET(request: NextRequest) {
@@ -867,11 +977,16 @@ export async function POST(request: NextRequest) {
             processed,
           });
         } else {
+          const established = sessionId
+            ? await establishedInSession(admin, sessionId, user.id)
+            : { date: null, subject: null };
           const { reply, result } = await processChatMessage({
             message: trimmed,
             case_id: caseId,
             timezone,
             source_id: (userRow as { id: string }).id,
+            established_date: established.date,
+            established_subject: established.subject,
           });
           if (reply.trim()) sageContent = reply;
 
@@ -880,14 +995,30 @@ export async function POST(request: NextRequest) {
           const turnHasCalendar = result.plan.proposals.some(
             (p) => p.type === "calendar_update"
           );
+          const childName =
+            result.interpretation.entities.children.find((c) => c.name?.trim())?.name?.trim() ??
+            null;
+          const resolvedIso =
+            result.resolved_dates.find((d) => d.status === "resolved" && d.iso)?.iso ?? null;
           if (sessionId && turnHasCalendar) {
+            const openReply = await latestRevisableDraft(admin, sessionId, user.id);
+            if (openReply && openReply.proposalType !== "calendar_update") {
+              const revisedReply = await revisePendingDraft({
+                admin,
+                userId: user.id,
+                guidance: trimmed,
+                target: openReply,
+                clearDependsOn: unsatisfiedDependsOn(openReply.proposals[openReply.proposalIndex]),
+              });
+              if (revisedReply) {
+                revisionNarration = revisedReply.reply;
+                revisedItem = revisedReply.item;
+              }
+            }
             const openCalendar = await latestRevisableDraft(admin, sessionId, user.id, {
               calendarOnly: true,
             });
             if (openCalendar) {
-              const resolvedIso =
-                result.resolved_dates.find((d) => d.status === "resolved" && d.iso)?.iso ??
-                null;
               const revised = await reviseOpenCalendar({
                 admin,
                 userId: user.id,
@@ -897,11 +1028,17 @@ export async function POST(request: NextRequest) {
                 timezone,
                 childIds: result.child_ids,
                 resolvedIso,
+                subject: result.event_subject ?? established.subject,
+                childName,
               });
               if (revised) {
-                sageContent = revised.reply;
-                revisedItem = revised.item;
                 foldedNote = true;
+                const sameItem = !revisedItem || revisedItem.id === revised.item.id;
+                if (sameItem) {
+                  revisedItem = revised.item;
+                  if (revisionNarration) sageContent = revisionNarration;
+                  revisionNarration = null;
+                }
               }
             }
           }
@@ -984,6 +1121,7 @@ export async function POST(request: NextRequest) {
                 tool_input: {
                   ...entities,
                   resolved_dates: result.resolved_dates,
+                  ...(result.event_subject ? { event_subject: result.event_subject } : {}),
                   ...(result.expense_category
                     ? { expense_category: result.expense_category }
                     : {}),

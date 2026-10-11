@@ -5,6 +5,7 @@
 
 import { getServiceRoleClient } from "@/lib/supabase/server";
 import type { Plan, Proposal } from "@/lib/sage/planner";
+import { eventSubjectFromTexts } from "@/lib/sage/event-subject";
 import { parseClockMinutes } from "@/lib/sage/resolver";
 
 const STOPWORDS = new Set([
@@ -66,6 +67,8 @@ export type CalendarMatchInput = {
   childIds: string[];
   summary: string;
   corpus: string;
+  subject?: string | null;
+  childName?: string | null;
 };
 
 function significantWords(text: string): Set<string> {
@@ -86,14 +89,15 @@ function sharesDistinctiveWord(proposed: Set<string>, title: string): boolean {
   return false;
 }
 
-function eventLabel(summary: string, draft: string): string {
-  const source = summary.trim() || draft.trim();
-  const cleaned = source
-    .replace(/^you['’]?d like to (add|move|change|schedule)\s+/i, "")
-    .replace(/\s+to your calendar\.?$/i, "")
-    .replace(/\.$/, "")
-    .trim();
-  return cleaned || "that event";
+function eventLabel(input: CalendarMatchInput): string {
+  const subject =
+    input.subject?.trim() ||
+    eventSubjectFromTexts([input.corpus, input.summary]) ||
+    "";
+  const child = input.childName?.trim() || "";
+  if (child && subject) return `${child}'s ${subject.toLowerCase()}`;
+  if (subject) return subject.toLowerCase();
+  return "that event";
 }
 
 type Ymd = { y: number; m: number; d: number };
@@ -215,7 +219,7 @@ function outcomeFor(
   input: CalendarMatchInput,
   rows: CalendarRow[] | null
 ): Proposal {
-  const label = eventLabel(input.summary, proposal.draft);
+  const label = eventLabel(input);
   const when = formatDateLabel(input.iso, input.timezone);
   if (rows == null) {
     return ask(
@@ -260,11 +264,10 @@ function outcomeFor(
     };
   }
 
-  const offerWhen = newClock ? `${when} at ${newClock}` : when;
   return {
     ...proposal,
     type: "calendar_update",
-    draft: `Nothing on your calendar for ${label} on ${offerWhen}. Want me to add it?`,
+    draft: `Nothing on your calendar for ${label} on ${when}. Want me to add it?`,
     date: input.iso,
     calendar_intent: "offer",
     calendar_event_id: null,

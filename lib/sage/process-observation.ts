@@ -9,6 +9,7 @@ import {
   type Observation,
 } from "@/lib/sage/observation-builder";
 import { reconcileCalendarPlan } from "@/lib/sage/calendar-match";
+import { eventSubjectFromTexts, preferEventSubject } from "@/lib/sage/event-subject";
 import { plan, type Plan } from "@/lib/sage/planner";
 import {
   rawForDateResolver,
@@ -43,6 +44,13 @@ export type ObservationProcessContext = {
   plan_sender?: string;
   /** Optional override for "today" in date resolution (tests). */
   today?: Date;
+  /**
+   * Date already resolved earlier in this session or thread.
+   * Used only when this turn's own message has no date.
+   */
+  established_date?: { iso: string; raw: string } | null;
+  /** More specific event subject from earlier in the conversation, if any. */
+  established_subject?: string | null;
 };
 
 export type ProcessObservationResult = {
@@ -54,6 +62,8 @@ export type ProcessObservationResult = {
   plan: Plan;
   /** Derived category used for allocation and form prefill (e.g. dentist → medical). */
   expense_category?: string;
+  /** Event itself ("Choir concert"), not a sentence Sage wrote. */
+  event_subject?: string;
 };
 
 /**
@@ -107,27 +117,74 @@ export async function processObservation(
     .map((r) => r.name);
 
   const today = context.today ?? new Date();
+  const messageBodies = observation.messages
+    .map((m) => m.text.trim())
+    .filter(Boolean)
+    .join("\n");
   const resolved_dates = resolveDates(
     entities.dates.map((d) => ({ raw: rawForDateResolver(d) })),
     today,
     context.timezone,
-    observationText
+    messageBodies
   );
   if (
     !resolved_dates.some((d) => d.status === "resolved" && d.iso) &&
     /\b(?:this|next)?(?:\s+coming)?\s*(?:sun|sunday|mon|monday|tue|tues|tuesday|wed|wednesday|thu|thur|thurs|thursday|fri|friday|sat|saturday)\b/i.test(
-      observationText
+      messageBodies
     )
   ) {
     const fromText = resolveDate(
-      observationText,
+      messageBodies,
       today,
       context.timezone,
-      observationText
+      messageBodies
     );
     if (fromText.status === "resolved" && fromText.iso) {
       resolved_dates.push(fromText);
     }
+  }
+
+  const stamp = observationStamp(observation);
+  console.log(
+    "[sage/dates]",
+    JSON.stringify({
+      source_type: context.source_type,
+      stamp,
+      resolved: resolved_dates.map((d) => ({
+        raw: d.raw,
+        status: d.status,
+        iso: d.iso,
+        reason: d.reason,
+        source: dateSource(d.raw, messageBodies, stamp),
+      })),
+    })
+  );
+
+  const fromMessage = resolved_dates.filter(
+    (d) => dateSource(d.raw, messageBodies, stamp) === "message"
+  );
+  resolved_dates.length = 0;
+  resolved_dates.push(...fromMessage);
+
+  const established = context.established_date;
+  if (
+    !resolved_dates.some((d) => d.status === "resolved" && d.iso) &&
+    established?.iso &&
+    /^\d{4}-\d{2}-\d{2}$/.test(established.iso)
+  ) {
+    resolved_dates.push({
+      raw: established.raw || established.iso,
+      status: "resolved",
+      iso: established.iso,
+      reason: "Inherited from earlier in the conversation",
+    });
+    console.log(
+      "[sage/dates]",
+      JSON.stringify({
+        source_type: context.source_type,
+        inherited: { raw: established.raw, iso: established.iso, source: "conversation" },
+      })
+    );
   }
 
   const expense_category = inferExpenseCategoryFromText(
@@ -202,13 +259,23 @@ export async function processObservation(
   });
   const resolvedIso =
     resolved_dates.find((d) => d.status === "resolved" && d.iso)?.iso ?? null;
+  const event_subject =
+    preferEventSubject(
+      eventSubjectFromTexts([messageBodies, intent.evidence_excerpt ?? ""]),
+      context.established_subject ?? null
+    ) ?? undefined;
+  const childName = childResolutions.find((r) => r.child_id)?.name
+    ?? childNames[0]
+    ?? null;
   const itemPlan = await reconcileCalendarPlan(draftedPlan, {
     caseId: context.case_id,
     timezone: context.timezone,
     iso: resolvedIso,
     childIds: child_ids,
     summary: intent.summary,
-    corpus: observationText,
+    corpus: messageBodies,
+    subject: event_subject ?? null,
+    childName,
   });
 
   return {
@@ -219,5 +286,37 @@ export async function processObservation(
     resolved_dates,
     plan: itemPlan,
     expense_category: intent.item_type === "expense" ? expense_category : undefined,
+    event_subject,
   };
+}
+
+function observationStamp(observation: Observation): string {
+  const last = observation.messages[observation.messages.length - 1];
+  if (!last?.timestamp) return "";
+  const d = new Date(last.timestamp);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleString("en-US", { month: "short", day: "numeric" });
+}
+
+function rawInText(raw: string, text: string): boolean {
+  const needle = raw.trim().toLowerCase();
+  if (!needle || !text.trim()) return false;
+  return text.toLowerCase().includes(needle);
+}
+
+/** message = the user wrote it. observation-timestamp = the "From: You (Oct 11)" stamp. */
+function dateSource(raw: string, bodies: string, stamp: string): "message" | "observation-timestamp" | "not-in-message" {
+  if (rawInText(raw, bodies)) return "message";
+  if (stampMatchesRaw(raw, stamp)) return "observation-timestamp";
+  return "not-in-message";
+}
+
+function stampMatchesRaw(raw: string, stamp: string): boolean {
+  const match = stamp.trim().match(/^([A-Za-z]+)\s+(\d{1,2})$/);
+  if (!match) return false;
+  const text = raw.toLowerCase();
+  const mon = match[1].toLowerCase().slice(0, 3);
+  const day = String(Number(match[2]));
+  if (!text.includes(mon)) return false;
+  return new RegExp(`\\b${day}\\b`).test(text);
 }

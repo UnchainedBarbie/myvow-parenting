@@ -5,6 +5,7 @@ import {
   inferExpenseCategoryFromText,
   parseExpenseAmountFromText,
 } from "@/lib/expenses-share";
+import { eventSubjectFromTexts, formatClockLabel, parseScheduleTimes } from "@/lib/sage/event-subject";
 import { isCalendarUpdateProposal, isFormExecuteProposal, isLogDocumentProposal } from "@/lib/sage/proposal-kind";
 import type { SageItem, SageProposal } from "./proposal-types";
 
@@ -15,14 +16,17 @@ export {
   isLogDocumentProposal,
 } from "@/lib/sage/proposal-kind";
 
-export function proposalTypeLabel(type: string): string {
+export function proposalTypeLabel(
+  type: string,
+  proposal?: { calendar_intent?: string | null }
+): string {
   switch (type) {
     case "ask_clarification":
       return "Ask Co-Parent";
     case "reply_coparent":
       return "Reply to Co-Parent";
     case "calendar_update":
-      return "Update calendar";
+      return proposal?.calendar_intent === "offer" ? "Add to calendar" : "Update calendar";
     case "expense":
     case "log_expense":
       return "Log expense";
@@ -71,8 +75,21 @@ export function isBlocked(p: SageProposal): boolean {
   );
 }
 
+/** A calendar proposal is committed only when execute stored the event row id. */
+export function isCommitted(p: SageProposal): boolean {
+  if (isCalendarUpdateProposal(p.type)) {
+    return (
+      p.executed === true &&
+      typeof p.result_event_id === "string" &&
+      p.result_event_id.trim().length > 0
+    );
+  }
+  return p.executed === true;
+}
+
 export function isActionable(p: SageProposal): boolean {
   if (p.type === "note_only" || isWaived(p) || isBlocked(p)) return false;
+  if (isCalendarUpdateProposal(p.type)) return !isCommitted(p);
   if (p.executed === true) return false;
   // Calendar / expense stay actionable until the form actually creates the record.
   if (isFormExecuteProposal(p.type)) return true;
@@ -430,14 +447,42 @@ function eventNameFromText(text: string, childNames: string[]): string | null {
   return toTitleCase(s);
 }
 
+function displayName(name: string): string {
+  const trimmed = name.trim();
+  if (!trimmed) return trimmed;
+  if (trimmed === trimmed.toLowerCase()) {
+    return trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
+  }
+  return trimmed;
+}
+
+function storedEventSubject(item: SageItem): string | null {
+  const subject = toolInputRecord(item)?.event_subject;
+  return typeof subject === "string" && subject.trim() ? subject.trim() : null;
+}
+
 export function buildCalendarTitle(
   item: SageItem,
-  proposal?: SageProposal
+  _proposal?: SageProposal
 ): string {
-  const name = childNamesFromItem(item)[0]?.trim();
-  const eventName = extractEventName(item, proposal) ?? "Calendar event";
+  const name = displayName(childNamesFromItem(item)[0] ?? "");
+  const eventName =
+    storedEventSubject(item) ||
+    eventSubjectFromTexts([item.evidence_excerpt ?? ""]) ||
+    eventSubjectFromTexts([item.summary ?? ""]) ||
+    "Calendar event";
   const title = name ? `${eventName} – ${name}` : eventName;
   return title.slice(0, 60);
+}
+
+function factualCalendarDescription(item: SageItem): string | undefined {
+  const times = parseScheduleTimes(
+    [item.evidence_excerpt ?? "", item.summary ?? ""].filter(Boolean).join("\n")
+  );
+  if (!times.arrival) return undefined;
+  const when = formatClockLabel(times.arrival);
+  const child = displayName(childNamesFromItem(item)[0] ?? "");
+  return child ? `${child} arrives ${when}.` : `Arrives ${when}.`;
 }
 
 export function buildCalendarInitialValues(
@@ -457,17 +502,22 @@ export function buildCalendarInitialValues(
   const date =
     (chosenDate ?? proposal.chosen_date ?? proposal.date ?? resolvedCalendarIso(item) ?? "").trim() ||
     undefined;
-  const startTime = parseTargetTimeFromDraft(
-    [draftSource, summary].filter(Boolean).join(" ")
+  const stated = parseScheduleTimes(
+    [item.evidence_excerpt ?? "", summary].filter(Boolean).join("\n")
   );
+  const startTime =
+    stated.start ??
+    stated.arrival ??
+    parseTargetTimeFromDraft([draftSource, summary].filter(Boolean).join(" "));
   const eventType = inferCalendarEventType(item, proposal);
+  const description = factualCalendarDescription(item);
   return {
     childId,
     date,
     ...(startTime ? { startTime } : {}),
     title: buildCalendarTitle(item, proposal),
     eventType,
-    description: summary || undefined,
+    description: description ?? "",
     ...(proposal.calendar_event_id
       ? { eventId: proposal.calendar_event_id }
       : {}),

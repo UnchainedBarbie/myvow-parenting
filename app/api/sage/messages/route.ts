@@ -712,6 +712,7 @@ export async function POST(request: NextRequest) {
     let sageContent = FALLBACK_REPLY;
     let sageItem: Record<string, unknown> | null = null;
     let revisedItem: { id: string; plan: Record<string, unknown> } | null = null;
+    let revisionNarration: string | null = null;
 
     if (caseId) {
       try {
@@ -798,8 +799,7 @@ export async function POST(request: NextRequest) {
                 clearDependsOn: true,
               });
               if (revised) {
-                const named = revised.reply;
-                sageContent = reply.trim() ? `${reply.trim()} ${named}` : named;
+                revisionNarration = revised.reply;
                 revisedItem = revised.item;
               }
             }
@@ -910,9 +910,62 @@ export async function POST(request: NextRequest) {
       sage_item: sageItem,
     };
 
+    const primaryItemId =
+      sageItem && typeof sageItem.id === "string" ? sageItem.id : null;
+    let revisionMessage: SageMessageRow | null = null;
+    if (
+      revisionNarration &&
+      revisedItem &&
+      primaryItemId &&
+      primaryItemId !== revisedItem.id
+    ) {
+      const { data: revisedRow } = await admin
+        .from("sage_items")
+        .select(SAGE_ITEM_SELECT)
+        .eq("id", revisedItem.id)
+        .eq("visible_to", user.id)
+        .maybeSingle();
+      const revisionItem = revisedRow
+        ? { ...(revisedRow as Record<string, unknown>), plan: revisedItem.plan }
+        : { id: revisedItem.id, plan: revisedItem.plan };
+      const revisionPayload = {
+        user_id: user.id,
+        role: "sage" as const,
+        content: revisionNarration,
+        created_at: new Date(Date.now() + 1).toISOString(),
+        ...(sessionId ? { session_id: sessionId } : {}),
+        sage_item_id: revisedItem.id,
+      };
+      let { data: revisionRow, error: revisionErr } = await admin
+        .from("sage_journal_messages")
+        .insert(revisionPayload)
+        .select(JOURNAL_SELECT)
+        .single();
+      if (revisionErr && missingSageItemIdColumn(revisionErr)) {
+        const { sage_item_id: _omit, ...withoutItemId } = revisionPayload;
+        ({ data: revisionRow, error: revisionErr } = await admin
+          .from("sage_journal_messages")
+          .insert(withoutItemId)
+          .select(JOURNAL_SELECT_BASE)
+          .single());
+      }
+      if (revisionErr || !revisionRow) {
+        console.error(
+          "[sage/messages] revision journal insert failed:",
+          revisionErr?.message ?? "insert failed"
+        );
+      } else {
+        revisionMessage = {
+          ...(revisionRow as unknown as SageMessageRow),
+          sage_item: revisionItem,
+        };
+      }
+    }
+
     return NextResponse.json({
       user_message: userRow as SageMessageRow,
       sage_message: sageMessage,
+      revision_message: revisionMessage,
       sage_item: sageItem,
       revised_item: revisedItem,
       case_id: caseId,

@@ -827,6 +827,7 @@ export function SageClient({
         sage_message?: SageMessage;
         sage_item?: SageItem | null;
         revised_item?: { id: string; plan: SagePlan } | null;
+        revision_message?: SageMessage | null;
         case_id?: string | null;
       };
       if (payload.case_id) setCaseId(payload.case_id);
@@ -838,6 +839,7 @@ export function SageClient({
               payload.sage_message.sage_item ?? payload.sage_item ?? null,
           }
         : undefined;
+      const revisionMsg = payload.revision_message ?? undefined;
       setMessages((prev) => {
         const base = prev
           .filter((m) => !m.id.startsWith("local-"))
@@ -850,7 +852,12 @@ export function SageClient({
                 }
               : m
           );
-        return [...base, ...(userMsg ? [userMsg] : []), ...(sageMsg ? [sageMsg] : [])];
+        return [
+          ...base,
+          ...(userMsg ? [userMsg] : []),
+          ...(sageMsg ? [sageMsg] : []),
+          ...(revisionMsg ? [revisionMsg] : []),
+        ];
       });
 
       if (wasFirstMessage) {
@@ -907,9 +914,18 @@ export function SageClient({
               </p>
             ) : (
               <>
-                {messages.map((msg) => {
+                {(() => {
+                  const liveIdByItem = new Map<string, string>();
+                  for (const m of messages) {
+                    const itemId = m.sage_item?.id;
+                    if (itemId) liveIdByItem.set(itemId, m.id);
+                  }
+                  return messages.map((msg) => {
                   const isUser = msg.role === "user";
                   const item = msg.sage_item ?? null;
+                  const historical = Boolean(
+                    item && liveIdByItem.get(item.id) !== msg.id
+                  );
                   const proposals = item?.plan?.proposals ?? [];
                   const isMulti = item ? multiSelect[item.id] === true : false;
                   const itemBusy = item
@@ -956,6 +972,7 @@ export function SageClient({
                             itemId={item.id}
                             item={item}
                             proposals={proposals}
+                            historical={historical}
                             indent={false}
                             multiSelect={isMulti}
                             onToggleMultiSelect={() =>
@@ -1024,7 +1041,8 @@ export function SageClient({
                       )}
                     </div>
                   );
-                })}
+                });
+                })()}
               </>
             )}
             <div ref={bottomRef} />

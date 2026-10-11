@@ -27,6 +27,11 @@ export type ProposalCardListProps = {
   proposals: SageProposal[];
   /** When true, hide left action controls (item bulk-select mode) */
   hideActions?: boolean;
+  /**
+   * An earlier transcript render of this item. Shows the original draft
+   * and is not actionable. The latest journal row for the item stays live.
+   */
+  historical?: boolean;
   /** Indent under item icon row (inbox default). Drawer should pass false. */
   indent?: boolean;
   multiSelect?: boolean;
@@ -50,6 +55,7 @@ export function ProposalCardList({
   item,
   proposals,
   hideActions = false,
+  historical = false,
   indent = true,
   multiSelect = false,
   onToggleMultiSelect,
@@ -73,6 +79,7 @@ export function ProposalCardList({
     .filter(({ p }) => !(isLogDocumentProposal(p.type) && p.executed === true));
   if (visible.length === 0) return null;
 
+  const suppressActions = hideActions || historical;
   const actionableCount = visible.filter(({ p }) => isActionable(p)).length;
   const checked = selectedIndexes;
 
@@ -80,13 +87,16 @@ export function ProposalCardList({
     <div
       className={cn(
         "space-y-2",
-        indent && !hideActions && "ml-9",
+        indent && !suppressActions && "ml-9",
         className
       )}
     >
       <div className="flex flex-wrap items-center gap-2">
         <p className="text-[11px] font-medium text-[#5B7A52]">Sage suggests</p>
-        {!hideActions && actionableCount > 1 && onToggleMultiSelect && (
+        {historical && (
+          <span className="text-[10px] text-foreground-secondary">revised below</span>
+        )}
+        {!suppressActions && actionableCount > 1 && onToggleMultiSelect && (
           <button
             type="button"
             className="text-[11px] text-[#5B7A52] hover:underline"
@@ -105,7 +115,7 @@ export function ProposalCardList({
           const executed = p.executed === true;
           const noteOnly = p.type === "note_only";
           const actionable = isActionable(p);
-          const showDate = actionable && needsDateField(p, item);
+          const showDate = !historical && actionable && needsDateField(p, item);
           const dKey = dateKey(itemId, idx);
           const isChecked = checked.includes(idx);
           const rowBusy = busyKey === `${itemId}:${idx}` || itemBusy;
@@ -122,7 +132,7 @@ export function ProposalCardList({
               )}
             >
               {/* Left controls — hidden in item bulk-select mode */}
-              {hideActions ? null : noteOnly || blocked ? (
+              {suppressActions ? null : noteOnly || blocked ? (
                 <span className="mt-0.5 w-12 shrink-0" aria-hidden />
               ) : showUndoOnly ? (
                 <button
@@ -210,7 +220,8 @@ export function ProposalCardList({
                       ✓ approved
                     </span>
                   ) : null}
-                  {typeof p.revised_text === "string" &&
+                  {!historical &&
+                    typeof p.revised_text === "string" &&
                     p.revised_text.trim() &&
                     !approved &&
                     !waived && (
@@ -235,9 +246,9 @@ export function ProposalCardList({
                     (blocked || waived) && "text-foreground-secondary"
                   )}
                 >
-                  {displayDraft(p, showDate)}
+                  {historical ? (p.draft ?? "").trim() : displayDraft(p, showDate)}
                 </p>
-                {!hideActions && showDate && (
+                {!suppressActions && showDate && (
                   <input
                     type="date"
                     className="mt-1 h-7 rounded-md border border-[#E8E4DC] bg-white px-2 text-[11px] text-foreground"
@@ -257,7 +268,7 @@ export function ProposalCardList({
         })}
       </ul>
 
-      {!hideActions && multiSelect && actionableCount > 1 && (
+      {!suppressActions && multiSelect && actionableCount > 1 && (
         <div className="flex flex-wrap items-center gap-2 pt-1">
           <Button
             type="button"

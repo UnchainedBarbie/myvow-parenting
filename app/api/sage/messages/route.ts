@@ -207,14 +207,24 @@ function openReplyProposal(raw: unknown): {
   };
 }
 
+/** depends_on is free text. Unsatisfied means that text is set and unblocked is not. */
+function unsatisfiedDependsOn(raw: unknown): boolean {
+  if (!raw || typeof raw !== "object") return false;
+  const proposal = raw as { depends_on?: unknown; unblocked?: boolean };
+  if (proposal.unblocked === true) return false;
+  return typeof proposal.depends_on === "string" && proposal.depends_on.trim() !== "";
+}
+
 /**
  * The reply or clarification most recently added in this session that is still waiting.
  * Item status is ignored: approving one proposal marks the whole item in_progress.
+ * blockedOnly limits that to a proposal whose depends_on is set and not yet unblocked.
  */
 async function latestRevisableDraft(
   admin: AdminClient,
   sessionId: string,
-  userId: string
+  userId: string,
+  opts?: { blockedOnly?: boolean }
 ): Promise<RevisableDraft | null> {
   const { data: journals, error: journalErr } = await admin
     .from("sage_journal_messages")
@@ -253,6 +263,7 @@ async function latestRevisableDraft(
     proposals.forEach((raw, proposalIndex) => {
       const proposal = openReplyProposal(raw);
       if (!proposal) return;
+      if (opts?.blockedOnly && !unsatisfiedDependsOn(raw)) return;
       const currentDraft =
         typeof proposal.revised_text === "string" && proposal.revised_text.trim()
           ? proposal.revised_text.trim()
@@ -282,6 +293,7 @@ async function revisePendingDraft(opts: {
   userId: string;
   guidance: string;
   target: RevisableDraft;
+  clearDependsOn?: boolean;
 }): Promise<{ reply: string; item: { id: string; plan: Record<string, unknown> } } | null> {
   const redraft = await redraftMessage({
     summary: opts.target.summary,
@@ -297,6 +309,7 @@ async function revisePendingDraft(opts: {
   proposals[opts.target.proposalIndex] = {
     ...proposals[opts.target.proposalIndex],
     revised_text: revisedText,
+    ...(opts.clearDependsOn ? { depends_on: null } : {}),
   };
   const updatedPlan = { ...opts.target.plan, proposals };
   const { data, error } = await opts.admin
@@ -752,24 +765,47 @@ export async function POST(request: NextRequest) {
           });
           if (reply.trim()) sageContent = reply;
 
-          const latestDraft =
-            sessionId && isNoteOnlyPlan(result.plan)
-              ? await latestRevisableDraft(admin, sessionId, user.id)
-              : null;
-          if (latestDraft) {
-            const revised = await revisePendingDraft({
+          const noteOnly = isNoteOnlyPlan(result.plan);
+          let foldedNote = false;
+          if (sessionId && noteOnly) {
+            const latestDraft = await latestRevisableDraft(admin, sessionId, user.id);
+            if (latestDraft) {
+              const revised = await revisePendingDraft({
+                admin,
+                userId: user.id,
+                guidance: trimmed,
+                target: latestDraft,
+              });
+              if (revised) {
+                sageContent = revised.reply;
+                revisedItem = revised.item;
+                foldedNote = true;
+              }
+            }
+          } else if (sessionId) {
+            const blockedDraft = await latestRevisableDraft(
               admin,
-              userId: user.id,
-              guidance: trimmed,
-              target: latestDraft,
-            });
-            if (revised) {
-              sageContent = revised.reply;
-              revisedItem = revised.item;
+              sessionId,
+              user.id,
+              { blockedOnly: true }
+            );
+            if (blockedDraft) {
+              const revised = await revisePendingDraft({
+                admin,
+                userId: user.id,
+                guidance: trimmed,
+                target: blockedDraft,
+                clearDependsOn: true,
+              });
+              if (revised) {
+                const named = revised.reply;
+                sageContent = reply.trim() ? `${reply.trim()} ${named}` : named;
+                revisedItem = revised.item;
+              }
             }
           }
 
-          if (!revisedItem) {
+          if (!foldedNote) {
             const { intent, entities } = result.interpretation;
             const { data: itemRow, error: insertItemError } = await admin
               .from("sage_items")

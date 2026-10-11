@@ -826,6 +826,7 @@ export function SageClient({
         user_message?: SageMessage;
         sage_message?: SageMessage;
         sage_item?: SageItem | null;
+        revised_item?: { id: string; plan: SagePlan } | null;
         case_id?: string | null;
       };
       if (payload.case_id) setCaseId(payload.case_id);
@@ -838,7 +839,17 @@ export function SageClient({
           }
         : undefined;
       setMessages((prev) => {
-        const base = prev.filter((m) => !m.id.startsWith("local-"));
+        const base = prev
+          .filter((m) => !m.id.startsWith("local-"))
+          .map((m) =>
+            payload.revised_item?.id &&
+            m.sage_item?.id === payload.revised_item.id
+              ? {
+                  ...m,
+                  sage_item: { ...m.sage_item, plan: payload.revised_item.plan },
+                }
+              : m
+          );
         return [...base, ...(userMsg ? [userMsg] : []), ...(sageMsg ? [sageMsg] : [])];
       });
 

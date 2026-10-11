@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import type { ClassifyPayload } from "@/lib/ai-classify";
 import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
 import { processChatMessage } from "@/lib/sage/chat";
+import { redraftMessage } from "@/lib/sage/planner";
 import {
   forcedTypeFromProposal,
   loadAndClassifyDocument,
@@ -147,6 +148,147 @@ async function persistProcessedPlan(opts: {
     return null;
   }
   return (itemRow as Record<string, unknown> | null) ?? null;
+}
+
+type RevisableDraft = {
+  itemId: string;
+  summary: string;
+  proposalType: "reply_coparent" | "ask_clarification";
+  proposalIndex: number;
+  currentDraft: string;
+  plan: Record<string, unknown>;
+  proposals: Record<string, unknown>[];
+};
+
+function isNoteOnlyPlan(plan: {
+  status?: string;
+  proposals?: { type?: string }[];
+}): boolean {
+  if (plan.status === "no_action") return true;
+  const proposals = plan.proposals ?? [];
+  return proposals.length > 0 && proposals.every((p) => p.type === "note_only");
+}
+
+function revisionReply(proposalType: "reply_coparent" | "ask_clarification"): string {
+  return proposalType === "ask_clarification"
+    ? "Added that to your question to Co-Parent."
+    : "Added that to your reply to Co-Parent.";
+}
+
+/**
+ * Pending reply or clarification drafts in this session that the revise action can still edit.
+ */
+async function revisablePendingDrafts(
+  admin: AdminClient,
+  sessionId: string,
+  userId: string
+): Promise<RevisableDraft[]> {
+  const { data: journals, error: journalErr } = await admin
+    .from("sage_journal_messages")
+    .select("sage_item_id")
+    .eq("session_id", sessionId)
+    .eq("user_id", userId)
+    .not("sage_item_id", "is", null);
+  if (journalErr || !journals) return [];
+
+  const itemIds = [
+    ...new Set(
+      (journals as { sage_item_id?: string | null }[])
+        .map((row) => row.sage_item_id)
+        .filter((id): id is string => typeof id === "string" && id.length > 0)
+    ),
+  ];
+  if (itemIds.length === 0) return [];
+
+  const { data: items, error: itemErr } = await admin
+    .from("sage_items")
+    .select("id, summary, plan, status")
+    .in("id", itemIds)
+    .eq("visible_to", userId)
+    .eq("status", "pending");
+  if (itemErr || !items) return [];
+
+  const drafts: RevisableDraft[] = [];
+  for (const row of items as {
+    id?: string;
+    summary?: string | null;
+    plan?: { proposals?: unknown[] } | null;
+  }[]) {
+    if (!row.id || !row.plan || typeof row.plan !== "object") continue;
+    const proposals = Array.isArray(row.plan.proposals) ? row.plan.proposals : [];
+    proposals.forEach((raw, proposalIndex) => {
+      if (!raw || typeof raw !== "object") return;
+      const proposal = raw as {
+        type?: string;
+        draft?: string;
+        revised_text?: string;
+        executed?: boolean;
+      };
+      if (proposal.executed === true) return;
+      if (proposal.type !== "reply_coparent" && proposal.type !== "ask_clarification") {
+        return;
+      }
+      const currentDraft =
+        typeof proposal.revised_text === "string" && proposal.revised_text.trim()
+          ? proposal.revised_text.trim()
+          : typeof proposal.draft === "string"
+            ? proposal.draft.trim()
+            : "";
+      drafts.push({
+        itemId: row.id as string,
+        summary: (row.summary ?? "").trim(),
+        proposalType: proposal.type,
+        proposalIndex,
+        currentDraft,
+        plan: row.plan as Record<string, unknown>,
+        proposals: proposals.map((p) =>
+          p && typeof p === "object" ? { ...(p as Record<string, unknown>) } : {}
+        ),
+      });
+    });
+  }
+  return drafts;
+}
+
+async function revisePendingDraft(opts: {
+  admin: AdminClient;
+  userId: string;
+  guidance: string;
+  target: RevisableDraft;
+}): Promise<{ reply: string; item: { id: string; plan: Record<string, unknown> } } | null> {
+  const redraft = await redraftMessage({
+    summary: opts.target.summary,
+    proposalType: opts.target.proposalType,
+    currentDraft: opts.target.currentDraft,
+    guidance: opts.guidance,
+  });
+  const revisedText = redraft?.trim() ?? "";
+  if (!revisedText) return null;
+
+  const proposals = opts.target.proposals.map((p) => ({ ...p }));
+  proposals[opts.target.proposalIndex] = {
+    ...proposals[opts.target.proposalIndex],
+    revised_text: revisedText,
+  };
+  const updatedPlan = { ...opts.target.plan, proposals };
+  const { data, error } = await opts.admin
+    .from("sage_items")
+    .update({ plan: updatedPlan })
+    .eq("id", opts.target.itemId)
+    .eq("visible_to", opts.userId)
+    .eq("status", "pending")
+    .select("id");
+  if (error || !data?.length) {
+    console.error(
+      "[sage/messages] revise pending draft failed:",
+      error?.message ?? "no pending row updated"
+    );
+    return null;
+  }
+  return {
+    reply: revisionReply(opts.target.proposalType),
+    item: { id: opts.target.itemId, plan: updatedPlan },
+  };
 }
 
 export async function GET(request: NextRequest) {
@@ -529,6 +671,7 @@ export async function POST(request: NextRequest) {
 
     let sageContent = FALLBACK_REPLY;
     let sageItem: Record<string, unknown> | null = null;
+    let revisedItem: { id: string; plan: Record<string, unknown> } | null = null;
 
     if (caseId) {
       try {
@@ -582,44 +725,63 @@ export async function POST(request: NextRequest) {
           });
           if (reply.trim()) sageContent = reply;
 
-          const { intent, entities } = result.interpretation;
-          const { data: itemRow, error: insertItemError } = await admin
-            .from("sage_items")
-            .insert({
-              case_id: caseId,
-              source_type: "chat",
-              source_id: (userRow as { id: string }).id,
-              visible_to: user.id,
-              item_type: intent.item_type,
-              domain: intent.domain,
-              summary: intent.summary,
-              evidence_excerpt: intent.evidence_excerpt,
-              tool_name: intent.tool_name,
-              action_required: intent.action_required,
-              action_type: intent.action_type,
-              urgency: intent.urgency,
-              confidence: intent.confidence,
-              tool_input: {
-                ...entities,
-                resolved_dates: result.resolved_dates,
-                ...(result.expense_category
-                  ? { expense_category: result.expense_category }
-                  : {}),
-              },
-              child_ids: result.child_ids,
-              plan: result.plan,
-              status: "pending",
-            })
-            .select(SAGE_ITEM_SELECT)
-            .single();
+          const pendingDrafts =
+            sessionId && isNoteOnlyPlan(result.plan)
+              ? await revisablePendingDrafts(admin, sessionId, user.id)
+              : [];
+          if (pendingDrafts.length === 1) {
+            const revised = await revisePendingDraft({
+              admin,
+              userId: user.id,
+              guidance: trimmed,
+              target: pendingDrafts[0],
+            });
+            if (revised) {
+              sageContent = revised.reply;
+              revisedItem = revised.item;
+            }
+          }
 
-          if (insertItemError) {
-            console.error(
-              "[sage/messages] sage_items insert failed:",
-              insertItemError
-            );
-          } else {
-            sageItem = (itemRow as Record<string, unknown> | null) ?? null;
+          if (!revisedItem) {
+            const { intent, entities } = result.interpretation;
+            const { data: itemRow, error: insertItemError } = await admin
+              .from("sage_items")
+              .insert({
+                case_id: caseId,
+                source_type: "chat",
+                source_id: (userRow as { id: string }).id,
+                visible_to: user.id,
+                item_type: intent.item_type,
+                domain: intent.domain,
+                summary: intent.summary,
+                evidence_excerpt: intent.evidence_excerpt,
+                tool_name: intent.tool_name,
+                action_required: intent.action_required,
+                action_type: intent.action_type,
+                urgency: intent.urgency,
+                confidence: intent.confidence,
+                tool_input: {
+                  ...entities,
+                  resolved_dates: result.resolved_dates,
+                  ...(result.expense_category
+                    ? { expense_category: result.expense_category }
+                    : {}),
+                },
+                child_ids: result.child_ids,
+                plan: result.plan,
+                status: "pending",
+              })
+              .select(SAGE_ITEM_SELECT)
+              .single();
+
+            if (insertItemError) {
+              console.error(
+                "[sage/messages] sage_items insert failed:",
+                insertItemError
+              );
+            } else {
+              sageItem = (itemRow as Record<string, unknown> | null) ?? null;
+            }
           }
         }
       } catch (e) {
@@ -677,6 +839,7 @@ export async function POST(request: NextRequest) {
       user_message: userRow as SageMessageRow,
       sage_message: sageMessage,
       sage_item: sageItem,
+      revised_item: revisedItem,
       case_id: caseId,
     });
   } catch (e) {

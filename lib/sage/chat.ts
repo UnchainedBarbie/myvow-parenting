@@ -29,6 +29,7 @@ export type ProcessChatMessageInput = {
   conversation_context?: unknown;
   established_date?: { iso: string; raw: string } | null;
   established_subject?: string | null;
+  established_child?: string | null;
 };
 
 function buildReply(result: ProcessObservationResult): string {
@@ -70,6 +71,7 @@ export async function processChatMessage(
     plan_sender: "You",
     established_date: input.established_date ?? null,
     established_subject: input.established_subject ?? null,
+    established_child: input.established_child ?? null,
   });
 
   const actions: ChatAction[] = result.plan.proposals.map((p) => ({

@@ -13,6 +13,7 @@ import {
   canUndo,
   dateKey,
   displayDraft,
+  formatCardDate,
   isActionable,
   isBlocked,
   isCommitted,
@@ -261,11 +262,11 @@ export function ProposalCardList({
                     aria-label="Choose date for calendar update"
                   />
                 )}
-                {p.chosen_date && (
+                {isCalendarUpdateProposal(p.type) && (p.chosen_date || p.date) ? (
                   <span className="text-[10px] text-foreground-secondary">
-                    date: {p.chosen_date}
+                    date: {formatCardDate((p.chosen_date || p.date || "").trim())}
                   </span>
-                )}
+                ) : null}
               </div>
             </li>
           );

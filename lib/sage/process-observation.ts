@@ -14,6 +14,7 @@ import { plan, type Plan } from "@/lib/sage/planner";
 import {
   rawForDateResolver,
   resolveChildren,
+  parseClockMinutes,
   resolveDate,
   resolveDates,
   type DateResolution,
@@ -51,6 +52,8 @@ export type ObservationProcessContext = {
   established_date?: { iso: string; raw: string } | null;
   /** More specific event subject from earlier in the conversation, if any. */
   established_subject?: string | null;
+  /** Child named earlier in the conversation, when this turn does not repeat the name. */
+  established_child?: string | null;
 };
 
 export type ProcessObservationResult = {
@@ -87,6 +90,23 @@ export async function processObservation(
   });
 
   const { intent, entities } = interpretation;
+  const scheduleItem =
+    intent.item_type === "schedule_change" || intent.item_type === "calendar_update";
+  console.log(
+    "[sage/understanding]",
+    JSON.stringify({
+      source_type: context.source_type,
+      item_type: intent.item_type,
+      domain: intent.domain,
+      action_required: intent.action_required,
+      action_type: intent.action_type,
+      tool_name: intent.tool_name,
+      summary: intent.summary,
+      children: entities.children,
+      dates: entities.dates,
+      schedule_item: scheduleItem,
+    })
+  );
   const categoryBlob = [
     intent.summary,
     intent.evidence_excerpt,
@@ -108,10 +128,21 @@ export async function processObservation(
   const childNames = entities.children
     .map((c) => c.name)
     .filter((n) => typeof n === "string" && n.trim().length > 0);
-  const { child_ids, resolved: childResolutions } = await resolveChildren(
+  let { child_ids, resolved: childResolutions } = await resolveChildren(
     context.case_id,
     childNames
   );
+  if (child_ids.length === 0 && context.established_child?.trim()) {
+    const carried = context.established_child.trim();
+    const extra = await resolveChildren(context.case_id, [carried]);
+    if (extra.child_ids.length > 0) {
+      child_ids = extra.child_ids;
+      childResolutions = extra.resolved;
+    }
+    if (!entities.children.some((c) => c.name?.trim())) {
+      entities.children = [{ name: carried, confidence: 1 }];
+    }
+  }
   const unresolved_children = childResolutions
     .filter((r) => r.child_id === null)
     .map((r) => r.name);
@@ -239,7 +270,7 @@ export async function processObservation(
     observation.messages.some((m) => (m.attachments?.length ?? 0) > 0) ||
     /\[Attachment:/i.test(observationText);
 
-  const draftedPlan = await plan({
+  let draftedPlan = await plan({
     item_type: intent.item_type,
     domain: intent.domain,
     action_required: intent.action_required,
@@ -264,9 +295,28 @@ export async function processObservation(
       eventSubjectFromTexts([messageBodies, intent.evidence_excerpt ?? ""]),
       context.established_subject ?? null
     ) ?? undefined;
-  const childName = childResolutions.find((r) => r.child_id)?.name
+  const namedChild = childResolutions.find((r) => r.child_id)?.name
     ?? childNames[0]
     ?? null;
+  const childName = namedChild ?? context.established_child ?? null;
+  const clockMinutes = parseClockMinutes(messageBodies);
+  const alreadyCalendar = draftedPlan.proposals.some((p) => p.type === "calendar_update");
+  if (!alreadyCalendar && resolvedIso && event_subject && clockMinutes != null) {
+    draftedPlan = {
+      ...draftedPlan,
+      status: "ready",
+      proposals: [
+        ...draftedPlan.proposals.filter((p) => p.type !== "note_only"),
+        {
+          type: "calendar_update",
+          draft: `Add ${event_subject} on ${resolvedIso}.`,
+          depends_on: null,
+          requires_approval: true,
+        },
+      ],
+      reasoning: `${draftedPlan.reasoning} Date and time confirmed for ${event_subject} — calendar check runs alongside any reply revision.`.trim(),
+    };
+  }
   const itemPlan = await reconcileCalendarPlan(draftedPlan, {
     caseId: context.case_id,
     timezone: context.timezone,

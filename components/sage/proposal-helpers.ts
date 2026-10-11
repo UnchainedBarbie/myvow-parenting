@@ -96,6 +96,19 @@ export function isActionable(p: SageProposal): boolean {
   return p.approved !== true;
 }
 
+/** "Sat, Oct 17" for a stored YYYY-MM-DD. Other strings are returned trimmed. */
+export function formatCardDate(value: string): string {
+  const match = value.trim().match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!match) return value.trim();
+  const dt = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 12));
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: "UTC",
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  }).format(dt);
+}
+
 function isIsoDate(value: string | null | undefined): value is string {
   return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value.trim());
 }

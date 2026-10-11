@@ -147,27 +147,42 @@ function logConvMatch(
 }
 
 /**
- * Reply address for the other member on this case: is_reply, and not the sender's member.
+ * Reply address for the co-parent relative to the account owner.
+ * The is_reply row on a case member whose user_id is not the resolved recipient.
  * Null when that address is missing or more than one member qualifies.
  */
 async function coparentReplyEmail(
   admin: ReturnType<typeof getServiceRoleClient>,
   caseId: string,
-  senderCaseMemberId: string | null
+  recipientUserId: string | null
 ): Promise<string | null> {
-  let query = admin
-    .from("case_member_emails")
-    .select("email, case_member_id")
-    .eq("case_id", caseId)
-    .eq("is_reply", true);
-  if (senderCaseMemberId) {
-    query = query.neq("case_member_id", senderCaseMemberId);
+  if (!recipientUserId) return null;
+
+  const { data: members, error: memberErr } = await admin
+    .from("case_members")
+    .select("id, user_id")
+    .eq("case_id", caseId);
+  if (memberErr) {
+    console.error(`[conv-match] coparent_email lookup failed: ${memberErr.message}`);
+    return null;
   }
-  const { data, error } = await query;
+
+  const coparentMemberIds = ((members ?? []) as { id?: string; user_id?: string | null }[])
+    .filter((member) => member.id && member.user_id !== recipientUserId)
+    .map((member) => member.id as string);
+  if (coparentMemberIds.length === 0) return null;
+
+  const { data, error } = await admin
+    .from("case_member_emails")
+    .select("email")
+    .eq("case_id", caseId)
+    .eq("is_reply", true)
+    .in("case_member_id", coparentMemberIds);
   if (error) {
     console.error(`[conv-match] coparent_email lookup failed: ${error.message}`);
     return null;
   }
+
   const emails = ((data ?? []) as { email?: string | null }[])
     .map((row) => (row.email ?? "").trim())
     .filter((email) => email.length > 0);
@@ -208,12 +223,13 @@ async function stampMatchedConversation(
 async function resolveOrCreateConversation(
   caseId: string,
   thread: ExtractedPostmarkThread,
-  senderCaseMemberId: string | null,
   subject: string
 ): Promise<string | null> {
   try {
     const admin = getServiceRoleClient();
-    const coparentEmail = await coparentReplyEmail(admin, caseId, senderCaseMemberId);
+    const visibleTo = await resolveVisibleTo(caseId);
+    const recipientUserId = typeof visibleTo === "string" ? visibleTo : null;
+    const coparentEmail = await coparentReplyEmail(admin, caseId, recipientUserId);
     const candidates = threadIdCandidates(thread);
 
     if (candidates.length > 0) {
@@ -307,8 +323,7 @@ async function resolveOrCreateConversation(
 
     const trimmedSubject = subject.trim();
     const createdSubject = trimmedSubject.length > 0 ? trimmedSubject : "(no subject)";
-    const visibleTo = await resolveVisibleTo(caseId);
-    if (typeof visibleTo !== "string") {
+    if (!recipientUserId) {
       console.error(
         `[conv-match] step=create conversation_id=none created=false error=${visibleTo.error}`
       );
@@ -322,7 +337,7 @@ async function resolveOrCreateConversation(
         subject: createdSubject,
         topic: "General",
         category: "General",
-        created_by: visibleTo,
+        created_by: recipientUserId,
         coparent_email: coparentEmail,
         email_thread_id: thread.messageId,
         child_id: null,
@@ -400,10 +415,8 @@ export async function POST(req: NextRequest) {
     }
 
     const caseId = caseRow.id as string;
-    let senderCaseMemberId: string | null = null;
     try {
       const sender = await resolveInboundSender(caseId, body.From);
-      senderCaseMemberId = sender.caseMemberId;
       console.log(
         `[sender-id] from=${sender.fromEmail ?? "null"} matched=${sender.isKnownCaseMember} case_member_id=${sender.caseMemberId ?? "null"} user_id=${sender.userId ?? "null"}`
       );
@@ -414,7 +427,6 @@ export async function POST(req: NextRequest) {
     const conversationId = await resolveOrCreateConversation(
       caseId,
       extracted,
-      senderCaseMemberId,
       subject
     );
     const attachments = Array.isArray(body.Attachments) ? body.Attachments : [];

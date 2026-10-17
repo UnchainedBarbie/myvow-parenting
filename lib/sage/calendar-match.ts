@@ -6,7 +6,7 @@
 import { getServiceRoleClient } from "@/lib/supabase/server";
 import type { Plan, Proposal } from "@/lib/sage/planner";
 import { eventSubjectFromTexts } from "@/lib/sage/event-subject";
-import { scheduleClocks } from "@/lib/sage/outbound-facts";
+import { splitSchedule, type ScheduleParts } from "@/lib/sage/outbound-facts";
 
 const STOPWORDS = new Set([
   "a",
@@ -250,24 +250,16 @@ function ymdInZone(iso: string, timezone: string): string | null {
   return `${year}-${month}-${day}`;
 }
 
-/**
- * Last start and last arrival in the text. A later clock replaces an earlier
- * one of the same role. Arrival never becomes the start.
- */
-function requestedSchedule(text: string): { start: string | null; arrival: string | null } {
-  let start: string | null = null;
-  let arrival: string | null = null;
-  for (const clock of scheduleClocks(text)) {
-    const label = compactHHmm(clock.hhmm);
-    if (clock.role === "arrival") arrival = label;
-    else start = label;
-  }
-  return { start, arrival };
+function compactParts(parts: ScheduleParts): { start: string | null; arrival: string | null } {
+  return {
+    start: parts.start ? compactHHmm(parts.start) : null,
+    arrival: parts.arrival ? compactHHmm(parts.arrival) : null,
+  };
 }
 
-/** Arrival stored on the event, such as "Avery arrives 7:00 PM." Not the conversation. */
+/** Arrival stored on the event. Not a clock from the conversation. */
 function arrivalOnRow(description: string | null): string | null {
-  return requestedSchedule(description ?? "").arrival;
+  return splitSchedule(description ?? "").arrival;
 }
 
 /** One sentence. The event, the date, and each time appear once. */
@@ -372,11 +364,13 @@ function outcomeFor(
   }
   const proposed = significantWords(`${input.summary} ${proposal.draft} ${input.corpus} ${input.priorText ?? ""}`);
   const hits = rows.filter((row) => sharesDistinctiveWord(proposed, row.title ?? ""));
-  const offered = requestedSchedule(
+  const offered = splitSchedule(
     [input.priorText, proposal.draft, input.corpus].filter(Boolean).join("\n")
   );
-  // The new value is this turn only. Earlier conversation clocks are not the "before".
-  const requested = requestedSchedule(input.corpus);
+  const offeredLabel = compactParts(offered);
+  // The new value is this turn only. An arrival in this turn is not a new start.
+  const requested = splitSchedule(input.corpus);
+  const requestedLabel = compactParts(requested);
 
   if (hits.length > 1) {
     const list = hits
@@ -397,6 +391,12 @@ function outcomeFor(
     const rowDay = ymdInZone(hit.start_time, input.timezone);
     const allDay = hit.all_day === true;
     const rowClock = allDay ? null : zonedHHmm(hit.start_time, input.timezone);
+    const storedArrival = arrivalOnRow(hit.description);
+    const eventStart = requested.start ?? rowClock;
+    const arrivalTime = requested.arrival ?? storedArrival;
+    if (!eventStart && (requested.arrival || requested.pickup)) {
+      return ask(`What time does ${label} start?`);
+    }
     return {
       ...proposal,
       type: "calendar_update",
@@ -405,14 +405,21 @@ function outcomeFor(
         dateFrom: rowDate,
         dateTo: rowDay && rowDay !== input.iso ? when : rowDate,
         fromStart: rowClock ? compactHHmm(rowClock) : null,
-        toStart: requested.start,
-        fromArrival: arrivalOnRow(hit.description),
-        toArrival: requested.arrival,
+        toStart: requestedLabel.start,
+        fromArrival: storedArrival ? compactHHmm(storedArrival) : null,
+        toArrival: requestedLabel.arrival,
       }),
       date: input.iso,
       calendar_intent: "update",
       calendar_event_id: hit.id,
+      event_start: eventStart,
+      arrival_time: arrivalTime,
+      pickup_time: requested.pickup,
     };
+  }
+
+  if (!offered.start && (offered.arrival || offered.pickup)) {
+    return ask(`What time does ${label} start?`);
   }
 
   return {
@@ -421,12 +428,15 @@ function outcomeFor(
     draft: composeOfferSentence({
       label,
       when,
-      start: offered.start,
-      arrival: offered.arrival,
+      start: offeredLabel.start,
+      arrival: offeredLabel.arrival,
     }),
     date: input.iso,
     calendar_intent: "offer",
     calendar_event_id: null,
+    event_start: offered.start,
+    arrival_time: offered.arrival,
+    pickup_time: offered.pickup,
   };
 }
 

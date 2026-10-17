@@ -238,7 +238,7 @@ export function unsupportedFacts(draft: string, sources: string): string[] {
   return missing;
 }
 
-type TimeRole = "start" | "arrival" | "other";
+type TimeRole = "start" | "arrival" | "pickup" | "other";
 
 type PlacedTime = Fact & { role: TimeRole };
 
@@ -268,7 +268,10 @@ export function voiceProblems(draft: string, userAsked: string): string[] {
 }
 
 function timeRole(text: string, index: number): TimeRole {
-  const before = text.slice(Math.max(0, index - 48), index).toLowerCase();
+  const slice = text.slice(Math.max(0, index - 48), index);
+  const clause = slice.split(/[,;.]/).pop() ?? slice;
+  const before = clause.toLowerCase();
+  if (/\bpick(?:\s+\w+){0,3}\s+up\b|\bpick\s?up\b|\bdrop-?\s?off\b|\bdropoff\b/.test(before)) return "pickup";
   if (/arriv|be there|there by|needs to be/.test(before)) return "arrival";
   if (/start|begin|it'?s at|it is at|is at/.test(before)) return "start";
   return "other";
@@ -278,7 +281,7 @@ function placedTimes(text: string): PlacedTime[] {
   const facts: PlacedTime[] = [];
   const seen = new Set<string>();
   const pattern =
-    /\b(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)\b|\b([01]?\d|2[0-3]):([0-5]\d)\b/gi;
+    /\b(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)?\b|\b([01]?\d|2[0-3]):([0-5]\d)\b/gi;
   for (const match of text.matchAll(pattern)) {
     const meridiem = (match[3] ?? "").toLowerCase();
     const hasMeridiem = meridiem.startsWith("a") || meridiem.startsWith("p");
@@ -295,17 +298,28 @@ function placedTimes(text: string): PlacedTime[] {
       minute = Number(match[5]);
       if (hour > 23 || minute > 59) continue;
     } else {
-      continue;
+      hour = Number(match[1]);
+      minute = match[2] != null ? Number(match[2]) : 0;
+      if (!Number.isFinite(hour) || minute > 59 || hour < 1 || hour > 12) continue;
+      const bareRole = timeRole(text, match.index ?? 0);
+      if ((bareRole === "arrival" || bareRole === "pickup") && hour <= 8) {
+        hour += 12;
+      } else {
+        continue;
+      }
     }
-    const key = `time:${hour * 60 + minute}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
+    const role = timeRole(text, match.index ?? 0);
+    const minuteKey = hour * 60 + minute;
+    const seenKey = `${role}:${minuteKey}`;
+    if (seen.has(seenKey)) continue;
+    seen.add(seenKey);
+    const key = `time:${minuteKey}`;
     const hour12 = hour % 12 || 12;
     const label = `${hour12}:${String(minute).padStart(2, "0")} ${hour >= 12 ? "PM" : "AM"}`;
     facts.push({
       key,
       label,
-      role: timeRole(text, match.index ?? 0),
+      role,
     });
   }
   return facts;
@@ -331,6 +345,28 @@ function hhmmFromKey(key: string): string {
 /** Clocks in a text, with start vs arrival taken from the words beside each one. */
 export function scheduleClocks(text: string): { role: TimeRole; hhmm: string }[] {
   return placedTimes(text).map((time) => ({ role: time.role, hhmm: hhmmFromKey(time.key) }));
+}
+
+export type ScheduleParts = {
+  /** When the event begins, HH:mm. Arrival and pickup are never placed here. */
+  start: string | null;
+  /** Arrival or "needs to be there by", HH:mm. */
+  arrival: string | null;
+  /** Pickup or drop-off, HH:mm. Not an event end. */
+  pickup: string | null;
+};
+
+/** Last start, last arrival, and last pickup. A later clock replaces an earlier one of the same role. */
+export function splitSchedule(text: string): ScheduleParts {
+  let start: string | null = null;
+  let arrival: string | null = null;
+  let pickup: string | null = null;
+  for (const clock of scheduleClocks(text)) {
+    if (clock.role === "arrival") arrival = clock.hhmm;
+    else if (clock.role === "pickup") pickup = clock.hhmm;
+    else start = clock.hhmm;
+  }
+  return { start, arrival, pickup };
 }
 
 function retractedTimeKeys(guidance: string, known: PlacedTime[]): Set<string> {

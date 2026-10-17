@@ -74,6 +74,12 @@ export type Proposal = {
   /** Set after the calendar is checked. offer creates; update edits calendar_event_id. */
   calendar_intent?: "offer" | "update";
   calendar_event_id?: string | null;
+  /** When the event begins, HH:mm. Never an arrival or a pickup. */
+  event_start?: string | null;
+  /** Arrival or "needs to be there by", HH:mm. Written to the description, not start_time. */
+  arrival_time?: string | null;
+  /** Pickup or drop-off, HH:mm. Written to the description, not end_time. */
+  pickup_time?: string | null;
 };
 
 export type Plan = {

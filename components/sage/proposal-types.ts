@@ -32,6 +32,12 @@ export type SageProposal = {
   /** offer creates an event; update edits calendar_event_id. Absent when this card is only a question. */
   calendar_intent?: "offer" | "update";
   calendar_event_id?: string | null;
+  /** When the event begins, HH:mm. Never an arrival or a pickup. */
+  event_start?: string | null;
+  /** Arrival or "needs to be there by", HH:mm. Description only, not start_time. */
+  arrival_time?: string | null;
+  /** Pickup or drop-off, HH:mm. Description only, not end_time. */
+  pickup_time?: string | null;
 };
 
 export type SagePlan = {

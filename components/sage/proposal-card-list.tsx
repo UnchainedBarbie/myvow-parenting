@@ -208,7 +208,7 @@ export function ProposalCardList({
                   <span className="inline-flex items-center rounded-full bg-[#EEF2E9] px-2 py-0.5 text-[10px] font-medium text-[#5B7A52]">
                     {proposalTypeLabel(p.type, p)}
                   </span>
-                  {done ? (
+                  {!historical && done ? (
                     <span className="text-[10px] font-medium text-[#5B7A52]">
                       {isLogExpenseProposal(p.type)
                         ? "✓ done"
@@ -220,7 +220,7 @@ export function ProposalCardList({
                             ? "✓ filed"
                             : "✓ done"}
                     </span>
-                  ) : approved && !formPending ? (
+                  ) : !historical && approved && !formPending ? (
                     <span className="text-[10px] font-medium text-[#5B7A52]">
                       ✓ approved
                     </span>

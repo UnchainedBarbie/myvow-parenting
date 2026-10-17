@@ -6,7 +6,7 @@
 import { getServiceRoleClient } from "@/lib/supabase/server";
 import type { Plan, Proposal } from "@/lib/sage/planner";
 import { eventSubjectFromTexts } from "@/lib/sage/event-subject";
-import { replacementStartLabel, scheduleSentences } from "@/lib/sage/outbound-facts";
+import { scheduleClocks } from "@/lib/sage/outbound-facts";
 
 const STOPWORDS = new Set([
   "a",
@@ -207,6 +207,130 @@ function ask(draft: string): Proposal {
   };
 }
 
+function compactHHmm(hhmm: string): string {
+  const [hRaw, mRaw] = hhmm.split(":");
+  const hour24 = Number(hRaw);
+  const minute = Number(mRaw);
+  if (!Number.isFinite(hour24) || !Number.isFinite(minute)) return hhmm;
+  const hour12 = hour24 % 12 || 12;
+  const suffix = hour24 >= 12 ? "pm" : "am";
+  if (minute === 0) return `${hour12}${suffix}`;
+  return `${hour12}:${String(minute).padStart(2, "0")}${suffix}`;
+}
+
+/** HH:mm of an instant in the case timezone. */
+function zonedHHmm(iso: string, timezone: string): string | null {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return null;
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date);
+  const hour = parts.find((p) => p.type === "hour")?.value;
+  const minute = parts.find((p) => p.type === "minute")?.value;
+  if (hour == null || minute == null) return null;
+  return `${hour}:${minute}`;
+}
+
+function ymdInZone(iso: string, timezone: string): string | null {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return null;
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const year = parts.find((p) => p.type === "year")?.value;
+  const month = parts.find((p) => p.type === "month")?.value;
+  const day = parts.find((p) => p.type === "day")?.value;
+  if (!year || !month || !day) return null;
+  return `${year}-${month}-${day}`;
+}
+
+/**
+ * Last start and last arrival in the text. A later clock replaces an earlier
+ * one of the same role. Arrival never becomes the start.
+ */
+function requestedSchedule(text: string): { start: string | null; arrival: string | null } {
+  let start: string | null = null;
+  let arrival: string | null = null;
+  for (const clock of scheduleClocks(text)) {
+    const label = compactHHmm(clock.hhmm);
+    if (clock.role === "arrival") arrival = label;
+    else start = label;
+  }
+  return { start, arrival };
+}
+
+/** Arrival stored on the event, such as "Avery arrives 7:00 PM." Not the conversation. */
+function arrivalOnRow(description: string | null): string | null {
+  return requestedSchedule(description ?? "").arrival;
+}
+
+/** One sentence. The event, the date, and each time appear once. */
+export function composeOfferSentence(input: {
+  label: string;
+  when: string;
+  start: string | null;
+  arrival: string | null;
+}): string {
+  let sentence = `Nothing on your calendar for ${input.label} on ${input.when}`;
+  if (input.start) sentence += ` at ${input.start}`;
+  if (input.arrival && input.arrival !== input.start) {
+    sentence += `, arriving by ${input.arrival}`;
+  }
+  return `${sentence}. Want me to add it?`;
+}
+
+/**
+ * Before values are the stored row. After values are what this turn asks for.
+ * A matching pair is omitted so the sentence does not restate a fact.
+ */
+export function composeUpdateSentence(input: {
+  label: string;
+  dateFrom: string;
+  dateTo: string | null;
+  fromStart: string | null;
+  toStart: string | null;
+  fromArrival: string | null;
+  toArrival: string | null;
+}): string {
+  const dateChanges = !!input.dateTo && input.dateTo !== input.dateFrom;
+  const startChanges =
+    !!input.fromStart && !!input.toStart && input.fromStart !== input.toStart;
+  const arrivalChanges =
+    !!input.fromArrival && !!input.toArrival && input.fromArrival !== input.toArrival;
+  const arrivalAdds =
+    !!input.toArrival && !input.fromArrival && input.toArrival !== input.toStart;
+
+  if (!dateChanges && !startChanges && !arrivalChanges && !arrivalAdds) {
+    return `Update ${input.label} on ${input.dateFrom}.`;
+  }
+
+  let sentence = dateChanges
+    ? `Move ${input.label} from ${input.dateFrom} to ${input.dateTo}`
+    : `Move ${input.label} on ${input.dateFrom}`;
+
+  if (startChanges) {
+    sentence += dateChanges
+      ? `, from ${input.fromStart} to ${input.toStart}`
+      : ` from ${input.fromStart} to ${input.toStart}`;
+  } else if (!input.fromStart && input.toStart) {
+    sentence += ` to ${input.toStart}`;
+  }
+
+  if (arrivalChanges) {
+    sentence += `, arriving by ${input.fromArrival} to ${input.toArrival}`;
+  } else if (arrivalAdds) {
+    sentence += `, arriving by ${input.toArrival}`;
+  }
+
+  return `${sentence}.`;
+}
+
 async function loadCandidates(input: CalendarMatchInput): Promise<CalendarRow[] | null> {
   const ymd = parseIso(input.iso);
   if (!ymd) return [];
@@ -248,13 +372,11 @@ function outcomeFor(
   }
   const proposed = significantWords(`${input.summary} ${proposal.draft} ${input.corpus} ${input.priorText ?? ""}`);
   const hits = rows.filter((row) => sharesDistinctiveWord(proposed, row.title ?? ""));
-  const newClock = replacementStartLabel(input.corpus);
-  const details = scheduleSentences(
-    input.priorText ?? "",
-    `${proposal.draft}\n${input.corpus}`,
-    input.childName,
-    input.subject
+  const offered = requestedSchedule(
+    [input.priorText, proposal.draft, input.corpus].filter(Boolean).join("\n")
   );
+  // The new value is this turn only. Earlier conversation clocks are not the "before".
+  const requested = requestedSchedule(input.corpus);
 
   if (hits.length > 1) {
     const list = hits
@@ -271,19 +393,22 @@ function outcomeFor(
 
   if (hits.length === 1) {
     const hit = hits[0];
-    const oldClock = formatClock(hit.start_time, input.timezone);
-    const title = (hit.title ?? label).trim() || label;
-    const base =
-      oldClock && newClock
-        ? `Move ${title} from ${oldClock} to ${newClock}.`
-        : oldClock
-          ? `Update ${title} on ${when}. It is currently at ${oldClock}.`
-          : `Update ${title} on ${when}.`;
-    const draft = details && !base.includes(details) ? `${base} ${details}` : base;
+    const rowDate = formatInstantDate(hit.start_time, input.timezone) || when;
+    const rowDay = ymdInZone(hit.start_time, input.timezone);
+    const allDay = hit.all_day === true;
+    const rowClock = allDay ? null : zonedHHmm(hit.start_time, input.timezone);
     return {
       ...proposal,
       type: "calendar_update",
-      draft,
+      draft: composeUpdateSentence({
+        label,
+        dateFrom: rowDate,
+        dateTo: rowDay && rowDay !== input.iso ? when : rowDate,
+        fromStart: rowClock ? compactHHmm(rowClock) : null,
+        toStart: requested.start,
+        fromArrival: arrivalOnRow(hit.description),
+        toArrival: requested.arrival,
+      }),
       date: input.iso,
       calendar_intent: "update",
       calendar_event_id: hit.id,
@@ -293,13 +418,12 @@ function outcomeFor(
   return {
     ...proposal,
     type: "calendar_update",
-    draft: [
-      `Nothing on your calendar for ${label} on ${when}.`,
-      details,
-      "Want me to add it?",
-    ]
-      .filter(Boolean)
-      .join(" "),
+    draft: composeOfferSentence({
+      label,
+      when,
+      start: offered.start,
+      arrival: offered.arrival,
+    }),
     date: input.iso,
     calendar_intent: "offer",
     calendar_event_id: null,

@@ -440,12 +440,30 @@ export function parseClockMinutes(text: string): number | null {
   return found;
 }
 
+const WEEKDAY_TOKEN =
+  "sun|sunday|mon|monday|tue|tues|tuesday|wed|wednesday|thu|thur|thurs|thursday|fri|friday|sat|saturday";
+
 /**
- * Bare, "this", and "next" weekdays.
- * "Tuesday" / "this Tuesday" = the next occurrence that has not passed.
- * "Next Tuesday" = that weekday in the following calendar week.
- * On that weekday, today counts only when a still-later time was given.
+ * "Saturday", "this Saturday", and "next Saturday" are the nearest upcoming
+ * occurrence. "a week from Saturday" and "Saturday week" are the week after that.
+ * On that weekday, today counts only when a still-later clock time was given.
  */
+function weekdayNamedForLaterWeek(source: string): string | null {
+  const weekFrom = source.match(
+    new RegExp(
+      `\\ba\\s+week\\s+from\\s+(?:(?:this|next)\\s+)?(${WEEKDAY_TOKEN})\\b`
+    )
+  );
+  if (weekFrom?.[1]) return resolveWeekdayToken(weekFrom[1]);
+  const nextWeek = source.match(
+    new RegExp(`\\b(${WEEKDAY_TOKEN})\\s+next\\s+week\\b`)
+  );
+  if (nextWeek?.[1]) return resolveWeekdayToken(nextWeek[1]);
+  const namedWeek = source.match(new RegExp(`\\b(${WEEKDAY_TOKEN})\\s+week\\b`));
+  if (namedWeek?.[1]) return resolveWeekdayToken(namedWeek[1]);
+  return null;
+}
+
 function resolveWeekdayPhrase(
   raw: string,
   text: string,
@@ -455,39 +473,36 @@ function resolveWeekdayPhrase(
   corpus?: string
 ): DateResolution | null {
   const lower = text.trim().toLowerCase();
-  const nextWeek = lower.match(
-    /\b(sun|sunday|mon|monday|tue|tues|tuesday|wed|wednesday|thu|thur|thurs|thursday|fri|friday|sat|saturday)\s+next\s+week\b/
+  const corpusLower = (corpus ?? "").toLowerCase();
+  const normal = lower.match(
+    new RegExp(`\\b(this|next)?(?:\\s+coming)?\\s*(${WEEKDAY_TOKEN})\\b`)
   );
-  const match = nextWeek
-    ? (["", "next", nextWeek[1]] as const)
-    : lower.match(
-        /\b(this|next)?(?:\s+coming)?\s*(sun|sunday|mon|monday|tue|tues|tuesday|wed|wednesday|thu|thur|thurs|thursday|fri|friday|sat|saturday)\b/
-      );
-  if (!match) return null;
-  const weekday = resolveWeekdayToken(match[2]);
+  const named = normal?.[2] ? resolveWeekdayToken(normal[2]) : null;
+  const followText = weekdayNamedForLaterWeek(lower);
+  const followCorpus = weekdayNamedForLaterWeek(corpusLower);
+  const weekday = followText ?? named;
   if (!weekday) return null;
+  const following =
+    followText === weekday || (followCorpus === weekday && named === weekday);
   const target = WEEKDAYS.indexOf(weekday as (typeof WEEKDAYS)[number]);
   if (target < 0) return null;
 
   const todayDow = weekdayIndex(todayYmd);
-  const which = match[1] ?? "";
   const clock = parseClockMinutes(corpus ? `${text} ${corpus}` : text);
   let delta = (target - todayDow + 7) % 7;
-  if (which === "next") {
-    const daysToNextSunday = todayDow === 0 ? 7 : 7 - todayDow;
-    delta = daysToNextSunday + target;
-  } else if (delta === 0) {
+  if (delta === 0) {
     const laterToday = clock != null && clock > minutesNow(today, timezone);
     delta = laterToday ? 0 : 7;
   }
+  if (following) delta += 7;
 
   const ymd = addCalendarDays(todayYmd, delta);
   const label = weekday.charAt(0).toUpperCase() + weekday.slice(1);
   return resolved(
     raw,
     ymd,
-    which === "next"
-      ? `Weekday: next ${label}`
+    following
+      ? `Weekday: ${label} the following week`
       : delta === 0
         ? `Weekday: ${label} later today`
         : `Weekday: upcoming ${label}`

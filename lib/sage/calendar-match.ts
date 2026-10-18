@@ -279,7 +279,9 @@ export function composeOfferSentence(input: {
 
 /**
  * Before values are the stored row. After values are what this turn asks for.
- * A matching pair is omitted so the sentence does not restate a fact.
+ * "Move" is only for a change to the event's date or start. An arrival-only
+ * turn names that change instead. A changed arrival is "moving from ... to ...",
+ * never a from-to range after "arriving by".
  */
 export function composeUpdateSentence(input: {
   label: string;
@@ -293,12 +295,20 @@ export function composeUpdateSentence(input: {
   const dateChanges = !!input.dateTo && input.dateTo !== input.dateFrom;
   const startChanges =
     !!input.fromStart && !!input.toStart && input.fromStart !== input.toStart;
+  const startSets = !input.fromStart && !!input.toStart;
   const arrivalChanges =
     !!input.fromArrival && !!input.toArrival && input.fromArrival !== input.toArrival;
   const arrivalAdds =
     !!input.toArrival && !input.fromArrival && input.toArrival !== input.toStart;
+  const eventTimeChanges = dateChanges || startChanges || startSets;
 
-  if (!dateChanges && !startChanges && !arrivalChanges && !arrivalAdds) {
+  if (!eventTimeChanges && arrivalAdds) {
+    return `Add an arrival time of ${input.toArrival} to ${input.label} on ${input.dateFrom}.`;
+  }
+  if (!eventTimeChanges && arrivalChanges) {
+    return `Change the arrival time for ${input.label} on ${input.dateFrom} from ${input.fromArrival} to ${input.toArrival}.`;
+  }
+  if (!eventTimeChanges) {
     return `Update ${input.label} on ${input.dateFrom}.`;
   }
 
@@ -310,17 +320,35 @@ export function composeUpdateSentence(input: {
     sentence += dateChanges
       ? `, from ${input.fromStart} to ${input.toStart}`
       : ` from ${input.fromStart} to ${input.toStart}`;
-  } else if (!input.fromStart && input.toStart) {
+  } else if (startSets) {
     sentence += ` to ${input.toStart}`;
   }
 
-  if (arrivalChanges) {
-    sentence += `, arriving by ${input.fromArrival} to ${input.toArrival}`;
-  } else if (arrivalAdds) {
-    sentence += `, arriving by ${input.toArrival}`;
-  }
-
+  sentence += arrivalClause(input, arrivalChanges, arrivalAdds);
   return `${sentence}.`;
+}
+
+/** Arrival clause on a Move sentence. Unchanged arrival stays "arriving by". */
+function arrivalClause(
+  input: {
+    fromStart: string | null;
+    toStart: string | null;
+    fromArrival: string | null;
+    toArrival: string | null;
+  },
+  arrivalChanges: boolean,
+  arrivalAdds: boolean
+): string {
+  if (arrivalChanges) {
+    return `, with arrival moving from ${input.fromArrival} to ${input.toArrival}`;
+  }
+  if (arrivalAdds) {
+    return `, arriving by ${input.toArrival}`;
+  }
+  const kept = input.toArrival ?? input.fromArrival;
+  const shownStart = input.toStart ?? input.fromStart;
+  if (kept && kept !== shownStart) return `, arriving by ${kept}`;
+  return "";
 }
 
 async function loadCandidates(input: CalendarMatchInput): Promise<CalendarRow[] | null> {

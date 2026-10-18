@@ -773,6 +773,14 @@ export function MessagesSplitView({
                 <span>AI-supported, child-centered communication</span>
               </div>
             </div>
+            <a
+              href={`/cases/${caseId}/record`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="shrink-0 text-[12px] font-medium text-[#5B7A52] underline"
+            >
+              Print record
+            </a>
           </div>
           {/* Single row: search + topic + children + status + new button */}
           <div className="mt-3 flex items-center gap-2 min-w-0">

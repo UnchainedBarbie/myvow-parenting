@@ -1,0 +1,11 @@
+# Working tree and repository copies of source files are UTF-8.
+# Git converts from this encoding to UTF-8 on add, and rejects a file it cannot decode.
+*.ts text working-tree-encoding=UTF-8
+*.tsx text working-tree-encoding=UTF-8
+*.js text working-tree-encoding=UTF-8
+*.jsx text working-tree-encoding=UTF-8
+*.mjs text working-tree-encoding=UTF-8
+*.cjs text working-tree-encoding=UTF-8
+*.json text working-tree-encoding=UTF-8
+*.md text working-tree-encoding=UTF-8
+*.css text working-tree-encoding=UTF-8

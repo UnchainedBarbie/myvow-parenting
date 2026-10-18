@@ -237,7 +237,7 @@ export function dateKey(itemId: string, index: number): string {
 
 /**
  * Extract the TARGET time from a schedule/pickup proposal draft (HH:MM 24h).
- * Prefers "to 5:30" / "from  to "; avoids the "from" time. Returns undefined if unsure.
+ * Prefers "to 5:30" / "from ... to ..."; avoids the "from" time. Returns undefined if unsure.
  */
 export function parseTargetTimeFromDraft(draft: string): string | undefined {
   const text = draft.trim();
@@ -254,10 +254,10 @@ export function parseTargetTimeFromDraft(draft: string): string | undefined {
     } else if (ampm.startsWith("a")) {
       if (h === 12) h = 0;
     } else if (h >= 1 && h <= 7 && assumeAfternoonPm) {
-      // Ambiguous 17 in pickup/afternoon context ? PM
+      // Ambiguous 1-7 in pickup/afternoon context -> PM
       h += 12;
     } else if (!ampm && h >= 1 && h <= 12) {
-      // Ambiguous without meridian  don't guess
+      // Ambiguous without meridian - don't guess
       return undefined;
     }
     if (h > 23) return undefined;
@@ -267,7 +267,7 @@ export function parseTargetTimeFromDraft(draft: string): string | undefined {
   const pickupish =
     /pickup|pick-up|drop.?off|schedule|exchange|custody|afternoon/i.test(text);
 
-  // "from 4:00  to 5:30 PM"  take the "to" time only
+  // "from 4:00 ... to 5:30 PM" - take the "to" time only
   const fromTo = text.match(
     /\bfrom\s+\d{1,2}:\d{2}\s*(?:a\.?m\.?|p\.?m\.?)?\s+.*?to\s+(\d{1,2}):(\d{2})\s*(a\.?m\.?|p\.?m\.?)?\b/i
   );
@@ -297,7 +297,7 @@ export function parseTargetTimeFromDraft(draft: string): string | undefined {
     );
   }
 
-  // Explicit times with AM/PM  prefer the last one (often the target)
+  // Explicit times with AM/PM - prefer the last one (often the target)
   const withMeridian = [
     ...text.matchAll(/\b(\d{1,2}):(\d{2})\s*(a\.?m\.?|p\.?m\.?)\b/gi),
   ];
@@ -374,7 +374,7 @@ const ACTIVITY_RE =
   /concert|choir|music|\bband\b|recital|rehearsal|tournament|soccer|practice|dance|\bsports?\b|\bgame\b|extracurricular|lesson/;
 const CUSTODY_RE = /pickup|pick-up|drop.?off|custody|handoff|exchange|visitation/;
 
-/** Map domain / provider / wording ? calendar event_type. Never default to custody_exchange. */
+/** Map domain / provider / wording -> calendar event_type. Never default to custody_exchange. */
 export function inferCalendarEventType(
   item: SageItem,
   proposal?: SageProposal
@@ -396,7 +396,7 @@ function escapeRegExp(s: string): string {
 
 /**
  * Pull the actual event name from the understood request (e.g. "choir concert").
- * Returns null when nothing extractable  caller falls back to "Calendar event".
+ * Returns null when nothing extractable - caller falls back to "Calendar event".
  */
 export function extractEventName(
   item: SageItem,
@@ -445,7 +445,7 @@ function eventNameFromText(text: string, childNames: string[]): string | null {
   }
 
   s = s.replace(
-    /\b(you[']d like to|you would like to|please|create|add|schedule|make|put|set up|include)\b/gi,
+    /\b(you[']d like to|you would like to|please|create|add|schedule|make|put|set up|include)\b/gi,
     " "
   );
   s = s.replace(
@@ -485,7 +485,7 @@ export function buildCalendarTitle(
     eventSubjectFromTexts([item.evidence_excerpt ?? ""]) ||
     eventSubjectFromTexts([item.summary ?? ""]) ||
     "Calendar event";
-  const title = name ? `${eventName}  ${name}` : eventName;
+  const title = name ? `${eventName} - ${name}` : eventName;
   return title.slice(0, 60);
 }
 
@@ -583,7 +583,7 @@ function amountFromToolInput(item: SageItem): number | undefined {
   return undefined;
 }
 
-/** First engine-resolved date (YYYY-MM-DD) as stored  no roll-forward. */
+/** First engine-resolved date (YYYY-MM-DD) as stored - no roll-forward. */
 function resolvedExpenseIso(item: SageItem | null | undefined): string | undefined {
   const input = toolInputRecord(item);
   const resolved = input?.resolved_dates;
@@ -630,7 +630,7 @@ function expenseDescriptionFromText(text: string): string | null {
     " "
   );
   s = s.replace(
-    /\b(you[']d like to|you would like to|please|create|add|log|record|submit|propose logging expense from co-parent)\b/gi,
+    /\b(you[']d like to|you would like to|please|create|add|log|record|submit|propose logging expense from co-parent)\b/gi,
     " "
   );
   s = s.replace(/\b(a|an|the|this|that)\s+(expense|receipt)\b/gi, " ");
@@ -790,7 +790,7 @@ export function buildDocumentReviewRow(
   };
 }
 
-/** Hide executed File-document cards  the chat confirmation is the resolved UI. */
+/** Hide executed File-document cards - the chat confirmation is the resolved UI. */
 export function hasVisibleProposalCards(proposals: SageProposal[]): boolean {
   return proposals.some(
     (p) => !(isLogDocumentProposal(p.type) && p.executed === true)

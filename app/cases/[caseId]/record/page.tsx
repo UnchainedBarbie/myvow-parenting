@@ -56,23 +56,35 @@ function cssString(value: string): string {
     .replace(/[\r\n]+/g, " ");
 }
 
-function formatWhen(iso: string, timezone: string): string {
+const DEFAULT_TIMEZONE = "America/Denver";
+
+function zoneOrDenver(timezone: string | null | undefined): string {
+  const trimmed = timezone?.trim();
+  return trimmed ? trimmed : DEFAULT_TIMEZONE;
+}
+
+function formatWhen(iso: string, timezone: string | null | undefined): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return iso;
   return new Intl.DateTimeFormat("en-US", {
-    timeZone: timezone,
-    dateStyle: "long",
-    timeStyle: "short",
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
     timeZoneName: "short",
+    timeZone: zoneOrDenver(timezone),
   }).format(date);
 }
 
-function formatDay(iso: string, timezone: string): string {
+function formatDay(iso: string, timezone: string | null | undefined): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return iso;
   return new Intl.DateTimeFormat("en-US", {
-    timeZone: timezone,
-    dateStyle: "long",
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    timeZone: zoneOrDenver(timezone),
   }).format(date);
 }
 
@@ -257,9 +269,7 @@ async function renderRecord(
     ((userResult.data ?? []) as UserRow[]).map((row) => [row.id, row])
   );
 
-  const timezone =
-    (viewerRow as UserRow | null)?.timezone?.trim() ||
-    "America/Denver";
+  const timezone = zoneOrDenver((viewerRow as UserRow | null)?.timezone);
   const familyCode = (caseRow as { family_code?: string | null } | null)?.family_code?.trim() || "";
   const caseLabel = familyCode || caseId;
 

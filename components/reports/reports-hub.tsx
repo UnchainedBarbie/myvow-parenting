@@ -21,8 +21,6 @@ const REPORT_TYPES = [
       { id: "message_timeline", label: "Message timeline", default: true },
       { id: "tone_classifications", label: "Tone classifications per message", default: false },
       { id: "thread_summaries", label: "Thread summaries", default: false },
-      { id: "structured_pause", label: "Structured pause events", default: true },
-      { id: "personal_flags", label: "Personal flags (opt-in, private by default)", default: false },
     ],
     formats: ["pdf", "excel"] as const,
   },

@@ -122,6 +122,8 @@ export async function POST(request: NextRequest) {
     let fileExt = "pdf";
 
     if (report_type === "communication_report") {
+      const includeTone = options?.tone_classifications === true;
+      const includeThreads = options?.thread_summaries === true;
       let query = admin
         .from("messages")
         .select("id, conversation_id, created_at, direction, original_content, ai_rewritten_content, ai_classification, category")
@@ -133,7 +135,7 @@ export async function POST(request: NextRequest) {
       const ids = (messages ?? []).map((m) => m.id);
       const convIds = [...new Set((messages ?? []).map((m) => (m as { conversation_id?: string | null }).conversation_id).filter(Boolean) as string[])];
       const topicByConv: Record<string, string> = {};
-      if (convIds.length > 0) {
+      if (includeThreads && convIds.length > 0) {
         const { data: convs } = await admin.from("conversations").select("id, topic, category").in("id", convIds);
         for (const c of convs ?? []) {
           const tag = (c as { topic?: string | null; category?: string | null }).topic ?? (c as { category?: string | null }).category;
@@ -141,7 +143,7 @@ export async function POST(request: NextRequest) {
         }
       }
       const { data: flags } =
-        ids.length > 0
+        includeTone && ids.length > 0
           ? await admin.from("message_flags").select("message_id, flag_type, description").in("message_id", ids)
           : { data: [] };
       const flagsByMsg: Record<string, { flag_type: string; description: string | null }[]> = {};
@@ -160,14 +162,17 @@ export async function POST(request: NextRequest) {
           direction: m.direction,
           original_content: m.original_content,
           ai_rewritten_content: m.ai_rewritten_content,
-          ai_classification: m.ai_classification,
+          ai_classification: includeTone ? m.ai_classification : null,
           category: m.category,
-          conversation_topic,
-          flags: flagsByMsg[m.id] ?? [],
+          conversation_topic: includeThreads ? conversation_topic : null,
+          flags: includeTone ? (flagsByMsg[m.id] ?? []) : [],
         };
       });
       recordCount = rows.length;
-      const result = await buildMessageTranscriptPdf(rows, start, end);
+      const result = await buildMessageTranscriptPdf(rows, start, end, {
+        tone_classifications: includeTone,
+        thread_summaries: includeThreads,
+      });
       buffer = result.buffer;
       verificationPayload = result.verificationPayload;
     } else if (report_type === "expense_report") {

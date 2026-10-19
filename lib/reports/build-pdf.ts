@@ -39,17 +39,31 @@ export type MessageRecord = {
   flags?: { flag_type: string; description: string | null }[];
 };
 
+export type TranscriptOptions = {
+  tone_classifications?: boolean;
+  thread_summaries?: boolean;
+};
+
 export async function buildMessageTranscriptPdf(
   messages: MessageRecord[],
   dateRangeStart: string | null,
-  dateRangeEnd: string | null
+  dateRangeEnd: string | null,
+  options?: TranscriptOptions
 ): Promise<{ buffer: Buffer; verificationPayload: string }> {
+  const includeTone = options?.tone_classifications === true;
+  const includeThreads = options?.thread_summaries === true;
   const doc = new jsPDF();
   const dateRange =
     dateRangeStart && dateRangeEnd
       ? `${new Date(dateRangeStart).toLocaleDateString()} – ${new Date(dateRangeEnd).toLocaleDateString()}`
       : "All dates";
-  addHeader(doc, "Message Transcript (with AI classifications and flags)", dateRange);
+  addHeader(
+    doc,
+    includeTone
+      ? "Message Transcript (with AI classifications and flags)"
+      : "Message Transcript",
+    dateRange
+  );
 
   const payloadParts: string[] = [];
   let y = MARGIN + 22;
@@ -69,7 +83,7 @@ export async function buildMessageTranscriptPdf(
     y += LINE_HEIGHT;
     doc.text(`Direction: ${m.direction}`, MARGIN, y);
     y += LINE_HEIGHT;
-    if (m.conversation_topic) {
+    if (includeThreads && m.conversation_topic) {
       doc.text(`Conversation topic: ${m.conversation_topic}`, MARGIN, y);
       y += LINE_HEIGHT;
     }
@@ -78,11 +92,11 @@ export async function buildMessageTranscriptPdf(
     const contentLines = doc.splitTextToSize(`Content (mediated): ${content}`, CONTENT_WIDTH);
     doc.text(contentLines, MARGIN, y);
     y += LINE_HEIGHT * contentLines.length + 2;
-    if (m.ai_classification) {
+    if (includeTone && m.ai_classification) {
       doc.text(`Classification: ${m.ai_classification}`, MARGIN, y);
       y += LINE_HEIGHT;
     }
-    if (m.flags?.length) {
+    if (includeTone && m.flags?.length) {
       const flagStr = m.flags.map((f) => f.flag_type + (f.description ? ` — ${f.description}` : "")).join("; ");
       const flagLines = doc.splitTextToSize(`Flags: ${flagStr}`, CONTENT_WIDTH);
       doc.text(flagLines, MARGIN, y);

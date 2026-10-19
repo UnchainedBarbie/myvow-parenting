@@ -19,8 +19,8 @@ const REPORT_TYPES = [
     filters: ["child", "topic"] as const,
     options: [
       { id: "message_timeline", label: "Message timeline", default: true },
-      { id: "tone_classifications", label: "Tone classifications per message", default: true },
-      { id: "thread_summaries", label: "Thread summaries", default: true },
+      { id: "tone_classifications", label: "Tone classifications per message", default: false },
+      { id: "thread_summaries", label: "Thread summaries", default: false },
       { id: "structured_pause", label: "Structured pause events", default: true },
       { id: "personal_flags", label: "Personal flags (opt-in, private by default)", default: false },
     ],
@@ -260,6 +260,24 @@ export function ReportsHub({ caseId, children }: ReportsHubProps) {
                         </li>
                       ))}
                     </ul>
+                    {report.id === "communication_report" &&
+                      (isOptionChecked(
+                        report.id,
+                        "tone_classifications",
+                        report.options.find((opt) => opt.id === "tone_classifications")?.default ??
+                          false
+                      ) ||
+                        isOptionChecked(
+                          report.id,
+                          "thread_summaries",
+                          report.options.find((opt) => opt.id === "thread_summaries")?.default ??
+                            false
+                        )) && (
+                        <p className="text-[11px] text-foreground-secondary">
+                          Sage&apos;s analysis becomes part of any document you file. Consider
+                          generating a clean record for filing and keeping the analysis separate.
+                        </p>
+                      )}
                   </div>
                 )}
 

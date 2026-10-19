@@ -580,7 +580,7 @@ export function CoParentBehaviorAnalysis() {
           <div className="flex-1 space-y-3">
             <p className="text-[11px] text-foreground-secondary md:max-w-md">
               Sage reviews your case history privately and surfaces patterns that may help you prepare
-              for difficult conversations or legal proceedings. Only you can see this analysis.
+              for difficult conversations or legal proceedings. Private to you within MyVow - may be discoverable in legal proceedings.
             </p>
             <div className="space-y-2">
               <Label className="text-[11px] text-foreground-secondary">

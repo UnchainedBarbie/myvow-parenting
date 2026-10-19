@@ -10,12 +10,10 @@ const UUID_RE =
 type MemberRow = {
   id: string;
   user_id: string | null;
-  role: string | null;
   display_name: string | null;
   external_email: string | null;
   invited_email: string | null;
   invited_name: string | null;
-  child_id: string | null;
 };
 
 type UserRow = {
@@ -167,14 +165,31 @@ export default async function CaseRecordPage({
   }
 
   const admin = getServiceRoleClient();
+  try {
+    return await renderRecord(admin, user.id, caseId);
+  } catch (error) {
+    console.error("[record]", error);
+    return <Unavailable />;
+  }
+}
+
+async function renderRecord(
+  admin: ReturnType<typeof getServiceRoleClient>,
+  userId: string,
+  caseId: string
+) {
   const { data: membership, error: membershipError } = await admin
     .from("case_members")
     .select("id")
-    .eq("user_id", user.id)
+    .eq("user_id", userId)
     .eq("case_id", caseId)
     .maybeSingle();
 
-  if (membershipError || !membership) {
+  if (membershipError) {
+    console.error("[record] membership", membershipError);
+    return <Unavailable />;
+  }
+  if (!membership) {
     return <Denied />;
   }
 
@@ -182,11 +197,10 @@ export default async function CaseRecordPage({
     admin.from("cases").select("id, family_code").eq("id", caseId).maybeSingle(),
     admin
       .from("case_members")
-      .select(
-        "id, user_id, role, display_name, external_email, invited_email, invited_name, child_id"
-      )
-      .eq("case_id", caseId),
-    admin.from("users").select("id, full_name, email, timezone").eq("id", user.id).maybeSingle(),
+      .select("id, user_id, display_name, external_email, invited_email, invited_name")
+      .eq("case_id", caseId)
+      .eq("role", "parent"),
+    admin.from("users").select("id, full_name, email, timezone").eq("id", userId).maybeSingle(),
     admin
       .from("messages")
       .select(
@@ -198,11 +212,14 @@ export default async function CaseRecordPage({
   ]);
 
   if (messageResult.error || memberResult.error) {
-    console.error(
-      "[record] load failed:",
-      messageResult.error?.message ?? memberResult.error?.message
-    );
+    console.error("[record] load failed", {
+      messages: messageResult.error,
+      members: memberResult.error,
+    });
     return <Unavailable />;
+  }
+  if (caseResult.error) {
+    console.error("[record] case", caseResult.error);
   }
 
   const caseRow = caseResult.data;
@@ -210,7 +227,7 @@ export default async function CaseRecordPage({
   const viewerRow = viewerResult.data;
   const messageRows = messageResult.data;
 
-  const members = ((memberRows ?? []) as MemberRow[]).filter((row) => row.child_id == null);
+  const members = (memberRows ?? []) as MemberRow[];
   const userIds = [
     ...new Set(
       members
@@ -226,12 +243,18 @@ export default async function CaseRecordPage({
     ),
   ];
   const lookupIds = [...new Set([...userIds, ...senderIds])];
-  const { data: userRows } =
+  const userResult =
     lookupIds.length > 0
       ? await admin.from("users").select("id, full_name, email, timezone").in("id", lookupIds)
-      : { data: [] as UserRow[] };
+      : { data: [] as UserRow[], error: null };
+  if (userResult.error) {
+    console.error("[record] users", userResult.error);
+  }
+  if (viewerResult.error) {
+    console.error("[record] viewer", viewerResult.error);
+  }
   const usersById = new Map(
-    ((userRows ?? []) as UserRow[]).map((row) => [row.id, row])
+    ((userResult.data ?? []) as UserRow[]).map((row) => [row.id, row])
   );
 
   const timezone =
@@ -286,11 +309,9 @@ export default async function CaseRecordPage({
                   <ul>
                     {members.map((member) => {
                       const account = member.user_id ? usersById.get(member.user_id) : undefined;
-                      const role = member.role?.trim() || "member";
                       return (
                         <li key={member.id}>
                           {partyName(member, account)} ({partyEmail(member, account)})
-                          {role ? `, ${role}` : ""}
                         </li>
                       );
                     })}
@@ -382,7 +403,7 @@ async function loadAttachments(
       .select("message_id, document_id")
       .in("message_id", slice);
     if (error) {
-      console.error("[record] message_documents:", error.message);
+      console.error("[record] message_documents", error);
       return byMessage;
     }
     for (const row of data ?? []) {
@@ -401,7 +422,7 @@ async function loadAttachments(
       .select("id, file_name, document_number")
       .in("id", slice);
     if (error) {
-      console.error("[record] documents:", error.message);
+      console.error("[record] documents", error);
       break;
     }
     for (const row of data ?? []) {

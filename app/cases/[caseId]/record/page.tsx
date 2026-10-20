@@ -1,5 +1,6 @@
 import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
+import { renderRecordBody } from "@/lib/record/message-text";
 import { PrintRecordButton } from "./print-record-button";
 
 export const dynamic = "force-dynamic";
@@ -29,10 +30,23 @@ type MessageRow = {
   direction: string;
   sender_id: string | null;
   sender_external_email: string | null;
-  original_content: string;
+  original_content: string | null;
+  conversation_id: string | null;
   current_status: string | null;
   delivery_status: string | null;
   delivered_at: string | null;
+};
+
+type ConversationRow = {
+  id: string;
+  topic: string | null;
+  category: string | null;
+  subject: string | null;
+};
+
+type RecordEntry = {
+  message: MessageRow;
+  number: string;
 };
 
 type Attachment = {
@@ -111,22 +125,39 @@ function documentLabel(attachment: Attachment): string {
   return `${attachment.fileName} (DOC-${String(attachment.documentNumber).padStart(3, "0")})`;
 }
 
-function partyName(member: MemberRow, user: UserRow | undefined): string {
-  const stored =
-    member.display_name?.trim() ||
-    member.invited_name?.trim() ||
+const TOPIC_LABELS: Record<string, string> = {
+  medical: "Medical",
+  school: "School",
+  schedule: "Schedule",
+  expenses: "Expenses",
+  expense: "Expenses",
+  general: "General",
+  emergency: "Emergency",
+};
+
+function storedName(member: MemberRow | undefined, user: UserRow | undefined): string {
+  return (
+    member?.display_name?.trim() ||
+    member?.invited_name?.trim() ||
     user?.full_name?.trim() ||
-    "";
-  return stored || "Name not stored";
+    ""
+  );
 }
 
-function partyEmail(member: MemberRow, user: UserRow | undefined): string {
-  const stored =
-    member.external_email?.trim() ||
-    member.invited_email?.trim() ||
+function storedEmail(member: MemberRow | undefined, user: UserRow | undefined): string {
+  return (
+    member?.external_email?.trim() ||
+    member?.invited_email?.trim() ||
     user?.email?.trim() ||
-    "";
-  return stored || "Email not stored";
+    ""
+  );
+}
+
+function partyLabel(member: MemberRow, user: UserRow | undefined): string {
+  const name = storedName(member, user);
+  const email = storedEmail(member, user);
+  if (name && email) return `${name} (${email})`;
+  return name || email;
 }
 
 function senderIdentity(
@@ -137,17 +168,10 @@ function senderIdentity(
   if (message.sender_id) {
     const user = usersById.get(message.sender_id);
     const member = members.find((row) => row.user_id === message.sender_id);
-    const name =
-      member?.display_name?.trim() ||
-      member?.invited_name?.trim() ||
-      user?.full_name?.trim() ||
-      "Name not stored";
-    const email =
-      user?.email?.trim() ||
-      member?.external_email?.trim() ||
-      member?.invited_email?.trim() ||
-      "Email not stored";
-    return { name, email };
+    return {
+      name: storedName(member, user),
+      email: user?.email?.trim() || storedEmail(member, undefined),
+    };
   }
   const email = message.sender_external_email?.trim() || "";
   const member = members.find((row) => {
@@ -155,9 +179,32 @@ function senderIdentity(
     return email !== "" && stored === email.toLowerCase();
   });
   return {
-    name: member?.display_name?.trim() || member?.invited_name?.trim() || "Name not stored",
-    email: email || "Email not stored",
+    name: storedName(member, undefined),
+    email,
   };
+}
+
+function senderLine(direction: string, sender: { name: string; email: string }): string {
+  const name = sender.name.trim();
+  const email = sender.email.trim();
+  if (name && email && name.toLowerCase() !== email.toLowerCase()) {
+    return `${direction}, sent by ${name} (${email})`;
+  }
+  const who = name || email;
+  return who ? `${direction}, sent by ${who}` : direction;
+}
+
+function conversationHeading(conversation: ConversationRow | undefined): string {
+  const subject = conversation?.subject?.trim() || "";
+  if (subject) return subject;
+  const raw = conversation?.topic?.trim() || conversation?.category?.trim() || "";
+  if (raw) return TOPIC_LABELS[raw.toLowerCase()] ?? raw;
+  return "Conversation";
+}
+
+function messageTime(iso: string): number {
+  const time = new Date(iso).getTime();
+  return Number.isNaN(time) ? 0 : time;
 }
 
 export default async function CaseRecordPage({
@@ -216,7 +263,7 @@ async function renderRecord(
     admin
       .from("messages")
       .select(
-        "id, created_at, direction, sender_id, sender_external_email, original_content, current_status, delivery_status, delivered_at"
+        "id, created_at, direction, sender_id, sender_external_email, original_content, conversation_id, current_status, delivery_status, delivered_at"
       )
       .eq("case_id", caseId)
       .order("created_at", { ascending: true })
@@ -274,11 +321,57 @@ async function renderRecord(
   const caseLabel = familyCode || caseId;
 
   const allMessages = (messageRows ?? []) as MessageRow[];
-  const numbered = allMessages.map((message, index) => ({
+  const numbered: RecordEntry[] = allMessages.map((message, index) => ({
     message,
     number: messageNumber(index),
   }));
   const record = numbered.filter((entry) => passedBetweenParents(entry.message));
+
+  const conversationIds = [
+    ...new Set(
+      record
+        .map((entry) => entry.message.conversation_id)
+        .filter((id): id is string => typeof id === "string" && id.length > 0)
+    ),
+  ];
+  const conversationsById = new Map<string, ConversationRow>();
+  for (let i = 0; i < conversationIds.length; i += 200) {
+    const slice = conversationIds.slice(i, i + 200);
+    const { data, error } = await admin
+      .from("conversations")
+      .select("id, topic, category, subject")
+      .in("id", slice);
+    if (error) {
+      console.error("[record] conversations", error);
+      break;
+    }
+    for (const row of (data ?? []) as ConversationRow[]) {
+      if (row.id) conversationsById.set(row.id, row);
+    }
+  }
+
+  const groups = new Map<string, { heading: string; earliest: number; entries: RecordEntry[] }>();
+  const ungrouped: RecordEntry[] = [];
+  for (const entry of record) {
+    const conversationId = entry.message.conversation_id;
+    if (!conversationId) {
+      ungrouped.push(entry);
+      continue;
+    }
+    const existing = groups.get(conversationId);
+    if (existing) {
+      existing.entries.push(entry);
+      continue;
+    }
+    groups.set(conversationId, {
+      heading: conversationHeading(conversationsById.get(conversationId)),
+      earliest: messageTime(entry.message.created_at),
+      entries: [entry],
+    });
+  }
+  const threads = [...groups.entries()]
+    .sort((a, b) => a[1].earliest - b[1].earliest || a[0].localeCompare(b[0]))
+    .map(([id, group]) => ({ id, ...group }));
 
   const attachments = await loadAttachments(
     admin,
@@ -290,8 +383,13 @@ async function renderRecord(
     record.length === 0
       ? "No messages"
       : (() => {
-          const start = formatDay(record[0].message.created_at, timezone);
-          const end = formatDay(record[record.length - 1].message.created_at, timezone);
+          const ordered = [...record].sort(
+            (a, b) =>
+              messageTime(a.message.created_at) - messageTime(b.message.created_at) ||
+              a.message.id.localeCompare(b.message.id)
+          );
+          const start = formatDay(ordered[0].message.created_at, timezone);
+          const end = formatDay(ordered[ordered.length - 1].message.created_at, timezone);
           return start === end ? start : `${start} - ${end}`;
         })();
 
@@ -319,11 +417,9 @@ async function renderRecord(
                   <ul>
                     {members.map((member) => {
                       const account = member.user_id ? usersById.get(member.user_id) : undefined;
-                      return (
-                        <li key={member.id}>
-                          {partyName(member, account)} ({partyEmail(member, account)})
-                        </li>
-                      );
+                      const label = partyLabel(member, account);
+                      if (!label) return null;
+                      return <li key={member.id}>{label}</li>;
                     })}
                   </ul>
                 )}
@@ -335,43 +431,73 @@ async function renderRecord(
             </div>
             <div>
               <dt>Generated</dt>
-              <dd>{generatedAt}</dd>
+              <dd>
+                {generatedAt}
+                <p className="order">Grouped by conversation, earliest first.</p>
+              </dd>
             </div>
           </dl>
         </header>
         {record.length === 0 ? (
           <p className="empty">No messages have passed between the parties.</p>
         ) : (
-          <ol className="messages">
-            {record.map((entry) => {
-              const sender = senderIdentity(entry.message, usersById, members);
-              const files = attachments.get(entry.message.id) ?? [];
-              const direction =
-                entry.message.direction === "incoming"
-                  ? "Incoming"
-                  : entry.message.direction === "outgoing"
-                    ? "Outgoing"
-                    : entry.message.direction;
-              return (
-                <li key={entry.message.id} className="message">
-                  <p className="when">{formatWhen(entry.message.created_at, timezone)}</p>
-                  <p className="who">
-                    {direction}, sent by {sender.name} ({sender.email})
-                  </p>
-                  <p className="body">{entry.message.original_content}</p>
-                  {files.length > 0 ? (
-                    <p className="files">
-                      Attachments: {files.map(documentLabel).join("; ")}
-                    </p>
-                  ) : null}
-                  <p className="mid">Message {entry.number}</p>
-                </li>
-              );
-            })}
-          </ol>
+          <div className="threads">
+            {threads.map((thread) => (
+              <section key={thread.id} className="thread">
+                <h2>{thread.heading}</h2>
+                {renderMessages(thread.entries, usersById, members, attachments, timezone)}
+              </section>
+            ))}
+            {ungrouped.length > 0 ? (
+              <section className="thread">
+                <h2>Ungrouped messages</h2>
+                {renderMessages(ungrouped, usersById, members, attachments, timezone)}
+              </section>
+            ) : null}
+          </div>
         )}
       </article>
     </div>
+  );
+}
+
+function renderMessages(
+  entries: RecordEntry[],
+  usersById: Map<string, UserRow>,
+  members: MemberRow[],
+  attachments: Map<string, Attachment[]>,
+  timezone: string
+) {
+  return (
+    <ol className="messages">
+      {entries.map((entry) => {
+        const sender = senderIdentity(entry.message, usersById, members);
+        const files = attachments.get(entry.message.id) ?? [];
+        const direction =
+          entry.message.direction === "incoming"
+            ? "Incoming"
+            : entry.message.direction === "outgoing"
+              ? "Outgoing"
+              : entry.message.direction;
+        const body = renderRecordBody(entry.message.original_content);
+        return (
+          <li key={entry.message.id} className="message">
+            <p className="when">{formatWhen(entry.message.created_at, timezone)}</p>
+            <p className="who">{senderLine(direction, sender)}</p>
+            <p className="body">{body.text}</p>
+            {body.omitted ? (
+              <p className="omit">[Signature and confidentiality notice omitted]</p>
+            ) : null}
+            {files.length > 0 ? (
+              <p className="files">
+                Attachments: {files.map(documentLabel).join("; ")}
+              </p>
+            ) : null}
+            <p className="mid">Message {entry.number}</p>
+          </li>
+        );
+      })}
+    </ol>
   );
 }
 
@@ -493,8 +619,17 @@ function recordCss(caseLabel: string): string {
     .cover dt { font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; }
     .cover dd { margin: 2px 0 0; font-size: 14px; }
     .cover ul { margin: 0; padding-left: 1.1em; }
+    .order { margin: 4px 0 0; font-size: 14px; }
     .empty { margin-top: 24px; }
-    .messages { list-style: none; margin: 28px 0 0; padding: 0; }
+    .thread { margin: 28px 0 0; }
+    .thread h2 {
+      font-size: 16px;
+      font-weight: 700;
+      margin: 0 0 4px;
+      break-after: avoid;
+      page-break-after: avoid;
+    }
+    .messages { list-style: none; margin: 0; padding: 0; }
     .message {
       border-top: 1px solid #000;
       padding: 14px 0 16px;
@@ -503,7 +638,7 @@ function recordCss(caseLabel: string): string {
     }
     .when, .who, .files, .mid { margin: 0 0 6px; font-size: 12px; }
     .who, .mid { font-weight: 700; }
-    .body { margin: 8px 0; font-size: 14px; white-space: pre-wrap; }
+    .body, .omit { margin: 8px 0; font-size: 14px; white-space: pre-wrap; }
     @page {
       size: letter;
       margin: 0.85in 0.7in 0.7in 0.7in;

@@ -1,8 +1,7 @@
 import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
-import { ReportsHub } from "@/components/reports/reports-hub";
+import { ReportLibrary } from "@/components/reports/report-library";
 import { ExportList, type ExportRow } from "@/components/reports/export-list";
-import { CoParentBehaviorAnalysis } from "@/components/reports/coparent-behavior-analysis";
 
 export default async function ReportsPage() {
   const supabase = await createClient();
@@ -28,7 +27,7 @@ export default async function ReportsPage() {
           Reports
         </h1>
         <p className="text-foreground-secondary mb-8">
-          Documents for your own preparation, and records of what was exchanged.
+          Filing records and private analysis for this case.
         </p>
         <div className="rounded-card border border-border bg-background-secondary p-8 text-center">
           <p className="text-foreground-secondary">
@@ -64,36 +63,10 @@ export default async function ReportsPage() {
         Reports
       </h1>
       <p className="text-foreground-secondary mb-8">
-        Documents for your own preparation, and records of what was exchanged.
+        Filing records and private analysis for this case.
       </p>
       <div className="space-y-10">
-        <section className="space-y-4">
-          <div>
-            <h2 className="font-heading text-lg font-semibold text-foreground">
-              For your preparation
-            </h2>
-            <p className="mt-1 text-sm text-foreground-secondary">
-              These contain Sage&apos;s analysis and are intended to help you prepare, not to be filed.
-            </p>
-          </div>
-          <div className="grid gap-6 sm:grid-cols-2">
-            <CoParentBehaviorAnalysis />
-            <ReportsHub caseId={caseId} audience="preparation" children={[]} />
-          </div>
-        </section>
-        <section className="space-y-4">
-          <div>
-            <h2 className="font-heading text-lg font-semibold text-foreground">
-              For filing
-            </h2>
-            <p className="mt-1 text-sm text-foreground-secondary">
-              These contain the record of what was exchanged.
-            </p>
-          </div>
-          <div className="grid gap-6 sm:grid-cols-2">
-            <ReportsHub caseId={caseId} audience="filing" children={[]} />
-          </div>
-        </section>
+        <ReportLibrary caseId={caseId} />
         <ExportList exports={exports} />
       </div>
     </div>

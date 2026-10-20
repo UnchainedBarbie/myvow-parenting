@@ -419,7 +419,7 @@ function BehaviorAnalysisReportView({
   );
 }
 
-export function CoParentBehaviorAnalysis() {
+export function CoParentBehaviorAnalysis({ embedded = false }: { embedded?: boolean } = {}) {
   const [reports, setReports] = useState<BehaviorAnalysisReport[]>([]);
   const [loadingList, setLoadingList] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
@@ -556,6 +556,96 @@ export function CoParentBehaviorAnalysis() {
           return "Unable to generate report right now. Please try again.";
         })()
       : null;
+
+  const rangeControls = (
+    <div className="space-y-2">
+      <Label className="text-xs font-medium text-[#3D3D3D]">Date range</Label>
+      <div className="flex flex-wrap gap-2" role="group" aria-label="Date range">
+        {[
+          { id: "30", label: "Last 30 days" },
+          { id: "90", label: "Last 90 days" },
+          { id: "180", label: "Last 180 days" },
+          { id: "custom", label: "Custom range" },
+        ].map((opt) => (
+          <button
+            key={opt.id}
+            type="button"
+            aria-pressed={preset === opt.id}
+            className={cn(
+              "rounded-full border px-3 py-1.5 text-xs transition-colors",
+              "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#5B7A52]",
+              preset === opt.id
+                ? "border-[#7C8B6E] bg-[#F2F5EF] text-[#5B7A52]"
+                : "border-[#E8E4DC] bg-white text-foreground hover:bg-[#F7F3EA]"
+            )}
+            onClick={() => setPreset(opt.id as RangePreset)}
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
+      {preset === "custom" && (
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          <div className="space-y-1">
+            <Label htmlFor="behavior-from" className="text-[11px] text-foreground-secondary">
+              From
+            </Label>
+            <Input
+              id="behavior-from"
+              type="date"
+              value={customFrom}
+              onChange={(e) => setCustomFrom(e.target.value)}
+              className="h-9 text-sm"
+            />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="behavior-to" className="text-[11px] text-foreground-secondary">
+              To
+            </Label>
+            <Input
+              id="behavior-to"
+              type="date"
+              value={customTo}
+              onChange={(e) => setCustomTo(e.target.value)}
+              className="h-9 text-sm"
+            />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
+  const viewer = activeReport ? (
+    <BehaviorAnalysisReportView report={activeReport} onClose={() => setActiveReport(null)} />
+  ) : null;
+
+  if (embedded) {
+    return (
+      <div className="space-y-4">
+        <p className="text-xs leading-relaxed text-foreground-secondary">
+          Sage reviews your case history privately and surfaces patterns that may help you prepare
+          for difficult conversations or legal proceedings. Private to you within MyVow - may be
+          discoverable in legal proceedings.
+        </p>
+        {rangeControls}
+        {friendlyGenerateError ? (
+          <p role="alert" className="text-xs text-[#8A3A3A]">
+            {friendlyGenerateError}
+          </p>
+        ) : null}
+        <Button
+          type="button"
+          size="sm"
+          className="rounded-full bg-[#5B7A52] px-5 text-white hover:bg-[#476242]"
+          disabled={generating}
+          onClick={() => void handleGenerate()}
+        >
+          {generating ? "Generating analysis…" : "Generate Analysis"}
+        </Button>
+        {viewer}
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">

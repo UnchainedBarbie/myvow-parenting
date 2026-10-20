@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
+import { isMissingRelation, isRecordCategoryId } from "@/lib/record/record-categories";
 
 const ALLOWED_TOPICS = new Set([
   "Medical",
@@ -306,11 +307,12 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { subject, child_id, category, topic } = body as {
+    const { subject, child_id, category, topic, record_categories } = body as {
       subject?: string;
       child_id?: string | null;
       category?: string | null;
       topic?: string | null;
+      record_categories?: unknown;
     };
 
     const trimmedSubject = (subject ?? "").trim();
@@ -353,7 +355,30 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    return NextResponse.json({ conversation: data });
+    const recordCategories = Array.isArray(record_categories)
+      ? [...new Set(record_categories.filter((value): value is string => typeof value === "string" && isRecordCategoryId(value)))]
+      : [];
+    let categoriesAvailable = true;
+    if (recordCategories.length > 0 && data?.id) {
+      const { error: categoryError } = await admin.from("conversation_categories").insert(
+        recordCategories.map((categoryId) => ({
+          conversation_id: data.id,
+          case_id: caseId,
+          category: categoryId,
+          created_by: user.id,
+        }))
+      );
+      if (categoryError && isMissingRelation(categoryError)) {
+        categoriesAvailable = false;
+      } else if (categoryError) {
+        return NextResponse.json(
+          { conversation: data, categories_error: categoryError.message },
+          { status: 201 }
+        );
+      }
+    }
+
+    return NextResponse.json({ conversation: data, categories_available: categoriesAvailable });
   } catch (e) {
     return NextResponse.json(
       { error: e instanceof Error ? e.message : "Failed to create conversation" },

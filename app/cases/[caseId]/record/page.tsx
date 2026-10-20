@@ -1,6 +1,15 @@
 import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import { renderRecordBody } from "@/lib/record/message-text";
+import { isMissingRelation } from "@/lib/record/record-categories";
+import {
+  appliedFilterLines,
+  completenessStatement,
+  messageMatchesFilters,
+  parseRecordFilters,
+  type ParentIdentity,
+  type RecordFilterInput,
+} from "@/lib/record/record-filters";
 import { PrintRecordButton } from "./print-record-button";
 
 export const dynamic = "force-dynamic";
@@ -35,6 +44,7 @@ type MessageRow = {
   current_status: string | null;
   delivery_status: string | null;
   delivered_at: string | null;
+  has_attachments: boolean | null;
 };
 
 type ConversationRow = {
@@ -75,6 +85,48 @@ const DEFAULT_TIMEZONE = "America/Denver";
 function zoneOrDenver(timezone: string | null | undefined): string {
   const trimmed = timezone?.trim();
   return trimmed ? trimmed : DEFAULT_TIMEZONE;
+}
+
+function safeZone(timeZone: string): string {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone }).format(new Date());
+    return timeZone;
+  } catch {
+    return DEFAULT_TIMEZONE;
+  }
+}
+
+function uniqueEmails(values: Array<string | null | undefined>): string[] {
+  return [
+    ...new Set(
+      values
+        .map((value) => value?.trim().toLowerCase())
+        .filter((value): value is string => Boolean(value))
+    ),
+  ];
+}
+
+function parentIdentities(
+  members: MemberRow[],
+  usersById: Map<string, UserRow>,
+  viewerId: string
+): ParentIdentity[] {
+  const identities = new Map<string, ParentIdentity>();
+  for (const member of members) {
+    if (!member.user_id) continue;
+    const user = usersById.get(member.user_id);
+    identities.set(member.user_id, {
+      userId: member.user_id,
+      emails: uniqueEmails([member.external_email, member.invited_email, user?.email]),
+    });
+  }
+  if (!identities.has(viewerId)) {
+    identities.set(viewerId, {
+      userId: viewerId,
+      emails: uniqueEmails([usersById.get(viewerId)?.email]),
+    });
+  }
+  return [...identities.values()];
 }
 
 function formatWhen(iso: string, timezone: string | null | undefined): string {
@@ -150,15 +202,6 @@ function deliveryEvidence(message: MessageRow, timezone: string): string[] {
     lines.unshift(words);
   }
   return lines;
-}
-
-function completenessStatement(included: number, excluded: number): string {
-  const includedText = `${included} message${included === 1 ? " is" : "s are"} included.`;
-  const excludedText = `${excluded} message${excluded === 1 ? " is" : "s are"} excluded`;
-  if (excluded === 0) {
-    return `This is the complete record of messages in this case. ${includedText} ${excludedText}.`;
-  }
-  return `This is a filtered view, not the complete record of the case. ${includedText} ${excludedText} because ${excluded === 1 ? "it" : "they"} did not pass between the parents. Excluded messages retain their numbers.`;
 }
 
 function messageNumber(index: number): string {
@@ -254,8 +297,10 @@ function messageTime(iso: string): number {
 
 export default async function CaseRecordPage({
   params,
+  searchParams,
 }: {
   params: { caseId: string };
+  searchParams: Record<string, string | string[] | undefined>;
 }) {
   const caseId = params.caseId;
   const supabase = await createClient();
@@ -270,7 +315,7 @@ export default async function CaseRecordPage({
 
   const admin = getServiceRoleClient();
   try {
-    return await renderRecord(admin, user.id, caseId);
+    return await renderRecord(admin, user.id, caseId, searchParams);
   } catch (error) {
     console.error("[record]", error);
     return <Unavailable />;
@@ -280,7 +325,8 @@ export default async function CaseRecordPage({
 async function renderRecord(
   admin: ReturnType<typeof getServiceRoleClient>,
   userId: string,
-  caseId: string
+  caseId: string,
+  searchParams: Record<string, string | string[] | undefined>
 ) {
   const { data: membership, error: membershipError } = await admin
     .from("case_members")
@@ -308,7 +354,7 @@ async function renderRecord(
     admin
       .from("messages")
       .select(
-        "id, created_at, direction, sender_id, sender_external_email, original_content, conversation_id, current_status, delivery_status, delivered_at"
+        "id, created_at, direction, sender_id, sender_external_email, original_content, conversation_id, current_status, delivery_status, delivered_at, has_attachments"
       )
       .eq("case_id", caseId)
       .order("created_at", { ascending: true })
@@ -361,43 +407,108 @@ async function renderRecord(
     ((userResult.data ?? []) as UserRow[]).map((row) => [row.id, row])
   );
 
-  const timezone = zoneOrDenver((viewerRow as UserRow | null)?.timezone);
+  const timezone = safeZone(zoneOrDenver((viewerRow as UserRow | null)?.timezone));
   const familyCode = (caseRow as { family_code?: string | null } | null)?.family_code?.trim() || "";
   const caseLabel = familyCode || caseId;
+  const generated = new Date();
+  const filters = parseRecordFilters(searchParams);
 
   const allMessages = (messageRows ?? []) as MessageRow[];
   const numbered: RecordEntry[] = allMessages.map((message, index) => ({
     message,
     number: messageNumber(index),
   }));
-  const record = numbered.filter((entry) => passedBetweenParents(entry.message));
+  const eligible = numbered.filter((entry) => passedBetweenParents(entry.message));
 
-  const conversationIds = [
-    ...new Set(
-      record
-        .map((entry) => entry.message.conversation_id)
-        .filter((id): id is string => typeof id === "string" && id.length > 0)
-    ),
-  ];
+  const { data: conversationRows, error: conversationError } = await admin
+    .from("conversations")
+    .select("id, topic, category, subject")
+    .eq("case_id", caseId);
+  if (conversationError) {
+    console.error("[record] conversations", conversationError);
+    return <Unavailable />;
+  }
   const conversationsById = new Map<string, ConversationRow>();
-  for (let i = 0; i < conversationIds.length; i += 200) {
-    const slice = conversationIds.slice(i, i + 200);
+  for (const row of (conversationRows ?? []) as ConversationRow[]) {
+    if (row.id) conversationsById.set(row.id, row);
+  }
+
+  let categoryAvailable = true;
+  const categoriesByConversation = new Map<string, Set<string>>();
+  if (filters.category) {
     const { data, error } = await admin
-      .from("conversations")
-      .select("id, topic, category, subject")
-      .in("id", slice);
-    if (error) {
-      console.error("[record] conversations", error);
-      break;
-    }
-    for (const row of (data ?? []) as ConversationRow[]) {
-      if (row.id) conversationsById.set(row.id, row);
+      .from("conversation_categories")
+      .select("conversation_id, category")
+      .eq("case_id", caseId);
+    if (error && isMissingRelation(error)) {
+      categoryAvailable = false;
+    } else if (error) {
+      console.error("[record] conversation_categories", error);
+      return <Unavailable />;
+    } else {
+      for (const row of data ?? []) {
+        const conversationId = (row as { conversation_id?: string }).conversation_id;
+        const category = (row as { category?: string }).category;
+        if (!conversationId || !category) continue;
+        const categories = categoriesByConversation.get(conversationId) ?? new Set<string>();
+        categories.add(category);
+        categoriesByConversation.set(conversationId, categories);
+      }
     }
   }
 
+  const attachmentMessageIds = filters.attachmentsOnly
+    ? await loadAttachmentMessageIds(
+        admin,
+        eligible.map((entry) => entry.message.id)
+      )
+    : new Set<string>();
+
+  const parents = parentIdentities(members, usersById, userId);
+  const conversationFilter =
+    filters.conversationId && conversationsById.has(filters.conversationId)
+      ? filters.conversationId
+      : filters.conversationId;
+  const activeFilters: RecordFilterInput = {
+    ...filters,
+    conversationId: conversationFilter,
+  };
+  const shown = eligible.filter((entry) =>
+    messageMatchesFilters(
+      {
+        messageId: entry.message.id,
+        createdAtMs: messageTime(entry.message.created_at),
+        conversationId: entry.message.conversation_id,
+        originalContent: entry.message.original_content ?? "",
+        senderId: entry.message.sender_id,
+        senderExternalEmail: entry.message.sender_external_email,
+        hasAttachments: entry.message.has_attachments === true,
+      },
+      activeFilters,
+      {
+        timeZone: timezone,
+        now: generated,
+        conversations: new Map(
+          [...conversationsById.entries()].map(([id, row]) => [
+            id,
+            {
+              id,
+              subject: row.subject?.trim() ?? "",
+              categories: categoriesByConversation.get(id) ?? new Set<string>(),
+            },
+          ])
+        ),
+        attachmentMessageIds,
+        viewerId: userId,
+        parents,
+        categoryAvailable,
+      }
+    )
+  );
+
   const groups = new Map<string, { heading: string; earliest: number; entries: RecordEntry[] }>();
   const ungrouped: RecordEntry[] = [];
-  for (const entry of record) {
+  for (const entry of shown) {
     const conversationId = entry.message.conversation_id;
     if (!conversationId) {
       ungrouped.push(entry);
@@ -420,15 +531,29 @@ async function renderRecord(
 
   const attachments = await loadAttachments(
     admin,
-    record.map((entry) => entry.message.id)
+    shown.map((entry) => entry.message.id)
   );
 
-  const generatedAt = formatWhen(new Date().toISOString(), timezone);
+  const generatedAt = formatWhen(generated.toISOString(), timezone);
+  const selectedConversation = activeFilters.conversationId
+    ? conversationsById.get(activeFilters.conversationId)
+    : undefined;
+  const filterLines = appliedFilterLines(activeFilters, {
+    timeZone: timezone,
+    now: generated,
+    conversationSubject: !activeFilters.conversationId
+      ? null
+      : selectedConversation
+        ? selectedConversation.subject?.trim() || "Untitled conversation"
+        : null,
+    categoryAvailable,
+  });
+  const filtered = filterLines.length > 0;
   const range =
-    record.length === 0
+    shown.length === 0
       ? "No messages"
       : (() => {
-          const ordered = [...record].sort(
+          const ordered = [...shown].sort(
             (a, b) =>
               messageTime(a.message.created_at) - messageTime(b.message.created_at) ||
               a.message.id.localeCompare(b.message.id)
@@ -485,14 +610,41 @@ async function renderRecord(
                   generation time above.
                 </p>
                 <p className="order">
-                  {completenessStatement(record.length, allMessages.length - record.length)}
+                  {completenessStatement({
+                    included: shown.length,
+                    eligible: eligible.length,
+                    notPassed: allMessages.length - eligible.length,
+                    filtered,
+                  })}
                 </p>
               </dd>
             </div>
           </dl>
+          {filters.category && !categoryAvailable ? (
+            <p className="notice">
+              The category filter was not applied because conversation categories are not set up
+              yet.
+            </p>
+          ) : null}
+          {filterLines.length > 0 ? (
+            <div className="filters">
+              <h2>Filters Applied</h2>
+              <ul>
+                {filterLines.map((line) => (
+                  <li key={line.label}>
+                    <span>{line.label}:</span> {line.value}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
         </header>
-        {record.length === 0 ? (
-          <p className="empty">No messages have passed between the parties.</p>
+        {shown.length === 0 ? (
+          <p className="empty">
+            {eligible.length === 0
+              ? "No messages have passed between the parties."
+              : "No messages match the selected filters. Messages that do not match remain in the case record."}
+          </p>
         ) : (
           <div className="threads">
             {threads.map((thread) => (
@@ -592,6 +744,29 @@ const plainPageCss = `
   .denied { min-height: 100vh; margin: 0; padding: 48px 24px; background: #fff; color: #000; font-family: Georgia, "Times New Roman", serif; }
   .denied p { max-width: 36rem; margin: 0 auto; }
 `;
+
+async function loadAttachmentMessageIds(
+  admin: ReturnType<typeof getServiceRoleClient>,
+  messageIds: string[]
+): Promise<Set<string>> {
+  const ids = new Set<string>();
+  for (let i = 0; i < messageIds.length; i += 200) {
+    const slice = messageIds.slice(i, i + 200);
+    const { data, error } = await admin
+      .from("message_documents")
+      .select("message_id")
+      .in("message_id", slice);
+    if (error) {
+      console.error("[record] attachment ids", error);
+      return ids;
+    }
+    for (const row of data ?? []) {
+      const messageId = (row as { message_id?: string }).message_id;
+      if (messageId) ids.add(messageId);
+    }
+  }
+  return ids;
+}
 
 async function loadAttachments(
   admin: ReturnType<typeof getServiceRoleClient>,
@@ -720,6 +895,19 @@ function recordCss(caseLabel: string): string {
     .facts ul { margin: 0; padding: 0; list-style: none; }
     .facts li { margin: 0; }
     .order { margin: 5pt 0 0; font-size: 9pt; line-height: 1.4; color: #222; }
+    .notice { margin: 8pt 0 0; font-size: 9pt; line-height: 1.4; }
+    .filters { margin: 10pt 0 0; }
+    .filters h2 {
+      margin: 0 0 3pt;
+      font-size: 8pt;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #3a3a3a;
+    }
+    .filters ul { margin: 0; padding: 0; list-style: none; }
+    .filters li { margin: 0; padding: 1pt 0; font-size: 10.5pt; line-height: 1.4; }
+    .filters span { font-weight: 700; }
     .empty { margin: 16pt 0 0; font-size: 11pt; }
     .thread { margin: 16pt 0 0; }
     .thread h2 {

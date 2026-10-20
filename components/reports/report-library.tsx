@@ -1,10 +1,9 @@
 "use client";
 
-import { Fragment, useMemo, useState, type Dispatch, type SetStateAction } from "react";
+import { useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import { useRouter } from "next/navigation";
 import {
   Calendar,
-  ChevronRight,
   DollarSign,
   FileText,
   MessageSquare,
@@ -17,6 +16,7 @@ import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import { showErrorToast, showSuccessToast } from "@/components/ui/toaster";
 import { CoParentBehaviorAnalysis } from "@/components/reports/coparent-behavior-analysis";
+import { CommunicationRecordConfig } from "@/components/reports/communication-record-config";
 
 type Preset = "30" | "90" | "180" | "custom";
 
@@ -241,131 +241,79 @@ export function ReportLibrary({ caseId }: { caseId: string }) {
     }
   }
 
-  const rows: { kind: "heading" | "note" | "report"; id: string; order: number }[] = [
-    { kind: "heading", id: "filing", order: 10 },
-    { kind: "report", id: COMMUNICATION_RECORD.id, order: 20 },
-    { kind: "report", id: "expense_report", order: 30 },
-    { kind: "report", id: "calendar_report", order: 40 },
-    { kind: "report", id: "document_index", order: 50 },
-    { kind: "heading", id: "private", order: 60 },
-    { kind: "note", id: "private-note", order: 70 },
-    { kind: "report", id: BEHAVIOR.id, order: 80 },
-    { kind: "report", id: "communication_report", order: 90 },
-  ];
+  const isPrivate = selected === BEHAVIOR.id || selected === "communication_report";
+
   return (
-    <>
-      <style>{`
-        @media (min-width: 1024px) {
-          .report-library {
-            display: grid;
-            grid-template-columns: minmax(17rem, 22rem) minmax(0, 1fr);
-            column-gap: 1.75rem;
-            row-gap: 0.25rem;
-            align-items: start;
-          }
-          .report-library .lib-row,
-          .report-library .lib-panel { order: 0 !important; }
-          .report-library .lib-row { grid-column: 1; }
-          .report-library .lib-panel {
-            grid-column: 2;
-            grid-row: 1 / span 16;
-          }
-        }
-      `}</style>
-      <div className="report-library flex flex-col gap-1">
-      <nav aria-label="Report library" className="contents">
-        {rows.map((row) => {
-          if (row.kind === "heading") {
-            return (
-              <h2
-                key={row.id}
-                style={{ order: row.order }}
-                className={cn(
-                  "lib-row font-heading px-1 text-sm font-semibold text-foreground",
-                  row.id === "private" ? "mt-5" : "mt-0"
-                )}
-              >
-                {row.id === "filing" ? "For filing" : "Private analysis"}
-              </h2>
-            );
-          }
-          if (row.kind === "note") {
-            return (
-              <p
-                key={row.id}
-                style={{ order: row.order }}
-                className="lib-row mb-1 px-1 text-xs leading-relaxed text-foreground-secondary"
-              >
-                These reports contain Sage&apos;s interpretations and are intended for your personal
-                preparation, not as factual communication records.
-              </p>
-            );
-          }
-          const meta = reportMeta(row.id);
-          const Icon = meta.icon;
-          const isSelected = selected === row.id;
-          const panelId = `report-config-${row.id}`;
-          return (
-            <Fragment key={row.id}>
-              <button
-                type="button"
-                style={{ order: row.order }}
-                aria-pressed={isSelected}
-                aria-expanded={isSelected}
-                aria-controls={panelId}
-                onClick={() => setSelected(row.id as ReportId)}
-                className={cn(
-                  "lib-row flex w-full items-start gap-2.5 rounded-lg border px-2.5 py-2 text-left transition-colors",
-                  "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#5B7A52]",
-                  isSelected
-                    ? "border-[#C5D1BC] bg-[#F2F5EF]"
-                    : "border-transparent hover:bg-[#F7F3EA]"
-                )}
-              >
-                <Icon className="mt-0.5 h-4 w-4 shrink-0 text-[#5B7A52]" aria-hidden />
-                <span className="min-w-0 flex-1">
-                  <span className="block text-sm font-medium text-[#3D3D3D]">{meta.title}</span>
-                  <span className="mt-0.5 block text-xs leading-snug text-foreground-secondary">
-                    {meta.description}
-                  </span>
-                </span>
-                <ChevronRight
-                  className={cn(
-                    "mt-0.5 h-4 w-4 shrink-0 text-[#8A8A8A] transition-transform",
-                    isSelected && "rotate-90 text-[#5B7A52] lg:rotate-0"
-                  )}
-                  aria-hidden
-                />
-              </button>
-              <div
-                id={panelId}
-                style={{ order: row.order + 1 }}
-                hidden={!isSelected}
-                className={cn("lib-panel min-w-0 pt-2 lg:pt-0", !isSelected && "hidden")}
-              >
-                <ConfigPanel
-                  selected={row.id as ReportId}
-                  caseId={caseId}
-                  generatedById={generatedById}
-                  datesFor={datesFor}
-                  setPreset={setPreset}
-                  setDateField={setDateField}
-                  isOptionChecked={isOptionChecked}
-                  setOption={setOption}
-                  getFormat={getFormat}
-                  setFormat={setFormat}
-                  generating={generating}
-                  onGenerate={(report) => void handleGenerate(report)}
-                />
-              </div>
-            </Fragment>
-          );
-        })}
-      </nav>
+    <div className="w-full max-w-[900px] space-y-4">
+      <div className="space-y-1.5">
+        <Label htmlFor="select-report" className="text-xs font-medium text-[#3D3D3D]">
+          Select Report
+        </Label>
+        <select
+          id="select-report"
+          value={selected}
+          aria-controls={`report-config-${selected}`}
+          onChange={(e) => setSelected(e.target.value as ReportId)}
+          className="h-10 w-full rounded-md border border-[#E8E4DC] bg-white px-3 text-sm text-[#3D3D3D] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#5B7A52]"
+        >
+          <optgroup label="For Filing">
+            <option value={COMMUNICATION_RECORD.id}>{COMMUNICATION_RECORD.title}</option>
+            <option value="expense_report">Expense Report</option>
+            <option value="calendar_report">Calendar & Custody Report</option>
+            <option value="document_index">Document Index</option>
+          </optgroup>
+          <optgroup label="Private Analysis">
+            <option value={BEHAVIOR.id}>{BEHAVIOR.title}</option>
+            <option value="communication_report">Message Analysis</option>
+          </optgroup>
+        </select>
+      </div>
+
+      {isPrivate ? (
+        <p className="text-xs leading-relaxed text-foreground-secondary">
+          These reports contain Sage&apos;s interpretations and are intended for your personal
+          preparation, not as factual communication records.
+        </p>
+      ) : null}
+
+      {REPORT_IDS.map((id) => {
+        const isSelected = selected === id;
+        return (
+          <div
+            key={id}
+            id={`report-config-${id}`}
+            hidden={!isSelected}
+            className={cn(!isSelected && "hidden")}
+          >
+            <ConfigPanel
+              selected={id}
+              caseId={caseId}
+              generatedById={generatedById}
+              datesFor={datesFor}
+              setPreset={setPreset}
+              setDateField={setDateField}
+              isOptionChecked={isOptionChecked}
+              setOption={setOption}
+              getFormat={getFormat}
+              setFormat={setFormat}
+              generating={generating}
+              onGenerate={(report) => void handleGenerate(report)}
+            />
+          </div>
+        );
+      })}
     </div>
-    </>
   );
 }
+
+const REPORT_IDS: ReportId[] = [
+  COMMUNICATION_RECORD.id,
+  "expense_report",
+  "calendar_report",
+  "document_index",
+  BEHAVIOR.id,
+  "communication_report",
+];
 
 function reportMeta(id: string): { title: string; description: string; icon: LucideIcon } {
   if (id === COMMUNICATION_RECORD.id) return COMMUNICATION_RECORD;
@@ -423,23 +371,7 @@ function ConfigPanel({
         </div>
       </header>
 
-      {selected === COMMUNICATION_RECORD.id ? (
-        <div className="mt-5 space-y-4">
-          <p className="text-sm leading-relaxed text-foreground-secondary">
-            This opens the communication record for the case. It lists messages exchanged between
-            the parents and does not include Sage analysis. You can review it and print or save it
-            from that page.
-          </p>
-          <a
-            href={`/cases/${caseId}/record`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex h-9 items-center justify-center rounded-full bg-[#5B7A52] px-5 text-sm text-white hover:bg-[#476242] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#5B7A52]"
-          >
-            View Record
-          </a>
-        </div>
-      ) : null}
+      {selected === COMMUNICATION_RECORD.id ? <CommunicationRecordConfig caseId={caseId} /> : null}
 
       {selected === BEHAVIOR.id ? (
         <div className="mt-5">

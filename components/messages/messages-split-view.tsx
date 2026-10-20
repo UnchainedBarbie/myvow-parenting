@@ -29,6 +29,8 @@ import { estimateIntensity } from "@/lib/sage/intensity";
 import { showErrorToast, showSuccessToast } from "@/components/ui/toaster";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { AlertCircle } from "lucide-react";
+import { ConversationCategories } from "./conversation-categories";
+import { RECORD_CATEGORIES, type RecordCategoryId } from "@/lib/record/record-categories";
 
 type ChildSummary = { id: string; first_name: string };
 
@@ -103,6 +105,7 @@ export function MessagesSplitView({
   const [newIsEmergency, setNewIsEmergency] = useState(false);
   const [newSubject, setNewSubject] = useState("");
   const [newTopic, setNewTopic] = useState<string>("General");
+  const [newRecordCategories, setNewRecordCategories] = useState<RecordCategoryId[]>([]);
   const [creating, setCreating] = useState(false);
   const [composeText, setComposeText] = useState("");
   const [sending, setSending] = useState(false);
@@ -548,6 +551,7 @@ export function MessagesSplitView({
         category: topicValue,
         topic: topicValue,
         is_emergency: newIsEmergency,
+        record_categories: newRecordCategories,
       };
       const res = await fetch("/api/messages/conversations", {
         method: "POST",
@@ -566,7 +570,13 @@ export function MessagesSplitView({
       setNewSubject("");
       setNewChildId("general");
       setNewTopic("General");
+      setNewRecordCategories([]);
       setNewIsEmergency(false);
+      if ((data as { categories_available?: boolean }).categories_available === false) {
+        showErrorToast(
+          "The conversation was created. Categories can be saved after the database update is applied."
+        );
+      }
       setNewModalOpen(false);
       setNewInitialMessage(null);
       await loadConversations();
@@ -1200,6 +1210,7 @@ export function MessagesSplitView({
                       </p>
                     </div>
                   </details>
+                  {selectedId ? <ConversationCategories conversationId={selectedId} /> : null}
                   {activePause && activePause.blocks_sending && (
                     <div className="mt-2 rounded-xl border border-[#E8E4DC] bg-[#F2F5EF] px-3 py-2 text-[11px] text-[#3D3D3D]">
                       This conversation has been temporarily paused to allow cooling. It will reopen at{" "}
@@ -1912,6 +1923,28 @@ export function MessagesSplitView({
                   ))}
                 </select>
               </div>
+              <fieldset className="space-y-1">
+                <legend className="text-xs font-medium text-[#3D3D3D]">Categories</legend>
+                <div className="flex flex-wrap gap-x-3 gap-y-1">
+                  {RECORD_CATEGORIES.map((category) => (
+                    <label key={category.id} className="inline-flex items-center gap-1.5 text-[11px] text-[#3D3D3D]">
+                      <input
+                        type="checkbox"
+                        checked={newRecordCategories.includes(category.id)}
+                        onChange={() =>
+                          setNewRecordCategories((current) =>
+                            current.includes(category.id)
+                              ? current.filter((id) => id !== category.id)
+                              : [...current, category.id]
+                          )
+                        }
+                        className="h-3.5 w-3.5 rounded border-[#E8E4DC] text-[#5B7A52]"
+                      />
+                      {category.label}
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
               <div className="space-y-1">
                 <label className="text-xs font-medium text-[#3D3D3D]">
                   Child

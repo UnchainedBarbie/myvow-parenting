@@ -443,12 +443,13 @@ async function renderRecord(
       <style>{recordCss(caseLabel)}</style>
       <article className="sheet">
         <div className="screen-bar no-print">
-          <p>Communication record</p>
+          <p>Communication Record</p>
           <PrintRecordButton />
         </div>
         <header className="cover">
-          <h1>Communication record</h1>
-          <dl>
+          <p className="brand">MyVow Parenting</p>
+          <h1>Communication Record</h1>
+          <dl className="facts">
             <div>
               <dt>Case</dt>
               <dd>{caseLabel}</dd>
@@ -533,15 +534,26 @@ function renderMessages(
               : entry.message.direction;
         const body = renderRecordBody(entry.message.original_content);
         const delivery = deliveryEvidence(entry.message, timezone);
+        const directionClass =
+          entry.message.direction === "incoming" || entry.message.direction === "outgoing"
+            ? entry.message.direction
+            : "other";
+        const long =
+          body.text.length > 900 || (body.text.match(/\n/g)?.length ?? 0) > 18;
         return (
-          <li key={entry.message.id} className="message">
-            <p className="when">Message time: {formatWhen(entry.message.created_at, timezone)}</p>
-            <p className="who">{senderLine(direction, sender)}</p>
-            {delivery.map((line) => (
-              <p key={line} className="delivery">
-                {line}
-              </p>
-            ))}
+          <li key={entry.message.id} className={`message ${directionClass} ${long ? "long" : "short"}`}>
+            <div className="msg-head">
+              <div className="msg-idline">
+                <p className="who">{senderLine(direction, sender)}</p>
+                <p className="mid">Message {entry.number}</p>
+              </div>
+              <p className="when">Message time: {formatWhen(entry.message.created_at, timezone)}</p>
+              {delivery.map((line) => (
+                <p key={line} className="delivery">
+                  {line}
+                </p>
+              ))}
+            </div>
             <p className="body">{body.text}</p>
             {body.omitted ? (
               <p className="omit">[Signature and confidentiality notice omitted]</p>
@@ -551,7 +563,6 @@ function renderMessages(
                 Attachments: {files.map(documentLabel).join("; ")}
               </p>
             ) : null}
-            <p className="mid">Message {entry.number}</p>
           </li>
         );
       })}
@@ -651,73 +662,158 @@ function recordCss(caseLabel: string): string {
     .record {
       min-height: 100vh;
       background: #fff;
-      color: #000;
-      font-family: Georgia, "Times New Roman", serif;
+      color: #161616;
+      font-family: "Palatino Linotype", Palatino, "Book Antiqua", Georgia, "Times New Roman", serif;
+      font-size: 11pt;
+      line-height: 1.45;
     }
-    .sheet { max-width: 7.5in; margin: 0 auto; padding: 32px 24px 64px; }
+    .sheet { max-width: 8.5in; margin: 0 auto; padding: 0.75in; }
     .screen-bar {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      margin-bottom: 24px;
-      font-family: system-ui, sans-serif;
-      font-size: 14px;
+      margin: 0 0 18pt;
+      font-family: "Segoe UI", system-ui, sans-serif;
+      font-size: 10pt;
     }
     .screen-bar button {
-      border: 1px solid #000;
+      border: 1px solid #222;
       background: #fff;
-      color: #000;
-      padding: 6px 14px;
+      color: #161616;
+      padding: 5px 14px;
       font: inherit;
       cursor: pointer;
     }
-    .cover h1 { font-size: 22px; font-weight: 700; margin: 0 0 16px; }
-    .cover dl { margin: 0; }
-    .cover dl > div { margin: 0 0 10px; }
-    .cover dt { font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; }
-    .cover dd { margin: 2px 0 0; font-size: 14px; }
-    .cover ul { margin: 0; padding-left: 1.1em; }
-    .order { margin: 4px 0 0; font-size: 14px; }
-    .empty { margin-top: 24px; }
-    .thread { margin: 28px 0 0; }
-    .thread h2 {
-      font-size: 16px;
+    .brand {
+      margin: 0;
+      font-size: 8.5pt;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: #4a4a4a;
+    }
+    .cover { padding-bottom: 10pt; border-bottom: 1pt solid #222; }
+    .cover h1 {
+      margin: 2pt 0 12pt;
+      font-size: 20pt;
       font-weight: 700;
-      margin: 0 0 4px;
+      line-height: 1.15;
+      letter-spacing: 0;
+    }
+    .facts { margin: 0; }
+    .facts > div {
+      display: grid;
+      grid-template-columns: 5.6rem 1fr;
+      column-gap: 0.7rem;
+      align-items: baseline;
+      padding: 3.5pt 0;
+      border-bottom: 0.4pt solid #d5d5d5;
+    }
+    .facts dt {
+      margin: 0;
+      font-size: 8pt;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #3a3a3a;
+    }
+    .facts dd { margin: 0; font-size: 10.5pt; line-height: 1.4; }
+    .facts ul { margin: 0; padding: 0; list-style: none; }
+    .facts li { margin: 0; }
+    .order { margin: 5pt 0 0; font-size: 9pt; line-height: 1.4; color: #222; }
+    .empty { margin: 16pt 0 0; font-size: 11pt; }
+    .thread { margin: 16pt 0 0; }
+    .thread h2 {
+      margin: 0 0 8pt;
+      padding: 0 0 3pt;
+      border-bottom: 0.75pt solid #222;
+      font-size: 12.5pt;
+      font-weight: 700;
+      line-height: 1.3;
       break-after: avoid;
       page-break-after: avoid;
     }
     .messages { list-style: none; margin: 0; padding: 0; }
     .message {
-      border-top: 1px solid #000;
-      padding: 14px 0 16px;
+      margin: 0;
+      padding: 8pt 0 9pt 9pt;
+      border-bottom: 0.4pt solid #d0d0d0;
+      border-left: 2.25pt solid #c4c4c4;
+    }
+    .message.incoming { border-left-color: #3f3f3f; }
+    .message.outgoing { border-left-color: #b7b7b7; }
+    .message.short {
       break-inside: avoid;
       page-break-inside: avoid;
     }
-    .when, .who, .files, .mid, .delivery { margin: 0 0 6px; font-size: 12px; }
-    .who, .mid { font-weight: 700; }
-    .body, .omit { margin: 8px 0; font-size: 14px; white-space: pre-wrap; }
+    .msg-head {
+      break-inside: avoid;
+      page-break-inside: avoid;
+      break-after: avoid;
+      page-break-after: avoid;
+    }
+    .msg-idline {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 12pt;
+    }
+    .who {
+      margin: 0;
+      font-size: 11pt;
+      font-weight: 700;
+      line-height: 1.35;
+      color: #111;
+    }
+    .when, .delivery, .files, .mid {
+      margin: 1pt 0 0;
+      font-size: 8.5pt;
+      font-weight: 400;
+      line-height: 1.35;
+      color: #333;
+    }
+    .mid { margin: 0; white-space: nowrap; }
+    .body, .omit {
+      margin: 6pt 0 0;
+      font-size: 11pt;
+      font-weight: 400;
+      line-height: 1.45;
+      color: #161616;
+      white-space: pre-wrap;
+      overflow-wrap: break-word;
+    }
+    .omit, .files { break-before: avoid; page-break-before: avoid; }
+    .files { margin-top: 4pt; }
     @page {
       size: letter;
-      margin: 0.85in 0.7in 0.7in 0.7in;
+      margin: 0.75in;
       @top-left {
+        content: "Communication Record";
+        font-family: "Palatino Linotype", Palatino, Georgia, "Times New Roman", serif;
+        font-size: 8.5pt;
+        color: #444;
+      }
+      @top-center {
         content: "Case ${label}";
-        font-family: Georgia, "Times New Roman", serif;
-        font-size: 10pt;
-        color: #000;
+        font-family: "Palatino Linotype", Palatino, Georgia, "Times New Roman", serif;
+        font-size: 8.5pt;
+        color: #444;
       }
       @top-right {
         content: "Page " counter(page);
-        font-family: Georgia, "Times New Roman", serif;
-        font-size: 10pt;
-        color: #000;
+        font-family: "Palatino Linotype", Palatino, Georgia, "Times New Roman", serif;
+        font-size: 8.5pt;
+        color: #444;
       }
     }
     @media print {
       .no-print { display: none !important; }
-      html, body { background: #fff !important; color: #000 !important; }
-      .record { background: #fff; color: #000; }
+      html, body { background: #fff !important; color: #161616 !important; }
+      .record { background: #fff; color: #161616; }
       .sheet { max-width: none; margin: 0; padding: 0; }
+      .message {
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
     }
   `;
 }

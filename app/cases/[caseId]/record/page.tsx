@@ -116,6 +116,51 @@ function passedBetweenParents(message: MessageRow): boolean {
   );
 }
 
+function deliveryStatusWords(status: string): string | null {
+  switch (status.trim().toLowerCase()) {
+    case "delivered":
+      return "Delivered";
+    case "pending":
+      return "Pending delivery";
+    case "buffered":
+      return "Held before delivery";
+    case "blocked":
+      return "Blocked";
+    default:
+      return null;
+  }
+}
+
+function deliveryEvidence(message: MessageRow, timezone: string): string[] {
+  const direction = (message.direction ?? "").trim().toLowerCase();
+  if (direction === "incoming") {
+    if (!message.current_status?.trim() && !message.delivery_status?.trim()) return [];
+    return ["Received"];
+  }
+  const lines: string[] = [];
+  const status = message.delivery_status?.trim() ?? "";
+  const deliveredAt = message.delivered_at?.trim() ?? "";
+  const words = status ? deliveryStatusWords(status) : null;
+  if (deliveredAt) {
+    lines.push(`Delivered ${formatWhen(deliveredAt, timezone)}`);
+  } else if (words) {
+    lines.push(words);
+  }
+  if (deliveredAt && words && status.toLowerCase() !== "delivered") {
+    lines.unshift(words);
+  }
+  return lines;
+}
+
+function completenessStatement(included: number, excluded: number): string {
+  const includedText = `${included} message${included === 1 ? " is" : "s are"} included.`;
+  const excludedText = `${excluded} message${excluded === 1 ? " is" : "s are"} excluded`;
+  if (excluded === 0) {
+    return `This is the complete record of messages in this case. ${includedText} ${excludedText}.`;
+  }
+  return `This is a filtered view, not the complete record of the case. ${includedText} ${excludedText} because ${excluded === 1 ? "it" : "they"} did not pass between the parents. Excluded messages retain their numbers.`;
+}
+
 function messageNumber(index: number): string {
   return `MSG-${String(index + 1).padStart(3, "0")}`;
 }
@@ -434,6 +479,13 @@ async function renderRecord(
               <dd>
                 {generatedAt}
                 <p className="order">Grouped by conversation, earliest first.</p>
+                <p className="order">
+                  Message numbers reflect chronological position in this case as of the
+                  generation time above.
+                </p>
+                <p className="order">
+                  {completenessStatement(record.length, allMessages.length - record.length)}
+                </p>
               </dd>
             </div>
           </dl>
@@ -480,10 +532,16 @@ function renderMessages(
               ? "Outgoing"
               : entry.message.direction;
         const body = renderRecordBody(entry.message.original_content);
+        const delivery = deliveryEvidence(entry.message, timezone);
         return (
           <li key={entry.message.id} className="message">
-            <p className="when">{formatWhen(entry.message.created_at, timezone)}</p>
+            <p className="when">Message time: {formatWhen(entry.message.created_at, timezone)}</p>
             <p className="who">{senderLine(direction, sender)}</p>
+            {delivery.map((line) => (
+              <p key={line} className="delivery">
+                {line}
+              </p>
+            ))}
             <p className="body">{body.text}</p>
             {body.omitted ? (
               <p className="omit">[Signature and confidentiality notice omitted]</p>
@@ -636,7 +694,7 @@ function recordCss(caseLabel: string): string {
       break-inside: avoid;
       page-break-inside: avoid;
     }
-    .when, .who, .files, .mid { margin: 0 0 6px; font-size: 12px; }
+    .when, .who, .files, .mid, .delivery { margin: 0 0 6px; font-size: 12px; }
     .who, .mid { font-weight: 700; }
     .body, .omit { margin: 8px 0; font-size: 14px; white-space: pre-wrap; }
     @page {

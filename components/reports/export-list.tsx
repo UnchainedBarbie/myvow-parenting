@@ -13,7 +13,7 @@ const TYPE_LABELS: Record<string, string> = {
   expenses: "Expense ledger",
   patterns: "Pattern summary",
   full_report: "Full case report",
-  communication_report: "Communication Report",
+  communication_report: "Message Analysis",
   expense_report: "Expense Report",
   calendar_report: "Calendar & Custody Report",
   document_index: "Document Index",

@@ -28,7 +28,7 @@ export default async function ReportsPage() {
           Reports
         </h1>
         <p className="text-foreground-secondary mb-8">
-          Generate court-ready documentation from your case data.
+          Documents for your own preparation, and records of what was exchanged.
         </p>
         <div className="rounded-card border border-border bg-background-secondary p-8 text-center">
           <p className="text-foreground-secondary">
@@ -64,11 +64,36 @@ export default async function ReportsPage() {
         Reports
       </h1>
       <p className="text-foreground-secondary mb-8">
-        Generate court-ready documentation from your case data.
+        Documents for your own preparation, and records of what was exchanged.
       </p>
-      <div className="space-y-8">
-        <CoParentBehaviorAnalysis />
-        <ReportsHub caseId={caseId} children={[]} />
+      <div className="space-y-10">
+        <section className="space-y-4">
+          <div>
+            <h2 className="font-heading text-lg font-semibold text-foreground">
+              For your preparation
+            </h2>
+            <p className="mt-1 text-sm text-foreground-secondary">
+              These contain Sage&apos;s analysis and are intended to help you prepare, not to be filed.
+            </p>
+          </div>
+          <div className="grid gap-6 sm:grid-cols-2">
+            <CoParentBehaviorAnalysis />
+            <ReportsHub caseId={caseId} audience="preparation" children={[]} />
+          </div>
+        </section>
+        <section className="space-y-4">
+          <div>
+            <h2 className="font-heading text-lg font-semibold text-foreground">
+              For filing
+            </h2>
+            <p className="mt-1 text-sm text-foreground-secondary">
+              These contain the record of what was exchanged.
+            </p>
+          </div>
+          <div className="grid gap-6 sm:grid-cols-2">
+            <ReportsHub caseId={caseId} audience="filing" children={[]} />
+          </div>
+        </section>
         <ExportList exports={exports} />
       </div>
     </div>

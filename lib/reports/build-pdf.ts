@@ -8,9 +8,9 @@ const PAGE_WIDTH = 210;
 const CONTENT_WIDTH = PAGE_WIDTH - 2 * MARGIN;
 const Y_MAX = PAGE_HEIGHT - MARGIN;
 
-function addHeader(doc: jsPDF, title: string, dateRange: string) {
+function addHeader(doc: jsPDF, title: string, dateRange: string, brand?: string) {
   doc.setFontSize(14);
-  doc.text("MyVow Parenting — Court-Ready Export", MARGIN, MARGIN);
+  doc.text(brand ?? "MyVow Parenting — Court-Ready Export", MARGIN, MARGIN);
   doc.setFontSize(12);
   doc.text(title, MARGIN, MARGIN + 8);
   doc.setFontSize(10);
@@ -62,15 +62,17 @@ export async function buildMessageTranscriptPdf(
     includeTone
       ? "Message Transcript (with AI classifications and flags)"
       : "Message Transcript",
-    dateRange
+    dateRange,
+    "MyVow Parenting - Message Analysis"
   );
 
   const payloadParts: string[] = [];
   let y = MARGIN + 22;
   doc.setFontSize(10);
+  const contentBottom = PAGE_HEIGHT - 28;
 
   for (const m of messages) {
-    if (y > Y_MAX) {
+    if (y > contentBottom) {
       doc.addPage();
       y = MARGIN;
     }
@@ -109,6 +111,14 @@ export async function buildMessageTranscriptPdf(
   const hash = createHash("sha256").update(verificationPayload).digest("hex");
   doc.addPage();
   addVerificationFooter(doc, hash);
+  const preparationNotice =
+    "Prepared for the parent's own use. Contains AI-generated analysis.";
+  const pageCount = doc.getNumberOfPages();
+  for (let page = 1; page <= pageCount; page += 1) {
+    doc.setPage(page);
+    doc.setFontSize(8);
+    doc.text(preparationNotice, MARGIN, PAGE_HEIGHT - 10);
+  }
   return { buffer: getBuffer(doc), verificationPayload };
 }
 

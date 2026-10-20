@@ -5,16 +5,17 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
-import { MessageSquare, DollarSign, Calendar, FileText, BookOpen } from "lucide-react";
+import { MessageSquare, DollarSign, Calendar, FileText, BookOpen, ScrollText } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { showErrorToast, showSuccessToast } from "@/components/ui/toaster";
 
 const REPORT_TYPES = [
   {
     id: "communication_report",
-    title: "Communication Report",
-    description: "Complete message history with tone classifications and thread summaries",
+    title: "Message Analysis",
+    description: "Message history with Sage's tone classifications and flags, for your own preparation",
     icon: MessageSquare,
+    place: "preparation",
     hasDateRange: true,
     filters: ["child", "topic"] as const,
     options: [
@@ -29,6 +30,7 @@ const REPORT_TYPES = [
     title: "Expense Report",
     description: "Shared expenses, payment history, and balances",
     icon: DollarSign,
+    place: "filing",
     hasDateRange: true,
     filters: ["child", "category", "status"] as const,
     options: [
@@ -45,6 +47,7 @@ const REPORT_TYPES = [
     title: "Calendar & Custody Report",
     description: "Custody schedule, exchanges, and calendar events",
     icon: Calendar,
+    place: "filing",
     hasDateRange: true,
     filters: [] as const,
     options: [
@@ -60,6 +63,7 @@ const REPORT_TYPES = [
     title: "Document Index",
     description: "Index of all uploaded documents with metadata",
     icon: FileText,
+    place: "filing",
     hasDateRange: false,
     filters: [] as const,
     options: [
@@ -74,6 +78,7 @@ const REPORT_TYPES = [
     title: "Interaction Log",
     description: "Documented interactions from Sage, with timestamps and linked messages when available",
     icon: FileText,
+    place: "hidden",
     hasDateRange: true,
     filters: [] as const,
     options: [
@@ -88,6 +93,7 @@ const REPORT_TYPES = [
     title: "Full Case Report",
     description: "Comprehensive report combining all sections above",
     icon: BookOpen,
+    place: "hidden",
     hasDateRange: true,
     filters: [] as const,
     options: [] as { id: string; label: string; default: boolean }[],
@@ -108,10 +114,11 @@ function defaultStartDate() {
 
 interface ReportsHubProps {
   caseId: string;
+  audience: "preparation" | "filing";
   children: { id: string; first_name: string }[];
 }
 
-export function ReportsHub({ caseId, children }: ReportsHubProps) {
+export function ReportsHub({ caseId, audience }: ReportsHubProps) {
   const router = useRouter();
   const [generating, setGenerating] = useState<string | null>(null);
   const [dateStart, setDateStart] = useState(defaultStartDate);
@@ -183,9 +190,46 @@ export function ReportsHub({ caseId, children }: ReportsHubProps) {
     }
   }
 
+  const reports = REPORT_TYPES.filter((report) => report.place === audience);
+
   return (
-    <div className="grid gap-6 sm:grid-cols-2">
-      {REPORT_TYPES.map((report) => {
+    <>
+      {audience === "filing" && (
+        <Card
+          className={cn(
+            "border border-[#E8E4DC] bg-[#FDFBF7] shadow-sm",
+            "rounded-xl overflow-hidden",
+            "flex flex-col h-full"
+          )}
+        >
+          <CardHeader className="pb-2">
+            <div className="flex items-start gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[#EEF2E9] text-[#5B7A52]">
+                <ScrollText className="h-5 w-5" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <CardTitle className="font-heading text-base text-[#3D3D3D]">
+                  Communication Record
+                </CardTitle>
+                <CardDescription className="mt-1 text-xs text-foreground-secondary">
+                  The record of messages exchanged, with no AI analysis included.
+                </CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="pt-0 mt-auto">
+            <a
+              href={`/cases/${caseId}/record`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex h-8 w-full items-center justify-center rounded-full bg-[#5B7A52] text-xs text-white hover:bg-[#476242]"
+            >
+              Open record
+            </a>
+          </CardContent>
+        </Card>
+      )}
+      {reports.map((report) => {
         const Icon = report.icon;
         return (
           <Card
@@ -258,24 +302,6 @@ export function ReportsHub({ caseId, children }: ReportsHubProps) {
                         </li>
                       ))}
                     </ul>
-                    {report.id === "communication_report" &&
-                      (isOptionChecked(
-                        report.id,
-                        "tone_classifications",
-                        report.options.find((opt) => opt.id === "tone_classifications")?.default ??
-                          false
-                      ) ||
-                        isOptionChecked(
-                          report.id,
-                          "thread_summaries",
-                          report.options.find((opt) => opt.id === "thread_summaries")?.default ??
-                            false
-                        )) && (
-                        <p className="text-[11px] text-foreground-secondary">
-                          Sage&apos;s analysis becomes part of any document you file. Consider
-                          generating a clean record for filing and keeping the analysis separate.
-                        </p>
-                      )}
                   </div>
                 )}
 
@@ -310,6 +336,6 @@ export function ReportsHub({ caseId, children }: ReportsHubProps) {
           </Card>
         );
       })}
-    </div>
+    </>
   );
 }

@@ -88,6 +88,8 @@ export type Proposal = {
   subject?: string | null;
   /** Set when the approved save should change the event status, such as canceled. */
   event_status?: string | null;
+  /** Dollar amount for an expense proposal. Absent when the user did not state one. */
+  amount?: number | null;
 };
 
 export type Plan = {

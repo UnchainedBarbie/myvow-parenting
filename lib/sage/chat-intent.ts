@@ -26,6 +26,7 @@ import {
   type KnownChild,
 } from "@/lib/sage/calendar-chat";
 import { appointmentTitle, calendarCategory } from "@/lib/sage/calendar-labels";
+import { inferExpenseCategoryFromText, parseExpenseAmountFromText } from "@/lib/expenses-share";
 import { formatClockLabel, preferEventSubject } from "@/lib/sage/event-subject";
 import { resolveDate } from "@/lib/sage/resolver";
 import type { SageInterpretation } from "@/lib/sage/understanding";
@@ -288,7 +289,18 @@ function resolveNotify(
   };
 }
 
+function explicitSchedule(text: string): boolean {
+  return /\b(add|put|schedule|book|calendar)\b/i.test(text);
+}
+
+/** A completed payment. An appointment noun in the same sentence does not schedule it. */
+function isPaymentReport(text: string): boolean {
+  if (parseExpenseAmountFromText(text) == null) return false;
+  return /\b(paid|pay|spent|spend|spending|payment|bought|buy|cost|bill|charge|receipt)\b/i.test(text);
+}
+
 function wantsCalendar(text: string): boolean {
+  if (isPaymentReport(text) && !explicitSchedule(text)) return false;
   const lower = text.toLowerCase();
   const hasWhen =
     new RegExp(`\\b(${WEEKDAY})\\b`).test(lower) ||
@@ -297,7 +309,7 @@ function wantsCalendar(text: string): boolean {
     /\b(school|appointment|practice|pickup|pick-up|pick up|drop-?off|drop off|recital|game|therapy|dentist|doctor|ot|class|event|calendar)\b/.test(
       lower
     );
-  const asksAdd = /\b(add|put|schedule|calendar)\b/.test(lower);
+  const asksAdd = explicitSchedule(text);
   return (hasWhen && hasEvent) || (asksAdd && (hasEvent || hasWhen));
 }
 
@@ -307,8 +319,19 @@ function wantsDocument(text: string): boolean {
 }
 
 function wantsExpense(text: string): boolean {
+  if (isPaymentReport(text)) return true;
   return /\blog (this |that |the )?(expense|receipt)\b/i.test(text) ||
     /\b(add|enter|record) (this |that |an |the )?expense\b/i.test(text);
+}
+
+function expenseDescription(text: string): string {
+  const cleaned = text
+    .replace(/\$\s*\d[\d,]*(?:\.\d{1,2})?/g, " ")
+    .replace(/\b(today|tomorrow|tonight|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/[.?!]+$/g, "");
+  return cleaned.slice(0, 120);
 }
 
 function isAdvice(text: string): "wording" | "unpaid" | null {
@@ -399,6 +422,8 @@ function shell(opts: {
   dateIso: string | null;
   eventSubject: string | null;
   childIds?: string[];
+  amount?: number | null;
+  expenseCategory?: string | null;
 }): ProcessObservationResult {
   const interpretation: SageInterpretation = {
     intent: {
@@ -416,7 +441,10 @@ function shell(opts: {
       children: opts.child ? [{ name: opts.child, confidence: 0.8 }] : [],
       people: [],
       dates: opts.dateIso ? [{ value: opts.dateIso, raw: opts.dateIso }] : [],
-      amounts: [],
+      amounts:
+        opts.amount != null && opts.amount > 0
+          ? [{ value: opts.amount, currency: "USD" }]
+          : [],
       merchants: [],
       providers: [],
       documents: [],
@@ -441,6 +469,7 @@ function shell(opts: {
       : [],
     plan: opts.plan,
     event_subject: opts.eventSubject ?? undefined,
+    ...(opts.expenseCategory ? { expense_category: opts.expenseCategory } : {}),
   };
 }
 
@@ -458,6 +487,8 @@ function turn(opts: {
   dateIso?: string | null;
   eventSubject?: string | null;
   childIds?: string[];
+  amount?: number | null;
+  expenseCategory?: string | null;
   reasoning: string;
 }): RoutedTurn {
   const plan: Plan = {
@@ -479,6 +510,8 @@ function turn(opts: {
       dateIso: opts.dateIso ?? null,
       eventSubject: opts.eventSubject ?? null,
       childIds: opts.childIds,
+      amount: opts.amount,
+      expenseCategory: opts.expenseCategory,
     }),
   };
 }
@@ -727,8 +760,9 @@ export function routeChatIntent(input: RouteChatIntentInput): RoutedTurn {
   const subject =
     eventSubject(message, conversation) ??
     (calendar ? "event" : null);
-  const resolved = resolvedDay(message, today, timezone);
-  const dateIso = resolved?.iso ?? conversation?.event.date ?? null;
+  const statedDay = resolvedDay(message, today, timezone);
+  const dateIso =
+    statedDay?.iso ?? ((calendar || !expense) ? conversation?.event.date ?? null : null);
   const dateLabel = dateIso ? prettyDate(dateIso) : null;
   const clock = clockFromText(message);
   const messageTime = clockWithMeridiem(message);
@@ -737,6 +771,7 @@ export function routeChatIntent(input: RouteChatIntentInput): RoutedTurn {
   const allDay = wantsAllDay(message);
   const completingTime =
     !calendar &&
+    !isPaymentReport(message) &&
     Boolean(messageTime) &&
     Boolean(conversation?.event.subject) &&
     Boolean(conversation?.event.date) &&
@@ -773,8 +808,18 @@ export function routeChatIntent(input: RouteChatIntentInput): RoutedTurn {
       })
     );
   }
+  const expenseAmount = expense ? parseExpenseAmountFromText(message) : null;
+  const expenseCategory = expense ? inferExpenseCategoryFromText(message) : null;
   if (expense) {
-    proposals.push(proposal("log_expense", "Log expense from this conversation."));
+    const description = expenseDescription(message);
+    proposals.push(
+      proposal("log_expense", description, {
+        description,
+        ...(expenseCategory ? { category: expenseCategory } : {}),
+        ...(statedDay?.iso ? { date: statedDay.iso } : {}),
+        ...(expenseAmount != null ? { amount: expenseAmount } : {}),
+      })
+    );
   }
   if (notify.kind === "one") {
     const email = notify.coparent.email?.trim() || "";
@@ -829,9 +874,15 @@ export function routeChatIntent(input: RouteChatIntentInput): RoutedTurn {
 
   const hasMessage = proposals.some((p) => p.type === "reply_coparent");
   const hasCalendar = proposals.some((p) => p.type === "calendar_update");
+  const hasExpense = proposals.some((p) => p.type === "log_expense");
+  const timeAsk = proposals.find((p) => p.type === "ask_clarification" && p.audience === "parent");
   const recipient = proposals.find((p) => p.type === "reply_coparent");
   let reply = "I prepared that for your approval.";
-  if (hasCalendar && hasMessage && recipient?.recipient_name) {
+  if (hasCalendar && hasExpense) {
+    reply = "I prepared a calendar event and an expense. Each one needs your approval.";
+  } else if (hasExpense && timeAsk?.draft) {
+    reply = `${timeAsk.draft} I can also log the expense once you approve it.`;
+  } else if (hasCalendar && hasMessage && recipient?.recipient_name) {
     reply = `I prepared a calendar event and a separate message to ${recipient.recipient_name}. Each one needs your approval.`;
   } else if (hasMessage && recipient?.recipient_name) {
     reply = `Here is a message to ${recipient.recipient_name}. Nothing is sent until you choose Send.`;
@@ -868,8 +919,10 @@ export function routeChatIntent(input: RouteChatIntentInput): RoutedTurn {
     proposals,
     child,
     childIds,
-    dateIso,
-    eventSubject: specific?.subject ?? subject,
+    dateIso: expense && !calendar && !completingTime ? statedDay?.iso ?? null : dateIso,
+    eventSubject: calendar || completingTime ? specific?.subject ?? subject : null,
+    amount: expenseAmount,
+    expenseCategory,
     status: proposals.every((p) => p.type === "ask_clarification")
       ? "awaiting_clarification"
       : undefined,

@@ -3,6 +3,7 @@ import type { DocumentRow } from "@/components/documents/document-detail-modal";
 import type { ExpenseFormInitialValues } from "@/components/expenses/expense-form";
 import {
   inferExpenseCategoryFromText,
+  mapExpenseCategoryFromClassify,
   parseExpenseAmountFromText,
 } from "@/lib/expenses-share";
 import { appointmentTitle, calendarCategory, visibilityForCategory } from "@/lib/sage/calendar-labels";
@@ -632,6 +633,10 @@ function resolvedExpenseIso(item: SageItem | null | undefined): string | undefin
 }
 
 function inferExpenseCategory(item: SageItem, proposal?: SageProposal): string {
+  const proposed = mapExpenseCategoryFromClassify(proposal?.category);
+  if (typeof proposal?.category === "string" && proposal.category.trim() && proposed !== "other") {
+    return proposed;
+  }
   const stored = toolInputRecord(item)?.expense_category;
   if (typeof stored === "string" && stored.trim()) {
     return stored.trim().toLowerCase();
@@ -679,16 +684,23 @@ export function buildExpenseInitialValues(
       : proposal.draft) ?? "";
   const summary = (item.summary ?? "").trim();
   const blob = [summary, draftSource].filter(Boolean).join(" ");
-  const amount =
-    amountFromToolInput(item) ?? parseExpenseAmountFromText(blob);
+  const proposalAmount =
+    typeof proposal.amount === "number" && proposal.amount > 0 ? proposal.amount : undefined;
+  const amount = proposalAmount ?? amountFromToolInput(item) ?? parseExpenseAmountFromText(blob);
+  const proposedDescription =
+    typeof proposal.description === "string" ? proposal.description.trim() : "";
   const description =
-    expenseDescriptionFromText(summary) ??
-    expenseDescriptionFromText(draftSource) ??
-    namedValues(toolInputRecord(item), "providers")[0] ??
-    namedValues(toolInputRecord(item), "merchants")[0] ??
+    proposedDescription ||
+    expenseDescriptionFromText(summary) ||
+    expenseDescriptionFromText(draftSource) ||
+    namedValues(toolInputRecord(item), "providers")[0] ||
+    namedValues(toolInputRecord(item), "merchants")[0] ||
     "Expense";
+  const proposalDate = isIsoDate(typeof proposal.date === "string" ? proposal.date : null)
+    ? proposal.date?.trim()
+    : "";
   const date =
-    (chosenDate ?? proposal.chosen_date ?? resolvedExpenseIso(item) ?? "").trim() ||
+    (chosenDate ?? proposal.chosen_date ?? proposalDate ?? resolvedExpenseIso(item) ?? "").trim() ||
     undefined;
   const attachedFile = attachedFileFrom(item, proposal);
   return {

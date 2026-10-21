@@ -63,6 +63,8 @@ export type SageProposal = {
   pickup_time?: string | null;
   /** Applied on save when the proposal marks an existing event canceled. */
   event_status?: string | null;
+  /** Dollar amount for an expense proposal. Absent when the user did not state one. */
+  amount?: number | null;
 };
 
 export type SagePlan = {

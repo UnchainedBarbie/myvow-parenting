@@ -8,6 +8,7 @@ import {
 import { eventSubjectFromTexts, formatClockLabel } from "@/lib/sage/event-subject";
 import { splitSchedule } from "@/lib/sage/outbound-facts";
 import { isCalendarUpdateProposal, isFormExecuteProposal, isLogDocumentProposal } from "@/lib/sage/proposal-kind";
+import { isSupersededProposal } from "@/lib/sage/proposal-lifecycle";
 import type { SageItem, SageProposal } from "./proposal-types";
 
 export {
@@ -89,7 +90,7 @@ export function isCommitted(p: SageProposal): boolean {
 }
 
 export function isActionable(p: SageProposal): boolean {
-  if (p.type === "note_only" || isWaived(p) || isBlocked(p)) return false;
+  if (p.type === "note_only" || isWaived(p) || isBlocked(p) || isSupersededProposal(p)) return false;
   if (isCalendarUpdateProposal(p.type)) return !isCommitted(p);
   if (p.executed === true) return false;
   // Calendar / expense stay actionable until the form actually creates the record.
@@ -220,7 +221,7 @@ export function displayDraft(p: SageProposal, showDateField: boolean): string {
 }
 
 export function canUndo(p: SageProposal): boolean {
-  if (p.executed === true) return false;
+  if (p.executed === true || isSupersededProposal(p)) return false;
   return p.approved === true || p.status === "waived_by_user";
 }
 

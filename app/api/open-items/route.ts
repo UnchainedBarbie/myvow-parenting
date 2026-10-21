@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import type { SageItem } from "@/components/sage/proposal-types";
 import { deriveOpenItems, openItemHref, type OpenItemSource } from "@/lib/open-items";
+import { ownerItemMatch, reconcileProposalPlan } from "@/lib/sage/proposal-lifecycle";
 import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
@@ -67,6 +68,7 @@ export async function GET() {
     }
 
     const items = (rows ?? []) as ItemRow[];
+    await reconcileStoredPlans(admin, user.id, caseId, items);
     const drafts = deriveOpenItems(items);
     const needed = new Set(drafts.map((draft) => draft.sageItemId));
     const relevant = items.filter((row) => needed.has(row.id));
@@ -85,26 +87,53 @@ export async function GET() {
       return NextResponse.json({ error: "Couldn't load open items." }, { status: 500 });
     }
 
-    return NextResponse.json({
-      count: drafts.length,
-      caseId,
-      children: (childrenData ?? []).map((child) => ({
-        id: child.id as string,
-        first_name: child.first_name as string,
-      })),
-      items: drafts.map((draft) => {
-        const row = byId.get(draft.sageItemId);
-        const sessionId = sessionByItem.get(draft.sageItemId) ?? null;
-        return {
-          ...draft,
-          href: openItemHref(sessionId, draft.sageItemId, draft.proposalIndex),
-          item: toSageItem(row),
-        };
-      }),
-    });
+    return NextResponse.json(
+      {
+        count: drafts.length,
+        caseId,
+        children: (childrenData ?? []).map((child) => ({
+          id: child.id as string,
+          first_name: child.first_name as string,
+        })),
+        items: drafts.map((draft) => {
+          const row = byId.get(draft.sageItemId);
+          const sessionId = sessionByItem.get(draft.sageItemId) ?? null;
+          return {
+            ...draft,
+            href: openItemHref(sessionId, draft.sageItemId, draft.proposalIndex),
+            item: toSageItem(row),
+          };
+        }),
+      },
+      { headers: { "Cache-Control": "no-store" } }
+    );
   } catch (e) {
     console.error("[open-items/GET]", e);
     return NextResponse.json({ error: "Couldn't load open items." }, { status: 500 });
+  }
+}
+
+async function reconcileStoredPlans(
+  admin: Admin,
+  userId: string,
+  caseId: string,
+  items: ItemRow[]
+) {
+  for (const row of items) {
+    const proposals = Array.isArray(row.plan?.proposals) ? row.plan.proposals : null;
+    if (!proposals) continue;
+    const reconciled = reconcileProposalPlan(proposals);
+    if (!reconciled.changed) continue;
+    const nextPlan = { ...(row.plan as object), proposals: reconciled.proposals };
+    row.plan = nextPlan;
+    const scope = ownerItemMatch(userId, caseId, row.id);
+    const { error } = await admin
+      .from("sage_items")
+      .update({ plan: nextPlan })
+      .eq("id", scope.id)
+      .eq("visible_to", scope.visible_to)
+      .eq("case_id", scope.case_id);
+    if (error) console.error("[open-items/GET] reconcile:", error);
   }
 }
 

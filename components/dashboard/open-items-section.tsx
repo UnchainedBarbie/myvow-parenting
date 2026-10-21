@@ -6,7 +6,12 @@ import { OpenItemReview } from "@/components/dashboard/open-item-review";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { showErrorToast } from "@/components/ui/toaster";
-import { openItemsPreviewLimit, type OpenItemType, type OpenItemView } from "@/lib/open-items";
+import {
+  openItemsPreviewLimit,
+  SAGE_PROPOSALS_CHANGED_EVENT,
+  type OpenItemType,
+  type OpenItemView,
+} from "@/lib/open-items";
 import { cn } from "@/lib/utils";
 
 type Child = { id: string; first_name: string };
@@ -33,7 +38,7 @@ export function OpenItemsSection() {
   const load = useCallback(async (opts?: { silent?: boolean }) => {
     if (!opts?.silent) setLoading(true);
     try {
-      const res = await fetch("/api/open-items");
+      const res = await fetch("/api/open-items", { cache: "no-store" });
       const data = (await res.json().catch(() => ({}))) as {
         error?: string;
         count?: number;
@@ -49,7 +54,11 @@ export function OpenItemsSection() {
       setCount(typeof data.count === "number" ? data.count : (data.items ?? []).length);
       setCaseId(data.caseId ?? null);
       setChildren(Array.isArray(data.children) ? data.children : []);
-      setItems(Array.isArray(data.items) ? data.items : []);
+      const nextItems = Array.isArray(data.items) ? data.items : [];
+      setItems(nextItems);
+      setReviewKey((current) =>
+        current && nextItems.some((row) => row.key === current) ? current : null
+      );
     } catch {
       setError("Couldn't load open items.");
     } finally {
@@ -63,11 +72,21 @@ export function OpenItemsSection() {
 
   useEffect(() => {
     function onFocus() {
+      if (document.visibilityState === "hidden") return;
       if (reviewKey) return;
       void load({ silent: true });
     }
+    function onChanged() {
+      void load({ silent: true });
+    }
     window.addEventListener("focus", onFocus);
-    return () => window.removeEventListener("focus", onFocus);
+    window.addEventListener(SAGE_PROPOSALS_CHANGED_EVENT, onChanged);
+    document.addEventListener("visibilitychange", onFocus);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener(SAGE_PROPOSALS_CHANGED_EVENT, onChanged);
+      document.removeEventListener("visibilitychange", onFocus);
+    };
   }, [load, reviewKey]);
 
   useEffect(() => {

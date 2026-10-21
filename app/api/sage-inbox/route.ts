@@ -12,6 +12,12 @@ import {
   isLogDocumentProposal,
   isLogExpenseProposal,
 } from "@/lib/sage/proposal-kind";
+import {
+  finalizeExecutedProposal,
+  reviseProposal,
+  supersededExecutionError,
+  type ProposalRecord,
+} from "@/lib/sage/proposal-lifecycle";
 
 export const runtime = "nodejs";
 
@@ -25,6 +31,10 @@ type PlanProposal = {
   approved_at?: string;
   chosen_date?: string;
   status?: string;
+  id?: string;
+  superseded_by?: string | null;
+  supersedes?: string | null;
+  replacement_item_id?: string | null;
   waived_at?: string;
   unblocked?: boolean;
   executed?: boolean;
@@ -307,20 +317,30 @@ export async function POST(req: NextRequest) {
         );
       }
       const p = proposals[idx];
-      if (!p || (p.type !== "reply_coparent" && p.type !== "ask_clarification")) {
+      if (!p || !p.type || p.type === "note_only") {
         return NextResponse.json(
           { success: false, error: "Proposal is not revisable" },
           { status: 400 }
         );
       }
-      if (p.executed === true) {
+      const replaced = supersededExecutionError(proposals, idx, id);
+      if (replaced) {
+        return NextResponse.json({ success: false, ...replaced }, { status: 409 });
+      }
+      if (p.executed === true || p.approved === true || p.status === "waived_by_user") {
         return NextResponse.json(
           { success: false, error: "already sent, cannot revise" },
           { status: 400 }
         );
       }
-      proposals[idx] = { ...p, revised_text: revisedText };
-      const updatedPlan: SagePlan = { ...plan, proposals };
+      const revised = reviseProposal(proposals, idx, { revised_text: revisedText });
+      if (!revised) {
+        return NextResponse.json(
+          { success: false, error: "Proposal is not revisable" },
+          { status: 400 }
+        );
+      }
+      const updatedPlan: SagePlan = { ...plan, proposals: revised.proposals as PlanProposal[] };
       const { error: updateError } = await admin
         .from("sage_items")
         .update({ plan: updatedPlan })
@@ -353,6 +373,10 @@ export async function POST(req: NextRequest) {
           { success: false, error: "Proposal cannot be retried" },
           { status: 400 }
         );
+      }
+      const replaced = supersededExecutionError(proposals, idx, id);
+      if (replaced) {
+        return NextResponse.json({ success: false, ...replaced }, { status: 409 });
       }
       if (p.executed === true) {
         return NextResponse.json({ success: true, plan });
@@ -427,6 +451,10 @@ export async function POST(req: NextRequest) {
           { status: 400 }
         );
       }
+      const replaced = supersededExecutionError(proposals, idx, id);
+      if (replaced) {
+        return NextResponse.json({ success: false, ...replaced }, { status: 409 });
+      }
       if (isCalendarUpdateProposal(p.type) && !eventId) {
         return NextResponse.json(
           { success: false, error: "Invalid event_id" },
@@ -473,24 +501,22 @@ export async function POST(req: NextRequest) {
           { status: 400 }
         );
       }
-      const nowIso = new Date().toISOString();
       const resultDocumentId =
         documentId || documentAttachment?.document_id || "";
-      const nextProposal: PlanProposal = {
-        ...p,
-        approved: true,
-        approved_at: p.approved_at ?? nowIso,
-        executed: true,
-        executed_at: nowIso,
-        ...(isCalendarUpdateProposal(p.type) ? { result_event_id: eventId } : {}),
-        ...(isLogExpenseProposal(p.type) ? { result_expense_id: expenseId } : {}),
+      const finalized = finalizeExecutedProposal(p as ProposalRecord, {
+        ...(isCalendarUpdateProposal(p.type) && eventId ? { eventId } : {}),
+        ...(isLogExpenseProposal(p.type) && expenseId ? { expenseId } : {}),
         ...(isLogDocumentProposal(p.type) && resultDocumentId
-          ? { result_document_id: resultDocumentId, title: filedTitleFromBody || p.title }
+          ? { documentId: resultDocumentId, title: filedTitleFromBody || p.title }
           : {}),
-      };
-      delete nextProposal.save_error;
-      if (nextProposal.status === "save_failed") delete nextProposal.status;
-      proposals[idx] = nextProposal;
+      });
+      if (finalized.alreadyExecuted) {
+        return NextResponse.json(
+          { success: false, error: "already executed" },
+          { status: 400 }
+        );
+      }
+      proposals[idx] = finalized.proposal as PlanProposal;
       const updatedPlan: SagePlan = { ...plan, proposals };
       const { error: updateError } = await admin
         .from("sage_items")
@@ -537,6 +563,14 @@ export async function POST(req: NextRequest) {
         { success: false, error: "Invalid proposal_indexes" },
         { status: 400 }
       );
+    }
+
+    for (const idx of indexes) {
+      if (idx >= proposals.length) continue;
+      const replaced = supersededExecutionError(proposals, idx, id);
+      if (replaced) {
+        return NextResponse.json({ success: false, ...replaced }, { status: 409 });
+      }
     }
 
     const now = new Date().toISOString();

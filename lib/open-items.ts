@@ -9,6 +9,7 @@ import {
   proposalTypeLabel,
 } from "@/components/sage/proposal-helpers";
 import type { SageItem, SageProposal } from "@/components/sage/proposal-types";
+import { isSupersededProposal } from "@/lib/sage/proposal-lifecycle";
 
 /**
  * Open items are a read of sage_items.plan.proposals — the same JSON chat and
@@ -82,6 +83,13 @@ export function openItemsPreviewLimit(): number {
   return INITIAL_OPEN_LIMIT;
 }
 
+export const SAGE_PROPOSALS_CHANGED_EVENT = "sage-proposals-changed";
+
+export function notifySageProposalsChanged() {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new Event(SAGE_PROPOSALS_CHANGED_EVENT));
+}
+
 export function openItemHref(
   sessionId: string | null | undefined,
   sageItemId: string,
@@ -125,7 +133,7 @@ function itemClosed(item: OpenItemSource): boolean {
 
 /** A proposal that chat would no longer offer as unfinished work. */
 export function isClosedOpenItemProposal(proposal: SageProposal): boolean {
-  if (proposal.type === "note_only") return true;
+  if (proposal.type === "note_only" || isSupersededProposal(proposal)) return true;
   const status = proposalStatus(proposal);
   if (CLOSED_PROPOSAL_STATUS.has(status)) return true;
   if (isCalendarUpdateProposal(proposal.type)) return isCommitted(proposal);

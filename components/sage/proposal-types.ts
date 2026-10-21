@@ -13,6 +13,14 @@ export type SageProposal = {
   approved_at?: string;
   chosen_date?: string;
   status?: string;
+  /** Stable id so a revision can point at this exact version. */
+  id?: string;
+  /** Proposal id of the version that replaced this one. */
+  superseded_by?: string | null;
+  /** Proposal id of the version this one replaced. */
+  supersedes?: string | null;
+  /** sage_items id when the replacement was stored on another item. */
+  replacement_item_id?: string | null;
   waived_at?: string;
   unblocked?: boolean;
   executed?: boolean;

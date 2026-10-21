@@ -18,6 +18,8 @@ import {
 } from "@/components/sage/proposal-helpers";
 import { SageAgreeFormModal } from "@/components/sage/sage-agree-form-modal";
 import type { SageItem, SagePlan } from "@/components/sage/proposal-types";
+import { confirmProposalIsCurrent } from "@/lib/sage/proposal-actions";
+import { isReplacedProposalError } from "@/lib/sage/proposal-lifecycle";
 import { Button } from "@/components/ui/button";
 import { showErrorToast } from "@/components/ui/toaster";
 import type { OpenItemView } from "@/lib/open-items";
@@ -121,7 +123,7 @@ export function OpenItemReview({
     }
   }
 
-  function openForm(proposalIndex: number, queue: number[] = []) {
+  async function openForm(proposalIndex: number, queue: number[] = []) {
     if (!item) return;
     if (!caseId) {
       showErrorToast("Couldn't open the form — no case found.");
@@ -147,6 +149,12 @@ export function OpenItemReview({
           ? { document_id: storedDocumentId, filed_title: proposal.title ?? "" }
           : {}),
       });
+      return;
+    }
+    const replaced = await confirmProposalIsCurrent(item.id, proposalIndex);
+    if (replaced) {
+      showErrorToast(replaced);
+      onChanged();
       return;
     }
     const chosen =
@@ -202,6 +210,14 @@ export function OpenItemReview({
     });
     const data = (await res.json().catch(() => ({}))) as { plan?: SagePlan; error?: string };
     if (!res.ok || !data.plan) {
+      if (isReplacedProposalError(data.error)) {
+        showErrorToast(data.error || "This proposal was replaced. Use the current version.");
+        onChanged();
+        setCalendarAgree(null);
+        setExpenseAgree(null);
+        setDocumentAgree(null);
+        return;
+      }
       await recordSaveFailure(item.id, proposalIndex, ids, data.error);
       showErrorToast(data.error || "Saved, but Sage couldn't mark it done. Use Retry save.");
       onChanged();
@@ -238,7 +254,7 @@ export function OpenItemReview({
           if (otherIdxs.length > 0) void postAction("agree", otherIdxs);
           if (formIdxs.length > 0) {
             const [first, ...rest] = formIdxs;
-            openForm(first, rest);
+            void openForm(first, rest);
           }
         }}
         onDismiss={(indexes) => void postAction("dismiss", indexes)}

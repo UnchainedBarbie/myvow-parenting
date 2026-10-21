@@ -25,6 +25,9 @@ import {
 } from "@/components/sage/proposal-helpers";
 import { SageAgreeFormModal } from "@/components/sage/sage-agree-form-modal";
 import type { SageItem, SagePlan, SageProposal } from "@/components/sage/proposal-types";
+import { notifySageProposalsChanged } from "@/lib/open-items";
+import { confirmProposalIsCurrent } from "@/lib/sage/proposal-actions";
+import { isReplacedProposalError } from "@/lib/sage/proposal-lifecycle";
 import {
   createSageSession,
   notifySageSessionsChanged,
@@ -126,6 +129,11 @@ async function executeStoredProposal(
   });
   const data = (await res.json().catch(() => ({}))) as { plan?: SagePlan; error?: string };
   if (!res.ok || !data.plan) {
+    if (isReplacedProposalError(data.error)) {
+      showErrorToast(data.error || "This proposal was replaced. Use the current version.");
+      notifySageProposalsChanged();
+      return null;
+    }
     if (!String(data.error ?? "").toLowerCase().includes("already executed")) {
       await recordSaveFailure(item.id, proposalIndex, {
         ...ids,
@@ -135,6 +143,7 @@ async function executeStoredProposal(
     }
     return null;
   }
+  notifySageProposalsChanged();
   return data.plan;
 }
 
@@ -357,11 +366,16 @@ export function SageClient({
       });
       const data = (await res.json().catch(() => ({}))) as {
         success?: boolean;
+        error?: string;
         plan?: SagePlan;
         sage_message?: SageMessage;
         sage_messages?: SageMessage[];
       };
-      if (!res.ok) return;
+      if (!res.ok) {
+        if (data.error) showErrorToast(data.error);
+        if (isReplacedProposalError(data.error)) notifySageProposalsChanged();
+        return;
+      }
       setSelected((prev) => {
         const next = { ...prev };
         delete next[item.id];
@@ -382,6 +396,7 @@ export function SageClient({
           })),
         ]);
       }
+      notifySageProposalsChanged();
     } catch (e) {
       console.error("[SageClient] proposal action failed:", e);
     } finally {
@@ -462,7 +477,7 @@ export function SageClient({
     });
   }
 
-  function openFormAgree(
+  async function openFormAgree(
     item: SageItem,
     proposalIndex: number,
     queue: number[] = [],
@@ -491,6 +506,12 @@ export function SageClient({
         const [nextIdx, ...rest] = queue;
         openFormAgree({ ...item, plan }, nextIdx, rest, formCaseId);
       });
+      return;
+    }
+    const replaced = await confirmProposalIsCurrent(item.id, proposalIndex);
+    if (replaced) {
+      showErrorToast(replaced);
+      notifySageProposalsChanged();
       return;
     }
     if (isCalendarUpdateProposal(p?.type)) {
@@ -553,6 +574,7 @@ export function SageClient({
         ...(userMsg ? [userMsg] : []),
         ...(sageMsg ? [sageMsg] : []),
       ]);
+      notifySageProposalsChanged();
     } catch {
       showErrorToast("Something went wrong. Try again.");
     } finally {
@@ -641,9 +663,16 @@ export function SageClient({
     });
     const data = (await res.json().catch(() => ({}))) as {
       success?: boolean;
+      error?: string;
       plan?: SagePlan;
     };
     if (!res.ok) {
+      if (isReplacedProposalError(data.error)) {
+        showErrorToast(data.error || "This proposal was replaced. Use the current version.");
+        notifySageProposalsChanged();
+        setCalendarAgree(null);
+        return;
+      }
       await recordSaveFailure(item.id, proposalIndex, {
         event_id: eventId,
         save_error: "Calendar save didn't finish.",
@@ -652,6 +681,7 @@ export function SageClient({
       setCalendarAgree(null);
       return;
     }
+    notifySageProposalsChanged();
     const updatedItem = data.plan ? { ...item, plan: data.plan } : item;
     if (data.plan) patchItemPlan(item.id, data.plan);
 
@@ -679,9 +709,16 @@ export function SageClient({
     });
     const data = (await res.json().catch(() => ({}))) as {
       success?: boolean;
+      error?: string;
       plan?: SagePlan;
     };
     if (!res.ok) {
+      if (isReplacedProposalError(data.error)) {
+        showErrorToast(data.error || "This proposal was replaced. Use the current version.");
+        notifySageProposalsChanged();
+        setExpenseAgree(null);
+        return;
+      }
       await recordSaveFailure(item.id, proposalIndex, {
         expense_id: expenseId,
         save_error: "Expense save didn't finish.",
@@ -690,6 +727,7 @@ export function SageClient({
       setExpenseAgree(null);
       return;
     }
+    notifySageProposalsChanged();
     const updatedItem = data.plan ? { ...item, plan: data.plan } : item;
     if (data.plan) patchItemPlan(item.id, data.plan);
 
@@ -719,11 +757,18 @@ export function SageClient({
     });
     const data = (await res.json().catch(() => ({}))) as {
       success?: boolean;
+      error?: string;
       plan?: SagePlan;
       sage_message?: SageMessage;
       sage_messages?: SageMessage[];
     };
     if (!res.ok) {
+      if (isReplacedProposalError(data.error)) {
+        showErrorToast(data.error || "This proposal was replaced. Use the current version.");
+        notifySageProposalsChanged();
+        setDocumentAgree(null);
+        return;
+      }
       await recordSaveFailure(item.id, proposalIndex, {
         document_id: row.id,
         save_error: "Document save didn't finish.",
@@ -734,6 +779,7 @@ export function SageClient({
       setDocumentAgree(null);
       return;
     }
+    notifySageProposalsChanged();
     const updatedItem = data.plan ? { ...item, plan: data.plan } : item;
     if (data.plan) patchItemPlan(item.id, data.plan);
     const extras = data.sage_messages?.length
@@ -985,6 +1031,7 @@ export function SageClient({
           .catch(() => {});
       }
 
+      notifySageProposalsChanged();
       if (sessionId === null && sid) {
         router.replace(sageChatHref(sid));
       }
@@ -1306,6 +1353,7 @@ export function SageClient({
         onClose={() => setReviseTarget(null)}
         onSaved={() => {
           setReviseTarget(null);
+          notifySageProposalsChanged();
           void loadMessages(sessionId);
         }}
       />

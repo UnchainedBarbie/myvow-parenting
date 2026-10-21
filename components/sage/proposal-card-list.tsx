@@ -9,6 +9,7 @@ import {
   isLogExpenseProposal,
 } from "@/lib/sage/proposal-kind";
 import type { SageItem, SageProposal } from "./proposal-types";
+import { isSupersededProposal } from "@/lib/sage/proposal-lifecycle";
 import {
   canUndo,
   dateKey,
@@ -115,6 +116,7 @@ export function ProposalCardList({
       <ul className="space-y-2">
         {visible.map(({ p, idx }) => {
           const blocked = isBlocked(p);
+          const superseded = isSupersededProposal(p);
           const approved = p.approved === true;
           const waived = isWaived(p);
           const executed = p.executed === true;
@@ -135,12 +137,12 @@ export function ProposalCardList({
               id={historical ? undefined : `sage-proposal-${itemId}-${idx}`}
               className={cn(
                 "flex items-start gap-2 rounded-md px-2 py-1.5",
-                blocked && "bg-[#F7F5F0] opacity-80",
+                (blocked || superseded) && "bg-[#F7F5F0] opacity-80",
                 !historical && emphasisIndex === idx && "ring-2 ring-[#7C8B6E]"
               )}
             >
               {/* Left controls — hidden in item bulk-select mode */}
-              {suppressActions ? null : noteOnly || blocked ? (
+              {suppressActions ? null : noteOnly || blocked || superseded ? (
                 <span className="mt-0.5 w-12 shrink-0" aria-hidden />
               ) : showUndoOnly ? (
                 <button
@@ -231,6 +233,7 @@ export function ProposalCardList({
                     </span>
                   ) : null}
                   {!historical &&
+                    !superseded &&
                     typeof p.revised_text === "string" &&
                     p.revised_text.trim() &&
                     !approved &&
@@ -239,6 +242,11 @@ export function ProposalCardList({
                         revised
                       </span>
                     )}
+                  {superseded && (
+                    <span className="text-[10px] text-foreground-secondary">
+                      Superseded
+                    </span>
+                  )}
                   {waived && (
                     <span className="text-[10px] text-foreground-secondary">
                       dismissed
@@ -253,7 +261,7 @@ export function ProposalCardList({
                 <p
                   className={cn(
                     "text-[12px] leading-snug text-foreground",
-                    (blocked || waived) && "text-foreground-secondary"
+                    (blocked || waived || superseded) && "text-foreground-secondary"
                   )}
                 >
                   {historical ? (p.draft ?? "").trim() : displayDraft(p, showDate)}

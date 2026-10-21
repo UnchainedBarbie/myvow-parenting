@@ -11,6 +11,11 @@ import {
 import { matchingLedgerText } from "@/lib/sage/ledger-facts";
 import { redraftMessage } from "@/lib/sage/planner";
 import {
+  isInactiveProposal,
+  reviseProposal,
+  withProposalIds,
+} from "@/lib/sage/proposal-lifecycle";
+import {
   forcedTypeFromProposal,
   loadAndClassifyDocument,
   mergeClassifyIntoToolInput,
@@ -144,7 +149,7 @@ async function persistProcessedPlan(opts: {
       confidence: intent.confidence,
       tool_input,
       child_ids: processed.result.child_ids,
-      plan: processed.result.plan,
+      plan: withProposalIds(processed.result.plan),
       status: "pending",
     })
     .select(SAGE_ITEM_SELECT)
@@ -188,17 +193,7 @@ function revisionReply(
 }
 
 function isClosedProposal(raw: unknown): boolean {
-  if (!raw || typeof raw !== "object") return false;
-  const proposal = raw as {
-    executed?: boolean;
-    approved?: boolean;
-    approved_at?: unknown;
-    status?: string;
-  };
-  if (proposal.executed === true || proposal.approved === true) return true;
-  if (typeof proposal.approved_at === "string" && proposal.approved_at.trim()) return true;
-  const status = (proposal.status ?? "").toLowerCase();
-  return status === "waived_by_user" || status === "approved" || status === "executed";
+  return isInactiveProposal(raw);
 }
 
 function openCalendarProposal(raw: unknown): {
@@ -408,12 +403,12 @@ async function revisePendingDraft(opts: {
   const proposals = (Array.isArray(freshPlan?.proposals) ? freshPlan.proposals : opts.target.proposals).map(
     (p) => (p && typeof p === "object" ? { ...(p as Record<string, unknown>) } : {})
   );
-  proposals[opts.target.proposalIndex] = {
-    ...proposals[opts.target.proposalIndex],
+  const revised = reviseProposal(proposals, opts.target.proposalIndex, {
     revised_text: revisedText,
     ...(opts.clearDependsOn ? { depends_on: null, date_supplied: true } : {}),
-  };
-  const updatedPlan = { ...(freshPlan ?? opts.target.plan), proposals };
+  });
+  if (!revised) return null;
+  const updatedPlan = { ...(freshPlan ?? opts.target.plan), proposals: revised.proposals };
   const { data, error } = await opts.admin
     .from("sage_items")
     .update({ plan: updatedPlan })
@@ -464,9 +459,10 @@ async function reviseOpenCalendar(opts: {
         p && typeof p === "object" ? { ...(p as Record<string, unknown>) } : {}
       )
     : opts.target.proposals.map((p) => ({ ...p }));
-  let proposalIndex = proposals.findIndex((p) => p.type === "calendar_update" && p.executed !== true && p.approved !== true && p.status !== "waived_by_user");
-  if (proposalIndex < 0) proposalIndex = opts.target.proposalIndex;
-  const storedDate = proposals[proposalIndex]?.date;
+  const proposalIndex = opts.target.proposalIndex;
+  const kept = proposals[proposalIndex];
+  if (!kept || kept.type !== "calendar_update" || isClosedProposal(kept)) return null;
+  const storedDate = kept.date;
   const existingDate = typeof storedDate === "string" && storedDate.trim() ? storedDate.trim() : null;
   const iso = opts.resolvedIso ?? existingDate;
   const reconciled = await reconcileCalendarPlan(
@@ -497,16 +493,28 @@ async function reviseOpenCalendar(opts: {
   );
   const next = reconciled.proposals[0];
   if (!next?.draft?.trim()) return null;
-  const kept = proposals[proposalIndex] ?? {};
-  const originalDraft = typeof kept.draft === "string" ? kept.draft : opts.target.currentDraft;
-  proposals[proposalIndex] = {
-    ...kept,
-    ...next,
-    draft: originalDraft,
-    revised_text: next.draft,
-    ...(iso ? { date: iso, depends_on: null, date_supplied: true } : {}),
+  const changes: Record<string, unknown> = {
+    ...(next as unknown as Record<string, unknown>),
+    draft: next.draft,
   };
-  const updatedPlan = { ...freshPlan, proposals };
+  delete changes.id;
+  delete changes.revised_text;
+  delete changes.superseded_by;
+  delete changes.supersedes;
+  delete changes.replacement_item_id;
+  delete changes.status;
+  delete changes.executed;
+  delete changes.executed_at;
+  delete changes.approved;
+  delete changes.approved_at;
+  if (iso) {
+    changes.date = iso;
+    changes.depends_on = null;
+    changes.date_supplied = true;
+  }
+  const revised = reviseProposal(proposals, proposalIndex, changes);
+  if (!revised) return null;
+  const updatedPlan = { ...freshPlan, proposals: revised.proposals };
   const { data, error } = await opts.admin
     .from("sage_items")
     .update({ plan: updatedPlan })
@@ -1121,7 +1129,7 @@ export async function POST(request: NextRequest) {
                     : {}),
                 },
                 child_ids: result.child_ids,
-                plan: result.plan,
+                plan: withProposalIds(result.plan),
                 status: "pending",
               })
               .select(SAGE_ITEM_SELECT)

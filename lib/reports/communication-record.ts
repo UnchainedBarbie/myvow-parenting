@@ -70,16 +70,45 @@ export function compareCommunicationRows(
   return aMs - bMs || a.id.localeCompare(b.id);
 }
 
-/** The other parent, only when the sender is one of exactly two parents on the case. */
-export function recipientLabel(
-  senderUserId: string | null,
-  parents: { userId: string; label: string }[]
-): string {
-  if (!senderUserId) return "Not recorded";
-  if (!parents.some((parent) => parent.userId === senderUserId)) return "Not recorded";
-  const others = parents.filter((parent) => parent.userId !== senderUserId);
-  if (others.length !== 1) return "Not recorded";
-  return others[0].label.trim() || "Not recorded";
+/** Recipient text from fields stored on the message. Conversation membership is not a recipient. */
+export function recipientLabel(input: {
+  recipientEmail?: string | null;
+  recipientCc?: string | null;
+} | null): string {
+  const email = input?.recipientEmail?.trim() ?? "";
+  const cc = input?.recipientCc?.trim() ?? "";
+  if (!email && !cc) return "Not recorded";
+  if (email && cc) return `${email}\nCc: ${cc}`;
+  if (email) return email;
+  return `Cc: ${cc}`;
+}
+
+export type ExchangeExclusion = "draft" | "sage" | "self_forward" | "third_party";
+
+/** Whether a stored message is a parent-to-parent exchange. Does not read message wording. */
+export function classifyCommunication(input: {
+  status: string | null;
+  deliveryStatus: string | null;
+  deliveredAt: string | null;
+  senderIsParent: boolean;
+  selfForward: boolean;
+  sageOrJournal: boolean;
+}): { include: boolean; exclusion: ExchangeExclusion | null } {
+  if (input.sageOrJournal) return { include: false, exclusion: "sage" };
+  if (input.selfForward) return { include: false, exclusion: "self_forward" };
+  const passed = passedStatus(input.status, input.deliveryStatus, input.deliveredAt);
+  if (!passed) return { include: false, exclusion: "draft" };
+  if (!input.senderIsParent) return { include: false, exclusion: "third_party" };
+  return { include: true, exclusion: null };
+}
+
+function passedStatus(status: string | null, deliveryStatus: string | null, deliveredAt: string | null): boolean {
+  const current = (status ?? "").toLowerCase();
+  if (["draft", "pending", "pending_approval", "ai_processing", "failed"].includes(current)) return false;
+  const delivery = (deliveryStatus ?? "").toLowerCase();
+  if (delivery === "pending" || delivery === "buffered" || delivery === "blocked") return false;
+  if (delivery === "delivered" || deliveredAt != null) return true;
+  return current === "sent" || current === "received" || current === "delivered" || current === "approved";
 }
 
 export function storedDirection(value: string | null | undefined): CommunicationDirection {

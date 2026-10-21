@@ -163,15 +163,29 @@ function run() {
     ]
   );
 
-  assert.strictEqual(
-    completenessStatement({ included: 4, eligible: 4, notPassed: 0, filtered: false }),
-    "This is the complete record of messages in this case. 4 messages are included. 0 messages are excluded."
-  );
   assert.ok(
-    completenessStatement({ included: 18, eligible: 44, notPassed: 2, filtered: true }).includes(
-      "18 messages are included from 44 eligible parent-to-parent messages"
-    )
+    completenessStatement({
+      included: 4,
+      eligible: 4,
+      filteredOut: 0,
+      notExchanged: 0,
+      unresolvedRecipients: 0,
+      filtered: false,
+    }).includes("Every stored message that qualifies as a parent-to-parent exchange is included.")
   );
+  const filtered = completenessStatement({
+    included: 18,
+    eligible: 44,
+    filteredOut: 26,
+    notExchanged: 2,
+    unresolvedRecipients: 18,
+    filtered: true,
+  });
+  assert.ok(filtered.includes("18 eligible parent-to-parent messages are included."));
+  assert.ok(filtered.includes("26 eligible messages are outside the selected filters."));
+  assert.ok(filtered.includes("2 stored records are omitted"));
+  assert.ok(filtered.includes("no stored recipient"));
+  assert.ok(filtered.includes("not a complete certification"));
 
   const unfiltered = [ot, sibling].filter((item) => match(item, baseFilters));
   assert.strictEqual(unfiltered.length, 2);

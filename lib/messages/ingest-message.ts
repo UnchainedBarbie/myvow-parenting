@@ -10,6 +10,8 @@ export async function ingestMessage(input: {
   conversation_id: string;
   sender_id?: string | null;
   sender_external_email?: string | null;
+  recipient_email?: string | null;
+  recipient_cc?: string | null;
   is_emergency?: boolean;
   email_message_id?: string | null;
   has_attachments?: boolean;
@@ -18,6 +20,8 @@ export async function ingestMessage(input: {
     case_id,
     sender_id,
     sender_external_email,
+    recipient_email,
+    recipient_cc,
     original_content,
     conversation_id,
     is_emergency,
@@ -140,15 +144,30 @@ export async function ingestMessage(input: {
     email_message_id: emailMessageId,
     has_attachments: has_attachments ?? false,
   };
+  const recipientEmail = recipient_email?.trim() || "";
+  const recipientCc = recipient_cc?.trim() || "";
+  if (recipientEmail) insertRow.recipient_email = recipientEmail;
+  if (recipientCc) insertRow.recipient_cc = recipientCc;
   // Live messages has no deliver_at until 20260304153000 is applied.
   // Omitting a null is the same as writing null once the column exists.
   if (deliverAt) insertRow.deliver_at = deliverAt;
 
-  const { data: message, error: msgError } = await admin
+  let { data: message, error: msgError } = await admin
     .from("messages")
     .insert(insertRow)
     .select("id")
     .single();
+  if (
+    msgError &&
+    /recipient_email|recipient_cc/.test(msgError.message) &&
+    ("recipient_email" in insertRow || "recipient_cc" in insertRow)
+  ) {
+    delete insertRow.recipient_email;
+    delete insertRow.recipient_cc;
+    const retry = await admin.from("messages").insert(insertRow).select("id").single();
+    message = retry.data;
+    msgError = retry.error;
+  }
   if (msgError || !message) {
     throw new Error(msgError?.message ?? "Failed to insert message");
   }

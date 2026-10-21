@@ -8,6 +8,7 @@ import {
   deliveredStamp,
   planEvidence,
   receivedStamp,
+  classifyCommunication,
   recipientLabel,
   sentStamp,
   subjectText,
@@ -102,21 +103,67 @@ assert.deepEqual(
   ["MSG-001", "MSG-010"]
 );
 assert.equal(subjectText("  "), "No subject recorded");
-assert.equal(recipientLabel(null, [{ userId: "viewer", label: "Viewer" }]), "Not recorded");
+assert.equal(recipientLabel(null), "Not recorded");
+assert.equal(recipientLabel({ recipientEmail: "  " }), "Not recorded");
+assert.equal(recipientLabel({ recipientEmail: "blake@example.com" }), "blake@example.com");
 assert.equal(
-  recipientLabel("viewer", [
-    { userId: "viewer", label: "Viewer" },
-    { userId: "other", label: "Other Parent" },
-  ]),
-  "Other Parent"
+  recipientLabel({ recipientEmail: "blake@example.com", recipientCc: "alex@example.com" }),
+  "blake@example.com\nCc: alex@example.com"
 );
 assert.equal(
-  recipientLabel("viewer", [
-    { userId: "viewer", label: "Viewer" },
-    { userId: "one", label: "One" },
-    { userId: "two", label: "Two" },
-  ]),
-  "Not recorded"
+  classifyCommunication({
+    status: "delivered",
+    deliveryStatus: "delivered",
+    deliveredAt: "2026-03-01T18:00:00.000Z",
+    senderIsParent: true,
+    selfForward: false,
+    sageOrJournal: false,
+  }).include,
+  true
+);
+assert.equal(
+  classifyCommunication({
+    status: "delivered",
+    deliveryStatus: "delivered",
+    deliveredAt: "2026-03-01T18:00:00.000Z",
+    senderIsParent: true,
+    selfForward: true,
+    sageOrJournal: false,
+  }).exclusion,
+  "self_forward"
+);
+assert.equal(
+  classifyCommunication({
+    status: "delivered",
+    deliveryStatus: "delivered",
+    deliveredAt: "2026-03-01T18:00:00.000Z",
+    senderIsParent: false,
+    selfForward: false,
+    sageOrJournal: false,
+  }).exclusion,
+  "third_party"
+);
+assert.equal(
+  classifyCommunication({
+    status: "draft",
+    deliveryStatus: null,
+    deliveredAt: null,
+    senderIsParent: true,
+    selfForward: false,
+    sageOrJournal: false,
+  }).exclusion,
+  "draft"
+);
+assert.equal(
+  classifyCommunication({
+    status: "sent",
+    deliveryStatus: "delivered",
+    deliveredAt: "2026-03-01T18:00:00.000Z",
+    senderIsParent: true,
+    selfForward: false,
+    sageOrJournal: true,
+  }).exclusion,
+  "sage"
 );
 
 assert.equal(sentStamp(earlier, "America/Denver"), "");

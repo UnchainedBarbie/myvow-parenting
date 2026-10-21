@@ -191,8 +191,13 @@ export function prepareDocumentIndex(input: {
 
   const withheld =
     input.withheldCount === 0
-      ? "No documents were withheld."
+      ? "No documents were withheld for visibility."
       : `${input.withheldCount} document${input.withheldCount === 1 ? "" : "s"} ${input.withheldCount === 1 ? "is" : "are"} omitted because ${input.withheldCount === 1 ? "its visibility does" : "their visibility does"} not include the person who generated this report. ${input.withheldCount === 1 ? "Its title and file are" : "Their titles and files are"} not listed.`;
+  const unavailableFiles = sorted.filter((doc) => !doc.hasStoredFile).length;
+  const unavailable =
+    unavailableFiles === 0
+      ? "Every listed document has a stored file."
+      : `${unavailableFiles} listed document${unavailableFiles === 1 ? " has" : "s have"} no stored file, so ${unavailableFiles === 1 ? "that attachment is" : "those attachments are"} unavailable.`;
 
   return {
     includedCount: sorted.length,
@@ -208,7 +213,7 @@ export function prepareDocumentIndex(input: {
         { label: "Sections", value: sectionNames.length > 0 ? sectionNames.join("; ") : "None selected" },
       ],
       blocks,
-      completeness: `This report includes ${sorted.length} document${sorted.length === 1 ? "" : "s"} from the Documents tab that this person is allowed to access. ${withheld}`,
+      completeness: `This report lists ${sorted.length} document${sorted.length === 1 ? "" : "s"} from the Documents tab that this person is allowed to access. Each document record stays separate. ${withheld} ${unavailable}`,
       verificationExplanation:
         "This SHA-256 hash covers the included document identifiers, numbers, upload times, file names, categories, and visibility. It does not cover file bytes. It is not an independent certification. Unavailable files stay listed in Supporting evidence.",
     },

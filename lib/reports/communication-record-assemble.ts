@@ -1,5 +1,5 @@
 import { PDFArray, PDFDocument, PDFName } from "pdf-lib";
-import { appendSupportingFiles, supportingPlacement, uniqueSupportingFiles, type SupportingFile } from "@/lib/reports/embed-attachments";
+import { appendSupportingFiles, dedupeSupportingFiles, supportingPlacement, type SupportingFile } from "@/lib/reports/embed-attachments";
 import { planEvidence, type EvidenceRef } from "@/lib/reports/communication-record";
 import { evidenceWarnings } from "@/lib/reports/evidence-refs";
 import type { LedgerPdf, PdfLink } from "@/lib/reports/communication-record-pdf";
@@ -46,7 +46,7 @@ export async function assembleCommunicationPdf(
     return { pdf: ledger.buffer, bundle: [], warnings: [] };
   }
 
-  const unique = uniqueSupportingFiles(files);
+  const unique = dedupeSupportingFiles(files);
   const placements: { pages: number; embedded: boolean }[] = [];
   for (const file of unique) placements.push(await supportingPlacement(file));
   const described = () =>

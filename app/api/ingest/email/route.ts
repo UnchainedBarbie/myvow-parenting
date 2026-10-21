@@ -30,6 +30,18 @@ const ALLOWED_ATTACHMENT_TYPES = [
 ];
 
 
+function mailboxList(value: string | null | undefined, ingestAddress: string | null): string | null {
+  if (!value) return null;
+  const ingest = ingestAddress?.trim().toLowerCase() ?? "";
+  const found = value
+    .split(",")
+    .map((part) => extractEmailFromAddress(part))
+    .filter((email): email is string => Boolean(email))
+    .filter((email) => email !== ingest);
+  const unique = [...new Set(found)];
+  return unique.length > 0 ? unique.join(", ") : null;
+}
+
 function extractEmailFromAddress(value: string | undefined | null): string | null {
   if (!value || typeof value !== "string") return null;
   const trimmed = value.trim();
@@ -52,6 +64,7 @@ type PostmarkHeader = {
 
 type PostmarkPayload = {
   To?: string | null;
+  Cc?: string | null;
   From?: string | null;
   Subject?: string | null;
   TextBody?: string | null;
@@ -653,11 +666,16 @@ export async function POST(req: NextRequest) {
       }
 
       try {
+        const headerTo = headerValue(body.Headers, "To") ?? body.To;
+        const headerCc = headerValue(body.Headers, "Cc") ?? body.Cc;
         const ingested = await ingestMessage({
           case_id: caseId,
           original_content: extracted.bodyText,
           conversation_id: conversationId,
+          sender_id: decision.userId,
           sender_external_email: fromEmail,
+          recipient_email: mailboxList(headerTo, toAddress),
+          recipient_cc: mailboxList(headerCc, toAddress),
           email_message_id: extracted.messageId,
           has_attachments: createdDocuments.length > 0,
         });

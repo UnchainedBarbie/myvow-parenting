@@ -162,6 +162,16 @@ export async function POST(request: NextRequest) {
       const convSubject = (conv as { subject?: string } | null)?.subject ?? "";
       const emailThreadId = (conv as { email_thread_id?: string | null } | null)?.email_thread_id ?? null;
 
+      if (coparentEmail) {
+        const recorded = await admin
+          .from("messages")
+          .update({ recipient_email: coparentEmail })
+          .eq("id", (message as { id: string }).id);
+        if (recorded.error && !/recipient_email/.test(recorded.error.message)) {
+          console.error("[messages/approve] recipient", recorded.error.message);
+        }
+      }
+
       if (coparentEmail && ingestEmail) {
         const token = process.env.POSTMARK_SERVER_TOKEN;
         if (token) {

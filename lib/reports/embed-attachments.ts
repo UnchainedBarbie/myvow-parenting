@@ -1,3 +1,4 @@
+import { createHash } from "crypto";
 import { PDFDocument, PDFName, StandardFonts, rgb } from "pdf-lib";
 import sharp from "sharp";
 
@@ -8,6 +9,8 @@ export type SupportingFile = {
   records: string[];
   /** Stable document ID when one is stored, such as DOC-018. */
   documentLabel?: string | null;
+  /** Every document ID that shares this file, including duplicates with the same bytes. */
+  documentLabels?: string[];
   fileName: string;
   mimeType: string | null;
   bytes: Buffer | null;
@@ -36,12 +39,20 @@ export function uniqueSupportingFiles(files: SupportingFile[]): SupportingFile[]
   for (const file of files) {
     const existing = grouped.get(file.key);
     if (!existing) {
-      grouped.set(file.key, { ...file, records: [...file.records], documentLabel: file.documentLabel ?? null });
+      grouped.set(file.key, {
+        ...file,
+        records: [...file.records],
+        documentLabel: file.documentLabel ?? null,
+        documentLabels: [...(file.documentLabels ?? [])],
+      });
       order.push(file.key);
       continue;
     }
     for (const record of file.records) {
       if (!existing.records.includes(record)) existing.records.push(record);
+    }
+    for (const label of file.documentLabels ?? []) {
+      if (label && !existing.documentLabels?.includes(label)) existing.documentLabels?.push(label);
     }
     if (!existing.documentLabel && file.documentLabel) existing.documentLabel = file.documentLabel;
     if (!existing.bytes && file.bytes) {
@@ -52,6 +63,42 @@ export function uniqueSupportingFiles(files: SupportingFile[]): SupportingFile[]
     }
   }
   return order.map((key) => grouped.get(key)!);
+}
+
+function rememberLabel(file: SupportingFile, label: string | null | undefined) {
+  const text = label?.trim();
+  if (!text) return;
+  if (!file.documentLabels) file.documentLabels = [];
+  if (!file.documentLabels.includes(text)) file.documentLabels.push(text);
+  file.documentLabel = file.documentLabels.join(", ");
+}
+
+/** One PDF copy per stored file, then one copy per identical byte sequence. */
+export function dedupeSupportingFiles(files: SupportingFile[]): SupportingFile[] {
+  const byIdentity = uniqueSupportingFiles(files);
+  const byHash = new Map<string, SupportingFile>();
+  const order: SupportingFile[] = [];
+  for (const file of byIdentity) {
+    rememberLabel(file, file.documentLabel);
+    for (const label of file.documentLabels ?? []) rememberLabel(file, label);
+    if (!file.bytes || file.bytes.length === 0) {
+      order.push(file);
+      continue;
+    }
+    const hash = createHash("sha256").update(file.bytes).digest("hex");
+    const existing = byHash.get(hash);
+    if (!existing) {
+      byHash.set(hash, file);
+      order.push(file);
+      continue;
+    }
+    for (const record of file.records) {
+      if (!existing.records.includes(record)) existing.records.push(record);
+    }
+    rememberLabel(existing, file.documentLabel);
+    for (const label of file.documentLabels ?? []) rememberLabel(existing, label);
+  }
+  return order;
 }
 
 function looksLikePdf(bytes: Buffer, mimeType: string | null, fileName: string): boolean {
@@ -183,7 +230,8 @@ function wrapText(text: string, maxChars: number): string[] {
 }
 
 export function supportingHeading(file: SupportingFile): string {
-  const id = file.documentLabel?.trim() || "Document number not assigned";
+  const labels = (file.documentLabels ?? []).map((label) => label.trim()).filter(Boolean);
+  const id = labels.length > 0 ? labels.join(", ") : file.documentLabel?.trim() || "Document number not assigned";
   const name = file.fileName.trim() || "Untitled file";
   const supports = file.records.filter(Boolean).join(", ") || "Unnumbered record";
   return `${id} | ${name} | Supports ${supports}`;
@@ -270,7 +318,7 @@ export async function appendSupportingFiles(
   files: SupportingFile[],
   bundleFolder: string
 ): Promise<{ pdf: Buffer; bundle: { name: string; buffer: Buffer }[] }> {
-  const unique = uniqueSupportingFiles(files);
+  const unique = dedupeSupportingFiles(files);
   if (unique.length === 0) return { pdf: reportPdf, bundle: [] };
 
   const pdf = await PDFDocument.load(reportPdf);

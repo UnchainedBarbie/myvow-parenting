@@ -1,6 +1,7 @@
 import { PDFArray, PDFDocument, PDFName } from "pdf-lib";
 import {
   appendSupportingFiles,
+  dedupeSupportingFiles,
   supportingPlacement,
   uniqueSupportingFiles,
   type SupportingFile,
@@ -165,7 +166,7 @@ export async function assembleLabeledPdf(input: {
     const ledger = input.build(null);
     return { pdf: ledger.buffer, bundle: [], warnings: [] };
   }
-  const unique = uniqueSupportingFiles(input.files);
+  const unique = dedupeSupportingFiles(input.files);
   const placements: { pages: number; embedded: boolean }[] = [];
   for (const file of unique) placements.push(await supportingPlacement(file));
   let ledger = input.build(null);

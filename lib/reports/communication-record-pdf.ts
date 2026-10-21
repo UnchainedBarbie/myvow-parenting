@@ -291,6 +291,11 @@ function paintRow(
   );
   cursor.y += sliceHeight;
   if (rest.some((lines) => lines.length > 0)) {
+    for (const index of [0, 1, 2]) {
+      if (rest[index]?.length === 0 && cellLines[index]?.[0]) {
+        rest[index] = [{ text: cellLines[index][0].text, targetPage: null }];
+      }
+    }
     newPage(cursor);
     drawHeader();
     const nextHeight = Math.max(...rest.map((lines) => Math.max(lines.length, 1))) * 3.4 + 2.4;
@@ -402,7 +407,7 @@ export function buildChronologicalPdf(
   );
   cursor.y += 3;
 
-  const widths = [22, 36, 28, 28, 28, 69.4, 44];
+  const widths = [20, 32, 42, 42, 28, 47.4, 44];
   const headers = ["Message ID", "Date & Time", "From", "To", "Subject", "Message", "Supporting evidence"];
 
   if (model.rows.length === 0) {
@@ -428,7 +433,7 @@ export function buildChronologicalPdf(
 
 function transcriptMessage(cursor: Cursor, row: CommunicationRow, evidence: Map<string, EvidenceRef[]> | null) {
   const who = row.transcriptWho || directionLabel(row.direction);
-  ensure(cursor, 16);
+  ensure(cursor, 32);
   cursor.doc.setFont("times", "bold");
   cursor.doc.setFontSize(11);
   cursor.doc.setTextColor(17, 17, 17);
@@ -450,6 +455,14 @@ function transcriptMessage(cursor: Cursor, row: CommunicationRow, evidence: Map<
   writeLines(
     cursor,
     plainLines(cursor.doc, `Message time: ${row.recordedLabel}`, cursor.geom.contentW),
+    cursor.geom.margin,
+    8,
+    "normal",
+    [51, 51, 51]
+  );
+  writeLines(
+    cursor,
+    plainLines(cursor.doc, `To: ${row.recipient}`, cursor.geom.contentW),
     cursor.geom.margin,
     8,
     "normal",

@@ -28,6 +28,9 @@ export type MessageRow = {
   delivery_status: string | null;
   delivered_at: string | null;
   has_attachments: boolean | null;
+  email_message_id?: string | null;
+  recipient_email?: string | null;
+  recipient_cc?: string | null;
 };
 
 export type ConversationRow = {

@@ -1,8 +1,8 @@
 import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import { renderRecordBody } from "@/lib/record/message-text";
-import { completenessStatement } from "@/lib/record/record-filters";
 import { loadCommunicationRecord } from "@/lib/record/load-communication-record";
+import { recipientLabel } from "@/lib/reports/communication-record";
 import {
   deliveryEvidence,
   documentLabel,
@@ -78,13 +78,10 @@ async function renderRecord(
     filterLines,
     shown,
     eligibleCount,
-    notPassed,
     threads,
     ungrouped,
     attachments,
   } = loaded.view;
-  const filtered = filterLines.length > 0;
-
   return (
     <div className="record">
       <style>{recordCss(caseLabel)}</style>
@@ -131,12 +128,7 @@ async function renderRecord(
                   generation time above.
                 </p>
                 <p className="order">
-                  {completenessStatement({
-                    included: shown.length,
-                    eligible: eligibleCount,
-                    notPassed,
-                    filtered,
-                  })}
+                  {loaded.model.completeness}
                 </p>
               </dd>
             </div>
@@ -221,6 +213,13 @@ function renderMessages(
                 <p className="mid">Message {entry.number}</p>
               </div>
               <p className="when">Message time: {formatWhen(entry.message.created_at, timezone)}</p>
+              <p className="when">
+                To:{" "}
+                {recipientLabel({
+                  recipientEmail: entry.message.recipient_email,
+                  recipientCc: entry.message.recipient_cc,
+                })}
+              </p>
               {delivery.map((line) => (
                 <p key={line} className="delivery">
                   {line}

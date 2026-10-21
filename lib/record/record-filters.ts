@@ -309,28 +309,34 @@ export function filtersRestrict(lines: AppliedFilterLine[]): boolean {
 export function completenessStatement(options: {
   included: number;
   eligible: number;
-  notPassed: number;
+  filteredOut: number;
+  notExchanged: number;
+  unresolvedRecipients: number;
   filtered: boolean;
 }): string {
-  if (!options.filtered) {
-    const includedText = `${options.included} message${options.included === 1 ? " is" : "s are"} included.`;
-    const excludedText = `${options.notPassed} message${options.notPassed === 1 ? " is" : "s are"} excluded`;
-    if (options.notPassed === 0) {
-      return `This is the complete record of messages in this case. ${includedText} ${excludedText}.`;
-    }
-    return `This is a filtered view, not the complete record of the case. ${includedText} ${excludedText} because ${options.notPassed === 1 ? "it" : "they"} did not pass between the parents. Excluded messages retain their numbers.`;
+  const includedText = `${options.included} eligible parent-to-parent message${options.included === 1 ? " is" : "s are"} included.`;
+  const parts = [includedText];
+  if (options.filtered && options.filteredOut > 0) {
+    parts.push(
+      `${options.filteredOut} eligible message${options.filteredOut === 1 ? " is" : "s are"} outside the selected filters.`
+    );
   }
-
-  const includedWord = options.included === 1 ? "message is" : "messages are";
-  const eligibleWord = options.eligible === 1 ? "message" : "messages";
-  let text = `This is a filtered communication record. ${options.included} ${includedWord} included from ${options.eligible} eligible parent-to-parent ${eligibleWord} in this case.`;
-  if (options.notPassed > 0) {
-    const extra =
-      options.notPassed === 1
-        ? "1 additional message is omitted because it is not a communication that passed between the parents."
-        : `${options.notPassed} additional messages are omitted because they are not communications that passed between the parents.`;
-    text += ` ${extra} That exclusion is separate from the filters above.`;
+  if (options.notExchanged > 0) {
+    parts.push(
+      `${options.notExchanged} stored record${options.notExchanged === 1 ? " is" : "s are"} omitted because ${options.notExchanged === 1 ? "it is" : "they are"} a draft, a Sage session, a self-forward, or third-party correspondence rather than a parent-to-parent exchange.`
+    );
   }
-  text += " Messages left out by these filters remain in the case record.";
-  return text;
+  if (options.unresolvedRecipients > 0) {
+    parts.push(
+      `${options.unresolvedRecipients} included message${options.unresolvedRecipients === 1 ? " has" : "s have"} no stored recipient, so this export does not confirm who received ${options.unresolvedRecipients === 1 ? "it" : "them"}.`
+    );
+  }
+  const settled =
+    options.notExchanged === 0 && options.unresolvedRecipients === 0 && (!options.filtered || options.filteredOut === 0);
+  if (settled) {
+    parts.push("Every stored message that qualifies as a parent-to-parent exchange is included.");
+  } else {
+    parts.push("This export is not a complete certification of every message stored on the case.");
+  }
+  return parts.join(" ");
 }

@@ -3,8 +3,10 @@ import { PDFDocument, StandardFonts } from "pdf-lib";
 import { documentAuthorizedForViewer, documentCategoryLabel, documentVisibilityLabel } from "@/lib/documents-tab";
 import { buildDocumentIndexCsv, prepareDocumentIndex } from "@/lib/reports/document-index";
 import { buildDocumentIndexPdf } from "@/lib/reports/document-index-pdf";
+import { labelsForSupportingFiles } from "@/lib/reports/evidence-refs";
 import {
   appendSupportingFiles,
+  dedupeSupportingFiles,
   fitContain,
   uniqueSupportingFiles,
   type SupportingFile,
@@ -167,6 +169,55 @@ const shared = uniqueSupportingFiles([
 ]);
 assert.equal(shared.length, 1);
 assert.deepEqual(shared[0].records, ["EXP-001", "DOC-012", "EXP-004"]);
+
+const sameBytes = Buffer.from("identical-file-bytes");
+const deduped = dedupeSupportingFiles([
+  {
+    key: "doc-34",
+    records: ["DOC-034", "MSG-014"],
+    documentLabel: "DOC-034",
+    fileName: "availability.pdf",
+    mimeType: "application/pdf",
+    bytes: sameBytes,
+    unavailableReason: null,
+  },
+  {
+    key: "doc-33",
+    records: ["DOC-033", "MSG-015"],
+    documentLabel: "DOC-033",
+    fileName: "availability.pdf",
+    mimeType: "application/pdf",
+    bytes: Buffer.from("identical-file-bytes"),
+    unavailableReason: null,
+  },
+  {
+    key: "doc-10",
+    records: ["DOC-010"],
+    documentLabel: "DOC-010",
+    fileName: "availability.pdf",
+    mimeType: "application/pdf",
+    bytes: Buffer.from("different-file-bytes"),
+    unavailableReason: null,
+  },
+]);
+assert.equal(deduped.length, 2);
+assert.deepEqual(deduped[0].records, ["DOC-034", "MSG-014", "DOC-033", "MSG-015"]);
+assert.match(deduped[0].documentLabel ?? "", /DOC-034/);
+assert.match(deduped[0].documentLabel ?? "", /DOC-033/);
+assert.deepEqual(deduped[1].records, ["DOC-010"]);
+const sharedPages = labelsForSupportingFiles(
+  1,
+  deduped.map((file) => ({
+    records: file.records,
+    pages: 2,
+    documentLabel: file.documentLabel ?? null,
+    unavailable: false,
+    embedded: true,
+  }))
+);
+assert.equal(sharedPages.get("MSG-014"), sharedPages.get("MSG-015"));
+assert.match(sharedPages.get("DOC-034") ?? "", /pp\. 2/);
+assert.notEqual(sharedPages.get("DOC-034"), sharedPages.get("DOC-010"));
 
 async function main() {
 const sourcePdf = await PDFDocument.create();

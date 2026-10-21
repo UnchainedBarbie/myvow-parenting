@@ -20,7 +20,6 @@ import {
   messageTime,
   parentIdentities,
   partyLabel,
-  passedBetweenParents,
   safeZone,
   senderCell,
   senderIdentity,
@@ -35,6 +34,7 @@ import {
 } from "@/lib/record/record-present";
 import { documentAuthorizedForViewer } from "@/lib/documents-tab";
 import {
+  classifyCommunication,
   compareCommunicationRows,
   recipientLabel,
   storedDirection,
@@ -104,7 +104,7 @@ export async function loadCommunicationRecord(
     admin
       .from("messages")
       .select(
-        "id, created_at, direction, sender_id, sender_external_email, original_content, conversation_id, current_status, delivery_status, delivered_at, has_attachments"
+        "id, created_at, direction, sender_id, sender_external_email, original_content, conversation_id, current_status, delivery_status, delivered_at, has_attachments, email_message_id"
       )
       .eq("case_id", caseId)
       .order("created_at", { ascending: true })
@@ -153,7 +153,78 @@ export async function loadCommunicationRecord(
     message,
     number: messageNumber(index),
   }));
-  const eligible = numbered.filter((entry) => passedBetweenParents(entry.message));
+  const emailIds = [
+    ...new Set(
+      allMessages
+        .map((message) => message.email_message_id?.trim())
+        .filter((id): id is string => Boolean(id))
+    ),
+  ];
+  const selfForwardIds = new Set<string>();
+  if (emailIds.length > 0) {
+    const intake = await admin
+      .from("email_intake")
+      .select("message_id, branch")
+      .eq("case_id", caseId)
+      .in("message_id", emailIds);
+    if (intake.error) {
+      console.error("[record] email_intake", intake.error);
+    } else {
+      for (const row of intake.data ?? []) {
+        const messageId = (row as { message_id?: string | null }).message_id?.trim();
+        const branch = (row as { branch?: string | null }).branch;
+        if (messageId && branch === "self") selfForwardIds.add(messageId);
+      }
+    }
+  }
+  const recipientById = new Map<string, { email: string | null; cc: string | null }>();
+  const recipientResult = await admin
+    .from("messages")
+    .select("id, recipient_email, recipient_cc")
+    .eq("case_id", caseId);
+  if (recipientResult.error) {
+    console.error("[record] recipient columns", recipientResult.error);
+  } else {
+    for (const row of recipientResult.data ?? []) {
+      const id = (row as { id?: string }).id;
+      if (!id) continue;
+      recipientById.set(id, {
+        email: (row as { recipient_email?: string | null }).recipient_email ?? null,
+        cc: (row as { recipient_cc?: string | null }).recipient_cc ?? null,
+      });
+    }
+  }
+  for (const message of allMessages) {
+    const stored = recipientById.get(message.id);
+    if (!stored) continue;
+    message.recipient_email = stored.email;
+    message.recipient_cc = stored.cc;
+  }
+
+  let notExchanged = 0;
+  const parentIds = parentIdentities(members, usersById, userId);
+  const eligible = numbered.filter((entry) => {
+    const senderIsParent =
+      resolveParentSender(
+        { senderId: entry.message.sender_id, senderExternalEmail: entry.message.sender_external_email },
+        parentIds
+      ) !== null;
+    const emailId = entry.message.email_message_id?.trim() ?? "";
+    const decision = classifyCommunication({
+      status: entry.message.current_status,
+      deliveryStatus: entry.message.delivery_status,
+      deliveredAt: entry.message.delivered_at,
+      senderIsParent,
+      selfForward: emailId !== "" && selfForwardIds.has(emailId),
+      sageOrJournal: false,
+    });
+    if (!decision.include) notExchanged += 1;
+    return decision.include;
+  });
+  const unresolvedRecipients = eligible.filter((entry) => {
+    const stored = recipientById.get(entry.message.id);
+    return !stored?.email?.trim() && !stored?.cc?.trim();
+  }).length;
 
   const { data: conversationRows, error: conversationError } = await admin
     .from("conversations")
@@ -346,7 +417,9 @@ export async function loadCommunicationRecord(
     completeness: completenessStatement({
       included: shown.length,
       eligible: eligible.length,
-      notPassed: allMessages.length - eligible.length,
+      filteredOut: eligible.length - shown.length,
+      notExchanged,
+      unresolvedRecipients,
       filtered: filterLines.length > 0,
     }),
     categoryNotice:
@@ -405,19 +478,10 @@ function toExportRow(
     ? context.conversationsById.get(message.conversation_id)
     : undefined;
   const body = renderRecordBody(message.original_content);
-  const senderId = resolveParentSender(
-    { senderId: message.sender_id, senderExternalEmail: message.sender_external_email },
-    context.parents
-  );
-  const parentLabels = new Map<string, string>();
-  for (const member of context.members) {
-    if (!member.user_id || parentLabels.has(member.user_id)) continue;
-    parentLabels.set(member.user_id, partyLabel(member, context.usersById.get(member.user_id)));
-  }
-  const recipient = recipientLabel(
-    senderId,
-    [...parentLabels.entries()].map(([userId, label]) => ({ userId, label }))
-  );
+  const recipient = recipientLabel({
+    recipientEmail: message.recipient_email,
+    recipientCc: message.recipient_cc,
+  });
   const categories = message.conversation_id
     ? [...(context.categoriesByConversation.get(message.conversation_id) ?? [])]
     : [];

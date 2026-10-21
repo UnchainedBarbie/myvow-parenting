@@ -34,6 +34,8 @@ export function OpenItemsSection() {
   const [expanded, setExpanded] = useState(false);
   const [reviewKey, setReviewKey] = useState<string | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [confirmDismiss, setConfirmDismiss] = useState(false);
 
   const load = useCallback(async (opts?: { silent?: boolean }) => {
     if (!opts?.silent) setLoading(true);
@@ -56,6 +58,7 @@ export function OpenItemsSection() {
       setChildren(Array.isArray(data.children) ? data.children : []);
       const nextItems = Array.isArray(data.items) ? data.items : [];
       setItems(nextItems);
+      setSelected((current) => current.filter((key) => nextItems.some((row) => row.key === key)));
       setReviewKey((current) =>
         current && nextItems.some((row) => row.key === current) ? current : null
       );
@@ -97,6 +100,7 @@ export function OpenItemsSection() {
 
   const visible = expanded ? items : items.slice(0, openItemsPreviewLimit());
   const hiddenCount = Math.max(0, items.length - visible.length);
+  const selectedEntries = items.filter((entry) => selected.includes(entry.key));
 
   async function retrySave(entry: OpenItemView) {
     if (entry.proposalIndex == null || !entry.retry) return;
@@ -128,6 +132,62 @@ export function OpenItemsSection() {
     }
   }
 
+  function toggleSelected(key: string) {
+    setConfirmDismiss(false);
+    setSelected((current) =>
+      current.includes(key) ? current.filter((value) => value !== key) : [...current, key]
+    );
+  }
+
+  async function dismissEntries(entries: OpenItemView[]) {
+    if (entries.length === 0) return;
+    setBusyKey(entries.length === 1 ? entries[0].key : "bulk");
+    try {
+      const res = await fetch("/api/open-items", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+        body: JSON.stringify({
+          action: "dismiss",
+          items: entries.map((entry) => ({
+            id: entry.sageItemId,
+            proposalIndex: entry.proposalIndex,
+          })),
+        }),
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        dismissed?: { id: string; proposalIndex: number | null }[];
+        errors?: { id: string; proposalIndex: number | null; error: string }[];
+      };
+      if (!res.ok) {
+        showErrorToast(data.error || "Couldn't dismiss that item.");
+        return;
+      }
+      const failed = new Set(
+        (data.errors ?? []).map((entry) => `${entry.id}:${entry.proposalIndex ?? "item"}`)
+      );
+      const dropped = new Set(
+        entries
+          .filter((entry) => !failed.has(`${entry.sageItemId}:${entry.proposalIndex ?? "item"}`))
+          .map((entry) => entry.key)
+      );
+      if ((data.errors ?? []).length > 0) {
+        showErrorToast(data.errors?.[0]?.error || "Couldn't dismiss every selected item.");
+      }
+      setItems((current) => current.filter((entry) => !dropped.has(entry.key)));
+      setCount((current) => Math.max(0, current - dropped.size));
+      setSelected((current) => current.filter((key) => !dropped.has(key)));
+      setReviewKey((current) => (current && dropped.has(current) ? null : current));
+      setConfirmDismiss(false);
+      await load({ silent: true });
+    } catch {
+      showErrorToast("Couldn't dismiss that item.");
+    } finally {
+      setBusyKey(null);
+    }
+  }
+
   function openEntry(entry: OpenItemView) {
     if (entry.retry && entry.proposalIndex != null) {
       void retrySave(entry);
@@ -151,6 +211,18 @@ export function OpenItemsSection() {
             </span>
           )}
         </div>
+        {!loading && !error && selectedEntries.length > 0 && (
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-7 rounded-full px-3 text-[11px]"
+            disabled={busyKey === "bulk"}
+            onClick={() => setConfirmDismiss(true)}
+          >
+            Dismiss selected
+          </Button>
+        )}
       </CardHeader>
       <CardContent className="space-y-2 px-4 pb-4">
         {loading ? (
@@ -174,16 +246,59 @@ export function OpenItemsSection() {
           <p className="text-sm text-foreground-secondary">You&apos;re all caught up.</p>
         ) : (
           <>
+            {confirmDismiss && selectedEntries.length > 0 && (
+              <div
+                role="dialog"
+                aria-labelledby="dismiss-selected-title"
+                className="space-y-2 rounded-lg border border-[#E8E4DC] bg-[#F7F5F0] px-3 py-2"
+              >
+                <p id="dismiss-selected-title" className="text-sm text-foreground">
+                  Dismiss {selectedEntries.length} open{" "}
+                  {selectedEntries.length === 1 ? "item" : "items"}? This means no further action
+                  is needed. Nothing is sent, approved, or deleted.
+                </p>
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="h-7 rounded-full bg-[#7B9E87] px-3 text-[11px] text-white hover:bg-[#6A8A78]"
+                    disabled={busyKey === "bulk"}
+                    onClick={() => void dismissEntries(selectedEntries)}
+                  >
+                    {busyKey === "bulk" ? "Dismissing…" : `Dismiss ${selectedEntries.length}`}
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-7 rounded-full px-3 text-[11px]"
+                    disabled={busyKey === "bulk"}
+                    onClick={() => setConfirmDismiss(false)}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            )}
             <ul className="space-y-2">
               {visible.map((entry) => {
                 const reviewing = reviewKey === entry.key;
+                const rowBusy = busyKey === entry.key || busyKey === "bulk";
                 return (
                   <li
                     key={entry.key}
                     className="rounded-lg border border-[#E8E4DC] bg-white px-3 py-2"
                   >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0 space-y-1">
+                    <div className="flex items-start gap-3">
+                      <input
+                        type="checkbox"
+                        className="mt-1 h-4 w-4 shrink-0 rounded border-[#C5D0C0] accent-[#7B9E87]"
+                        checked={selected.includes(entry.key)}
+                        disabled={rowBusy}
+                        onChange={() => toggleSelected(entry.key)}
+                        aria-label={`Select ${entry.title}`}
+                      />
+                      <div className="min-w-0 flex-1 space-y-1">
                         <p className="text-sm font-medium text-foreground">{entry.title}</p>
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="inline-flex items-center rounded-full bg-[#EEF2E9] px-2 py-0.5 text-[10px] font-medium text-[#5B7A52]">
@@ -197,18 +312,31 @@ export function OpenItemsSection() {
                           {entry.explanation}
                         </p>
                       </div>
-                      <Button
-                        type="button"
-                        size="sm"
-                        className={cn(
-                          "h-7 shrink-0 rounded-full px-3 text-[11px]",
-                          "bg-[#7B9E87] text-white hover:bg-[#6A8A78]"
-                        )}
-                        disabled={busyKey === entry.key}
-                        onClick={() => openEntry(entry)}
-                      >
-                        {busyKey === entry.key ? "Saving…" : entry.actionLabel}
-                      </Button>
+                      <div className="flex shrink-0 flex-col items-stretch gap-1">
+                        <Button
+                          type="button"
+                          size="sm"
+                          className={cn(
+                            "h-7 rounded-full px-3 text-[11px]",
+                            "bg-[#7B9E87] text-white hover:bg-[#6A8A78]"
+                          )}
+                          disabled={rowBusy}
+                          onClick={() => openEntry(entry)}
+                        >
+                          {busyKey === entry.key ? "Saving…" : entry.actionLabel}
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          className="h-7 rounded-full px-3 text-[11px]"
+                          disabled={rowBusy}
+                          title="No further action needed"
+                          onClick={() => void dismissEntries([entry])}
+                        >
+                          {busyKey === entry.key ? "Dismissing…" : "Dismiss"}
+                        </Button>
+                      </div>
                     </div>
                     {reviewing && (
                       <OpenItemReview

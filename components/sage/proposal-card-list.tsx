@@ -130,6 +130,7 @@ export function ProposalCardList({
           const formPending =
             isFormExecuteProposal(p.type) && !done && !waived && !blocked;
           const showUndoOnly = canUndo(p) && !formPending;
+          const sendable = p.type === "reply_coparent" && Boolean((p.recipient_email ?? "").trim());
 
           return (
             <li
@@ -166,18 +167,20 @@ export function ProposalCardList({
                 <div className="flex shrink-0 items-start gap-1">
                   <button
                     type="button"
-                    title="Agree"
+                    title={sendable ? "Send" : "Agree"}
+                    aria-label={sendable ? "Send message" : "Agree"}
                     disabled={
                       rowBusy || (showDate && !(dates[dKey] ?? "").trim())
                     }
                     className={cn(
-                      "inline-flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-medium",
+                      "inline-flex h-6 items-center justify-center rounded-full text-[11px] font-medium",
+                      sendable ? "px-2" : "w-6",
                       "bg-[#7B9E87] text-white hover:bg-[#6A8A78]",
                       "disabled:opacity-40 disabled:cursor-not-allowed"
                     )}
                     onClick={() => onAgree([idx])}
                   >
-                    ✓
+                    {sendable ? "Send" : "✓"}
                   </button>
                   {isRevisable(p) && onRevise && (
                     <button
@@ -196,16 +199,18 @@ export function ProposalCardList({
                   )}
                   <button
                     type="button"
-                    title="Dismiss"
+                    title={sendable ? "Cancel" : "Dismiss"}
+                    aria-label={sendable ? "Cancel message" : "Dismiss"}
                     disabled={rowBusy}
                     className={cn(
-                      "inline-flex h-6 w-6 items-center justify-center rounded-full text-[11px]",
+                      "inline-flex h-6 items-center justify-center rounded-full text-[11px]",
+                      sendable ? "px-2" : "w-6",
                       "border border-[#D5D0C6] bg-white text-foreground-secondary hover:bg-[#F2F5EF]",
                       "disabled:opacity-40 disabled:cursor-not-allowed"
                     )}
                     onClick={() => onDismiss([idx])}
                   >
-                    ✗
+                    {sendable ? "Cancel" : "✗"}
                   </button>
                 </div>
               )}
@@ -225,7 +230,11 @@ export function ProposalCardList({
                             : "✓ done · added to calendar"
                           : isLogDocumentProposal(p.type)
                             ? "✓ filed"
-                            : "✓ done"}
+                            : p.type === "reply_coparent"
+                              ? p.delivery_status === "delivered"
+                                ? "✓ delivered"
+                                : "✓ sent"
+                              : "✓ done"}
                     </span>
                   ) : !historical && approved && !formPending ? (
                     <span className="text-[10px] font-medium text-[#5B7A52]">
@@ -249,7 +258,7 @@ export function ProposalCardList({
                   )}
                   {waived && (
                     <span className="text-[10px] text-foreground-secondary">
-                      dismissed
+                      {(p.status ?? "").toLowerCase() === "canceled" ? "canceled" : "dismissed"}
                     </span>
                   )}
                   {blocked && !approved && !waived && (
@@ -258,6 +267,13 @@ export function ProposalCardList({
                     </span>
                   )}
                 </div>
+                {p.type === "reply_coparent" && (p.recipient_name || p.recipient_email) ? (
+                  <p className="text-[11px] leading-snug text-foreground-secondary break-words">
+                    To: {p.recipient_name || "Co-parent"}
+                    {p.recipient_email ? ` · ${p.recipient_email}` : ""}
+                    {p.subject ? ` · ${p.subject}` : ""}
+                  </p>
+                ) : null}
                 <p
                   className={cn(
                     "text-[12px] leading-snug text-foreground",

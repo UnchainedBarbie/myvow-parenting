@@ -3,6 +3,8 @@ import type { ClassifyPayload } from "@/lib/ai-classify";
 import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
 import { reconcileCalendarPlan } from "@/lib/sage/calendar-match";
 import { processChatMessage } from "@/lib/sage/chat";
+import { applySessionControl } from "@/lib/sage/chat-control";
+import { loadKnownCoparents } from "@/lib/sage/known-coparents";
 import {
   formatConversationContext,
   loadConversationContext,
@@ -964,14 +966,38 @@ export async function POST(request: NextRequest) {
           const conversation = sessionId
             ? await loadConversationContext(admin, sessionId, user.id, timezone)
             : null;
-          const { reply, result } = await processChatMessage({
+          const coparents = await loadKnownCoparents(admin, caseId, user.id);
+          const { reply, result, control, revision } = await processChatMessage({
             message: trimmed,
             case_id: caseId,
             timezone,
             source_id: (userRow as { id: string }).id,
             conversation,
+            coparents,
           });
           if (reply.trim()) sageContent = reply;
+
+          let handledControl = false;
+          if (
+            sessionId &&
+            (control === "cancel_message" || control === "revise_pending")
+          ) {
+            const applied = await applySessionControl(
+              admin,
+              sessionId,
+              user.id,
+              control,
+              revision
+            );
+            if (applied) {
+              revisedItem = applied;
+              handledControl = true;
+            }
+          }
+
+          if (handledControl) {
+            // The pending proposal was updated in place.
+          } else {
 
           const noteOnly = isNoteOnlyPlan(result.plan);
           let foldedReply = false;
@@ -1143,6 +1169,7 @@ export async function POST(request: NextRequest) {
             } else {
               sageItem = (itemRow as Record<string, unknown> | null) ?? null;
             }
+          }
           }
         }
       } catch (e) {

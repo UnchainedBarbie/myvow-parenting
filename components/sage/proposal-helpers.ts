@@ -20,13 +20,20 @@ export {
 
 export function proposalTypeLabel(
   type: string,
-  proposal?: { calendar_intent?: string | null; audience?: string | null }
+  proposal?: {
+    calendar_intent?: string | null;
+    audience?: string | null;
+    recipient_name?: string | null;
+    recipient_email?: string | null;
+  }
 ): string {
   switch (type) {
     case "ask_clarification":
       return proposal?.audience === "parent" ? "Ask you" : "Ask Co-Parent";
     case "reply_coparent":
-      return "Reply to Co-Parent";
+      return proposal?.recipient_name || proposal?.recipient_email
+        ? "Send message"
+        : "Reply to Co-Parent";
     case "calendar_update":
       return proposal?.calendar_intent === "offer" ? "Add to calendar" : "Update calendar";
     case "expense":
@@ -66,7 +73,8 @@ export function childNamesFromItem(item: SageItem): string[] {
 }
 
 export function isWaived(p: SageProposal): boolean {
-  return p.status === "waived_by_user";
+  const status = (p.status ?? "").toLowerCase();
+  return status === "waived_by_user" || status === "canceled" || status === "cancelled";
 }
 
 export function isBlocked(p: SageProposal): boolean {

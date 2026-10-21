@@ -95,7 +95,13 @@ function closed(raw: unknown): boolean {
   if (proposal.executed === true || proposal.approved === true) return true;
   if (typeof proposal.approved_at === "string" && proposal.approved_at.trim()) return true;
   const status = (proposal.status ?? "").toLowerCase();
-  return status === "waived_by_user" || status === "approved" || status === "executed";
+  return (
+    status === "waived_by_user" ||
+    status === "approved" ||
+    status === "executed" ||
+    status === "canceled" ||
+    status === "cancelled"
+  );
 }
 
 function liveText(raw: unknown): string {

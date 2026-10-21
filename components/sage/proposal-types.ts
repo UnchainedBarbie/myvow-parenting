@@ -28,6 +28,13 @@ export type SageProposal = {
   result_event_id?: string;
   result_expense_id?: string;
   result_document_id?: string;
+  result_message_id?: string;
+  /** sent until the mail service confirms; delivered only after that confirmation. */
+  delivery_status?: string | null;
+  send_claim_at?: string | null;
+  recipient_name?: string | null;
+  recipient_email?: string | null;
+  subject?: string | null;
   /**
    * Set when a destination save or the follow-up "mark done" write failed.
    * Stored on the same proposal so a retry can reuse result_* ids and not insert again.

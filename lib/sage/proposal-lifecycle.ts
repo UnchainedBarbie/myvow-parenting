@@ -7,7 +7,12 @@
 
 export type ProposalRecord = Record<string, unknown>;
 
-const RESULT_KEYS = ["result_event_id", "result_expense_id", "result_document_id"] as const;
+const RESULT_KEYS = [
+  "result_event_id",
+  "result_expense_id",
+  "result_document_id",
+  "result_message_id",
+] as const;
 
 const TERMINAL_STATUS = new Set([
   "waived_by_user",

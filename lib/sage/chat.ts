@@ -3,6 +3,12 @@
  * Propose only; does not execute tools or write sage_items.
  */
 
+import {
+  routeChatIntent,
+  type ChatControl,
+  type KnownCoparent,
+  type PendingRevision,
+} from "@/lib/sage/chat-intent";
 import type { ConversationContext } from "@/lib/sage/conversation-context";
 import { buildObservationFromChat } from "@/lib/sage/observation-builder";
 import {
@@ -12,12 +18,16 @@ import {
 import { isCalendarUpdateProposal, isLogExpenseProposal } from "@/lib/sage/proposal-kind";
 import type { Proposal } from "@/lib/sage/planner";
 
+export type { ChatControl, PendingRevision };
+
 export type ChatAction = Proposal & { status: "proposed" };
 
 export type ChatProcessResult = {
   reply: string;
   actions: ChatAction[];
   result: ProcessObservationResult;
+  control: ChatControl;
+  revision: PendingRevision | null;
 };
 
 export type ProcessChatMessageInput = {
@@ -28,6 +38,11 @@ export type ProcessChatMessageInput = {
   source_id?: string;
   /** Compact thread context. Replaces carrying a date forward on its own. */
   conversation?: ConversationContext | null;
+  /** Other parents on the case. Pronouns resolve only when this list has one person. */
+  coparents?: KnownCoparent[];
+  /** self_forward holds the email privately and does not propose an action. */
+  intake?: "chat" | "self_forward";
+  today?: Date;
 };
 
 function buildReply(result: ProcessObservationResult): string {
@@ -57,6 +72,24 @@ function buildReply(result: ProcessObservationResult): string {
 export async function processChatMessage(
   input: ProcessChatMessageInput
 ): Promise<ChatProcessResult> {
+  const routed = routeChatIntent({
+    message: input.message,
+    conversation: input.conversation ?? null,
+    coparents: input.coparents ?? [],
+    intake: input.intake ?? "chat",
+    timezone: input.timezone,
+    today: input.today,
+  });
+  if (routed.handled) {
+    return {
+      reply: routed.reply,
+      actions: routed.result.plan.proposals.map((p) => ({ ...p, status: "proposed" as const })),
+      result: routed.result,
+      control: routed.control,
+      revision: routed.revision,
+    };
+  }
+
   const observation = buildObservationFromChat(input.message, {
     id: input.source_id,
   });
@@ -79,5 +112,7 @@ export async function processChatMessage(
     reply: buildReply(result),
     actions,
     result,
+    control: "none",
+    revision: null,
   };
 }

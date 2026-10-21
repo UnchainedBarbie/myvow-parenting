@@ -1,11 +1,6 @@
 import type { getServiceRoleClient } from "@/lib/supabase/server";
-import { processChatMessage } from "@/lib/sage/chat";
-import {
-  loadAndClassifyDocument,
-  mergeClassifyIntoToolInput,
-  processChatAttachment,
-  type ChatAttachmentProcessResult,
-} from "@/lib/sage/process-chat-attachment";
+import { selfForwardResult } from "@/lib/sage/chat-intent";
+import type { ProcessObservationResult } from "@/lib/sage/process-observation";
 
 type Admin = ReturnType<typeof getServiceRoleClient>;
 
@@ -142,15 +137,9 @@ function selfJournalContent(bodyText: string, filenames: string[]): string {
   return [body, ...rest].join("\n\n");
 }
 
-async function ownerTimezone(admin: Admin, userId: string): Promise<string> {
-  const { data } = await admin.from("users").select("timezone").eq("id", userId).maybeSingle();
-  const timezone = (data as { timezone?: string | null } | null)?.timezone?.trim();
-  return timezone || "America/Denver";
-}
-
 /**
- * Forwarded mail is untrusted data. This only proposes, the same way the composer does.
- * Nothing here files a document or sends a message.
+ * A forward to Sage stays in private intake. The original text and attachments
+ * are kept, and Sage does not file, schedule, log, or send until the user asks.
  */
 export async function runSelfEmailComposer(opts: {
   admin: Admin;
@@ -184,70 +173,21 @@ export async function runSelfEmailComposer(opts: {
   }
 
   const sourceId = (userRow as { id: string }).id;
-  const timezone = await ownerTimezone(admin, opts.userId);
-  const caption = opts.bodyText.trim();
   let sageContent = FALLBACK_REPLY;
   let sageItemId: string | null = null;
 
   try {
-    const first = opts.documents[0];
-    if (first) {
-      const classified = await loadAndClassifyDocument({
-        admin,
-        userId: opts.userId,
-        caseId: opts.caseId,
-        documentId: first.id,
-      });
-      if ("error" in classified) {
-        console.error(`[sender-id] classify failed: ${classified.error}`);
-        const { reply, result } = await processChatMessage({
-          message: content || caption || first.filename,
-          case_id: opts.caseId,
-          timezone,
-          source_id: sourceId,
-        });
-        if (reply.trim()) sageContent = reply;
-        sageItemId = await insertChatSageItem(admin, {
-          caseId: opts.caseId,
-          userId: opts.userId,
-          sourceId,
-          result,
-        });
-      } else {
-        const processed = await processChatAttachment({
-          caseId: opts.caseId,
-          timezone,
-          sourceId,
-          caption,
-          classify: classified.classify,
-          attachment: {
-            ...classified.attachment,
-            file_name: first.filename || classified.attachment.file_name,
-          },
-        });
-        if (processed.reply.trim()) sageContent = processed.reply;
-        sageItemId = await insertAttachmentSageItem(admin, {
-          caseId: opts.caseId,
-          userId: opts.userId,
-          sourceId,
-          processed,
-        });
-      }
-    } else {
-      const { reply, result } = await processChatMessage({
-        message: content,
-        case_id: opts.caseId,
-        timezone,
-        source_id: sourceId,
-      });
-      if (reply.trim()) sageContent = reply;
-      sageItemId = await insertChatSageItem(admin, {
-        caseId: opts.caseId,
-        userId: opts.userId,
-        sourceId,
-        result,
-      });
-    }
+    const held = selfForwardResult(
+      content,
+      opts.documents.map((doc) => doc.filename)
+    );
+    if (held.reply.trim()) sageContent = held.reply;
+    sageItemId = await insertChatSageItem(admin, {
+      caseId: opts.caseId,
+      userId: opts.userId,
+      sourceId,
+      result: held.result,
+    });
   } catch (e) {
     console.error("[sender-id] composer failed:", e);
   }
@@ -279,7 +219,7 @@ async function insertChatSageItem(
     caseId: string;
     userId: string;
     sourceId: string;
-    result: Awaited<ReturnType<typeof processChatMessage>>["result"];
+    result: ProcessObservationResult;
   }
 ): Promise<string | null> {
   const { intent, entities } = opts.result.interpretation;
@@ -308,55 +248,6 @@ async function insertChatSageItem(
       },
       child_ids: opts.result.child_ids,
       plan: opts.result.plan,
-      status: "pending",
-    })
-    .select("id")
-    .single();
-  if (error || !data) {
-    console.error("[sender-id] sage_items insert failed:", error?.message ?? "insert failed");
-    return null;
-  }
-  return (data as { id: string }).id;
-}
-
-async function insertAttachmentSageItem(
-  admin: Admin,
-  opts: {
-    caseId: string;
-    userId: string;
-    sourceId: string;
-    processed: ChatAttachmentProcessResult;
-  }
-): Promise<string | null> {
-  if (!opts.processed.result) return null;
-  const { intent, entities } = opts.processed.result.interpretation;
-  const { data, error } = await admin
-    .from("sage_items")
-    .insert({
-      case_id: opts.caseId,
-      source_type: "chat",
-      source_id: opts.sourceId,
-      visible_to: opts.userId,
-      item_type: intent.item_type,
-      domain: intent.domain,
-      summary: intent.summary,
-      evidence_excerpt: intent.evidence_excerpt,
-      tool_name: intent.tool_name,
-      action_required: intent.action_required,
-      action_type: intent.action_type,
-      urgency: intent.urgency,
-      confidence: intent.confidence,
-      tool_input: {
-        ...mergeClassifyIntoToolInput(
-          entities as unknown as Record<string, unknown>,
-          opts.processed.result,
-          opts.processed.classify,
-          opts.processed.attachment
-        ),
-        classify: opts.processed.classify,
-      },
-      child_ids: opts.processed.result.child_ids,
-      plan: opts.processed.result.plan,
       status: "pending",
     })
     .select("id")

@@ -80,6 +80,10 @@ export type Proposal = {
   arrival_time?: string | null;
   /** Pickup or drop-off, HH:mm. Written to the description, not end_time. */
   pickup_time?: string | null;
+  /** Co-parent the message will go to. Shown on the card; never guessed into the body. */
+  recipient_name?: string | null;
+  recipient_email?: string | null;
+  subject?: string | null;
 };
 
 export type Plan = {

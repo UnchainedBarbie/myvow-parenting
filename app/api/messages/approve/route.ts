@@ -125,8 +125,8 @@ export async function POST(request: NextRequest) {
       ai_rewritten_content,
       ai_rewritten: true,
       current_status: "sent",
-      delivery_status: "delivered",
-      delivered_at: new Date().toISOString(),
+      delivery_status: "sent",
+      delivered_at: null,
       intensity_score: score,
       intensity_flag: flag,
       is_emergency: emergencyAllowed ?? false,
@@ -206,7 +206,11 @@ export async function POST(request: NextRequest) {
             await client.sendEmail(emailMessage);
             await admin
               .from("messages")
-              .update({ email_message_id: messageId })
+              .update({
+                email_message_id: messageId,
+                delivery_status: "delivered",
+                delivered_at: new Date().toISOString(),
+              })
               .eq("id", (message as { id: string }).id);
             if (!emailThreadId) {
               await admin

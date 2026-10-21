@@ -18,6 +18,11 @@ import {
   supersededExecutionError,
   type ProposalRecord,
 } from "@/lib/sage/proposal-lifecycle";
+import {
+  approvedMessageBody,
+  deliverParentMessage,
+  messageSendDecision,
+} from "@/lib/messages/deliver-parent-message";
 
 export const runtime = "nodejs";
 
@@ -42,6 +47,12 @@ type PlanProposal = {
   result_event_id?: string;
   result_expense_id?: string;
   result_document_id?: string;
+  result_message_id?: string;
+  delivery_status?: string;
+  send_claim_at?: string;
+  recipient_name?: string | null;
+  recipient_email?: string | null;
+  subject?: string | null;
   save_error?: string;
   attached_document_id?: string;
   attached_file_name?: string;
@@ -622,6 +633,120 @@ export async function POST(req: NextRequest) {
         String(p.depends_on).trim() !== "" &&
         p.unblocked !== true;
       if (action === "agree" && blocked) continue;
+
+      if (action === "agree" && p.type === "reply_coparent" && (p.recipient_email ?? "").trim()) {
+        const decision = messageSendDecision(p, Date.parse(now));
+        if (decision === "in_progress") {
+          return NextResponse.json(
+            { success: false, error: "Send already in progress." },
+            { status: 409 }
+          );
+        }
+        if (decision === "already_sent") {
+          proposals[idx] = {
+            ...p,
+            approved: true,
+            executed: true,
+            approved_at: p.approved_at ?? now,
+          };
+          continue;
+        }
+        const body = approvedMessageBody(p);
+        const recipientEmail = (p.recipient_email ?? "").trim();
+        if (!body || !recipientEmail) {
+          return NextResponse.json(
+            {
+              success: false,
+              error: recipientEmail
+                ? "The message is empty."
+                : "Add a recipient email before sending.",
+            },
+            { status: 400 }
+          );
+        }
+        const caseId = (row as { case_id?: string | null }).case_id ?? "";
+        if (!caseId) {
+          return NextResponse.json(
+            { success: false, error: "This item is not attached to a case." },
+            { status: 400 }
+          );
+        }
+        proposals[idx] = { ...p, send_claim_at: now };
+        const claimPlan: SagePlan = { ...plan, proposals };
+        const { error: claimError } = await admin
+          .from("sage_items")
+          .update({ plan: claimPlan })
+          .eq("id", id)
+          .eq("visible_to", user.id);
+        if (claimError) {
+          return NextResponse.json(
+            { success: false, error: "Could not reserve this send." },
+            { status: 500 }
+          );
+        }
+        const { data: claimed } = await admin
+          .from("sage_items")
+          .select("plan")
+          .eq("id", id)
+          .eq("visible_to", user.id)
+          .maybeSingle();
+        const claimedProposals =
+          claimed &&
+          typeof (claimed as { plan?: { proposals?: PlanProposal[] } }).plan === "object"
+            ? ((claimed as { plan?: { proposals?: PlanProposal[] } }).plan?.proposals ?? [])
+            : [];
+        const claimedProposal = claimedProposals[idx];
+        if (claimedProposal?.send_claim_at && claimedProposal.send_claim_at !== now) {
+          return NextResponse.json(
+            { success: false, error: "Send already in progress." },
+            { status: 409 }
+          );
+        }
+        if (
+          claimedProposal?.executed === true ||
+          (claimedProposal?.result_message_id ?? "").trim()
+        ) {
+          proposals[idx] = {
+            ...(claimedProposal ?? p),
+            approved: true,
+            executed: true,
+          };
+          continue;
+        }
+        const sent = await deliverParentMessage(admin, {
+          caseId,
+          senderId: user.id,
+          body,
+          recipientEmail,
+          subject: p.subject ?? null,
+          proposalId: (p.id ?? "").trim() || null,
+        });
+        if (!sent.ok) {
+          proposals[idx] = { ...p };
+          delete proposals[idx].send_claim_at;
+          await admin
+            .from("sage_items")
+            .update({ plan: { ...plan, proposals } })
+            .eq("id", id)
+            .eq("visible_to", user.id);
+          return NextResponse.json(
+            { success: false, error: sent.message },
+            { status: sent.status }
+          );
+        }
+        proposals[idx] = {
+          ...p,
+          approved: true,
+          approved_at: now,
+          executed: true,
+          executed_at: now,
+          result_message_id: sent.messageId,
+          delivery_status: sent.deliveryStatus,
+          recipient_email: sent.recipientEmail,
+        };
+        delete proposals[idx].send_claim_at;
+        continue;
+      }
 
       if (action === "agree") {
         // Calendar, expense, and document must go through the form + execute, never record-only approve.

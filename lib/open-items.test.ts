@@ -141,7 +141,8 @@ const approvedDraft = deriveOpenItems([
     }),
   ]),
 ]);
-assert.equal(approvedDraft.length, 0);
+assert.equal(approvedDraft.length, 1);
+assert.match(approvedDraft[0]?.explanation ?? "", /has not been sent/);
 
 const filed = deriveOpenItems([
   item("item-5", [proposal({ type: "log_document", draft: "File the report", executed: true })]),

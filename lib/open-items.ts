@@ -2,14 +2,12 @@ import {
   displayDraft,
   isBlocked,
   isCalendarUpdateProposal,
-  isCommitted,
-  isFormExecuteProposal,
   isLogDocumentProposal,
   isLogExpenseProposal,
   proposalTypeLabel,
 } from "@/components/sage/proposal-helpers";
 import type { SageItem, SageProposal } from "@/components/sage/proposal-types";
-import { isSupersededProposal } from "@/lib/sage/proposal-lifecycle";
+import { isResolvedProposal } from "@/lib/sage/proposal-resolution";
 
 /**
  * Open items are a read of sage_items.plan.proposals — the same JSON chat and
@@ -67,16 +65,6 @@ export type OpenItemSource = {
   plan?: { proposals?: unknown[] } | null;
 };
 
-const CLOSED_PROPOSAL_STATUS = new Set([
-  "waived_by_user",
-  "declined",
-  "canceled",
-  "cancelled",
-  "dismissed",
-  "superseded",
-  "completed",
-]);
-
 const INITIAL_OPEN_LIMIT = 4;
 
 export function openItemsPreviewLimit(): number {
@@ -131,16 +119,12 @@ function itemClosed(item: OpenItemSource): boolean {
   return status === "archived" || status === "dismissed";
 }
 
-/** A proposal that chat would no longer offer as unfinished work. */
+/**
+ * A proposal chat would no longer offer as unfinished work.
+ * An approved co-parent draft stays open until that proposal records a sent reply.
+ */
 export function isClosedOpenItemProposal(proposal: SageProposal): boolean {
-  if (proposal.type === "note_only" || isSupersededProposal(proposal)) return true;
-  const status = proposalStatus(proposal);
-  if (CLOSED_PROPOSAL_STATUS.has(status)) return true;
-  if (isCalendarUpdateProposal(proposal.type)) return isCommitted(proposal);
-  if (isFormExecuteProposal(proposal.type)) return proposal.executed === true;
-  if (proposal.executed === true) return true;
-  if (proposal.approved === true || status === "approved") return true;
-  return false;
+  return isResolvedProposal(proposal);
 }
 
 function forceType(proposal: SageProposal): string {
@@ -229,6 +213,9 @@ function explanationFor(
     return "Sage still needs a detail before this can be saved.";
   }
   if (kind === "message_draft") {
+    if (proposal.approved === true) {
+      return "This draft is approved. It has not been sent.";
+    }
     return "Review this draft. Nothing is sent until you approve it.";
   }
   if (kind === "filing_decision") {

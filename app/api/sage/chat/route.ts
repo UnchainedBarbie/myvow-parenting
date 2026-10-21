@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
 import { processChatMessage } from "@/lib/sage/chat";
+import type { ConversationContext } from "@/lib/sage/conversation-context";
+import { loadKnownCoparents } from "@/lib/sage/known-coparents";
 
 export const runtime = "nodejs";
 
@@ -65,10 +67,18 @@ export async function POST(req: NextRequest) {
         ? (profile as { timezone: string }).timezone.trim() || "America/Denver"
         : "America/Denver";
 
+    const coparents = await loadKnownCoparents(admin, caseId, user.id);
+    const context = body?.conversation_context;
+    const conversation =
+      context && typeof context === "object"
+        ? (context as ConversationContext)
+        : null;
     const { reply, actions, result } = await processChatMessage({
       message,
       case_id: caseId,
       timezone,
+      conversation,
+      coparents,
     });
 
     return NextResponse.json({

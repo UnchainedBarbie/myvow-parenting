@@ -1,7 +1,13 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import type { SageItem } from "@/components/sage/proposal-types";
 import { deriveOpenItems, openItemHref, type OpenItemSource } from "@/lib/open-items";
-import { ownerItemMatch, reconcileProposalPlan } from "@/lib/sage/proposal-lifecycle";
+import { ownerItemMatch, reconcileProposalPlan, supersededExecutionError } from "@/lib/sage/proposal-lifecycle";
+import {
+  dismissProposalRecord,
+  isResolvedProposal,
+  reconcileResolvedProposals,
+  type SentReplyLink,
+} from "@/lib/sage/proposal-resolution";
 import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
@@ -68,7 +74,8 @@ export async function GET() {
     }
 
     const items = (rows ?? []) as ItemRow[];
-    await reconcileStoredPlans(admin, user.id, caseId, items);
+    const sentReplies = await sentReplyLinks(admin, caseId, items);
+    await reconcileStoredPlans(admin, user.id, caseId, items, sentReplies);
     const drafts = deriveOpenItems(items);
     const needed = new Set(drafts.map((draft) => draft.sageItemId));
     const relevant = items.filter((row) => needed.has(row.id));
@@ -113,18 +120,195 @@ export async function GET() {
   }
 }
 
+type DismissBody = {
+  action?: unknown;
+  items?: unknown;
+};
+
+/**
+ * POST /api/open-items
+ * { action: "dismiss", items: [{ id, proposalIndex }] }
+ * Marks the same proposal chat uses as waived. Does not send, approve, or delete rows.
+ */
+export async function POST(request: NextRequest) {
+  try {
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const body = (await request.json().catch(() => ({}))) as DismissBody;
+    if (body.action !== "dismiss" || !Array.isArray(body.items) || body.items.length === 0) {
+      return NextResponse.json({ error: "Choose at least one open item to dismiss." }, { status: 400 });
+    }
+
+    const admin = getServiceRoleClient();
+    const { data: membership, error: membershipError } = await admin
+      .from("case_members")
+      .select("case_id")
+      .eq("user_id", user.id)
+      .limit(1)
+      .maybeSingle();
+    if (membershipError) {
+      console.error("[open-items/POST] membership:", membershipError);
+      return NextResponse.json({ error: "Couldn't dismiss those items." }, { status: 500 });
+    }
+    if (!membership?.case_id) {
+      return NextResponse.json({ error: "Couldn't dismiss those items." }, { status: 403 });
+    }
+    const caseId = membership.case_id as string;
+    const now = new Date().toISOString();
+    const dismissed: { id: string; proposalIndex: number | null }[] = [];
+    const errors: { id: string; proposalIndex: number | null; error: string }[] = [];
+
+    for (const raw of body.items.slice(0, 50)) {
+      const target = raw as { id?: unknown; proposalIndex?: unknown };
+      const id = typeof target.id === "string" ? target.id.trim() : "";
+      const proposalIndex =
+        target.proposalIndex === null
+          ? null
+          : typeof target.proposalIndex === "number" &&
+              Number.isInteger(target.proposalIndex) &&
+              target.proposalIndex >= 0
+            ? target.proposalIndex
+            : -1;
+      if (!id || proposalIndex === -1) {
+        errors.push({ id, proposalIndex: null, error: "That open item could not be dismissed." });
+        continue;
+      }
+
+      const scope = ownerItemMatch(user.id, caseId, id);
+      const { data: row, error: loadError } = await admin
+        .from("sage_items")
+        .select("id, plan, status")
+        .eq("id", scope.id)
+        .eq("visible_to", scope.visible_to)
+        .eq("case_id", scope.case_id)
+        .maybeSingle();
+      if (loadError) {
+        errors.push({ id, proposalIndex, error: "Couldn't dismiss that item." });
+        continue;
+      }
+      if (!row) {
+        errors.push({ id, proposalIndex, error: "That item is not available to you." });
+        continue;
+      }
+
+      if (proposalIndex === null) {
+        const { error: updateError } = await admin
+          .from("sage_items")
+          .update({ status: "dismissed" })
+          .eq("id", scope.id)
+          .eq("visible_to", scope.visible_to)
+          .eq("case_id", scope.case_id);
+        if (updateError) {
+          errors.push({ id, proposalIndex, error: "Couldn't dismiss that item." });
+          continue;
+        }
+        dismissed.push({ id, proposalIndex });
+        continue;
+      }
+
+      const plan =
+        row.plan && typeof row.plan === "object"
+          ? { ...(row.plan as { proposals?: unknown[] }) }
+          : { proposals: [] };
+      const proposals = Array.isArray(plan.proposals)
+        ? plan.proposals.map((entry) =>
+            entry && typeof entry === "object" ? { ...(entry as Record<string, unknown>) } : {}
+          )
+        : [];
+      if (proposalIndex >= proposals.length) {
+        errors.push({ id, proposalIndex, error: "That open item could not be dismissed." });
+        continue;
+      }
+      const replaced = supersededExecutionError(proposals, proposalIndex, id);
+      if (replaced) {
+        errors.push({ id, proposalIndex, error: replaced.error });
+        continue;
+      }
+      const current = proposals[proposalIndex] as Record<string, unknown>;
+      if (isResolvedProposal(current as Parameters<typeof isResolvedProposal>[0])) {
+        dismissed.push({ id, proposalIndex });
+        continue;
+      }
+      proposals[proposalIndex] = dismissProposalRecord(current, now);
+      const { error: updateError } = await admin
+        .from("sage_items")
+        .update({ plan: { ...plan, proposals } })
+        .eq("id", scope.id)
+        .eq("visible_to", scope.visible_to)
+        .eq("case_id", scope.case_id);
+      if (updateError) {
+        errors.push({ id, proposalIndex, error: "Couldn't dismiss that item." });
+        continue;
+      }
+      dismissed.push({ id, proposalIndex });
+    }
+
+    return NextResponse.json({
+      success: errors.length === 0,
+      dismissed,
+      errors,
+    });
+  } catch (e) {
+    console.error("[open-items/POST]", e);
+    return NextResponse.json({ error: "Couldn't dismiss those items." }, { status: 500 });
+  }
+}
+
+async function sentReplyLinks(
+  admin: Admin,
+  caseId: string,
+  items: ItemRow[]
+): Promise<SentReplyLink[]> {
+  const proposalIds = new Set<string>();
+  for (const row of items) {
+    const proposals = Array.isArray(row.plan?.proposals) ? row.plan.proposals : [];
+    for (const raw of proposals) {
+      if (!raw || typeof raw !== "object") continue;
+      const id = (raw as { id?: unknown }).id;
+      if (typeof id === "string" && id.trim()) proposalIds.add(id.trim());
+    }
+  }
+  if (proposalIds.size === 0) return [];
+  const { data, error } = await admin
+    .from("messages")
+    .select("id, sage_proposal_id, direction")
+    .eq("case_id", caseId)
+    .eq("direction", "outgoing")
+    .in("sage_proposal_id", [...proposalIds]);
+  if (error) {
+    if (/sage_proposal_id/i.test(error.message ?? "")) return [];
+    throw new Error(error.message);
+  }
+  const links: SentReplyLink[] = [];
+  for (const row of data ?? []) {
+    const proposalId = (row as { sage_proposal_id?: string | null }).sage_proposal_id?.trim() ?? "";
+    const messageId = (row as { id?: string }).id?.trim() ?? "";
+    if (!proposalId || !messageId || !proposalIds.has(proposalId)) continue;
+    links.push({ proposalId, messageId });
+  }
+  return links;
+}
+
 async function reconcileStoredPlans(
   admin: Admin,
   userId: string,
   caseId: string,
-  items: ItemRow[]
+  items: ItemRow[],
+  sentReplies: SentReplyLink[]
 ) {
   for (const row of items) {
     const proposals = Array.isArray(row.plan?.proposals) ? row.plan.proposals : null;
     if (!proposals) continue;
-    const reconciled = reconcileProposalPlan(proposals);
-    if (!reconciled.changed) continue;
-    const nextPlan = { ...(row.plan as object), proposals: reconciled.proposals };
+    const versioned = reconcileProposalPlan(proposals);
+    const resolved = reconcileResolvedProposals(versioned.proposals, sentReplies);
+    if (!versioned.changed && !resolved.changed) continue;
+    const nextPlan = { ...(row.plan as object), proposals: resolved.proposals };
     row.plan = nextPlan;
     const scope = ownerItemMatch(userId, caseId, row.id);
     const { error } = await admin

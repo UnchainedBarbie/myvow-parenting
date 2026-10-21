@@ -76,6 +76,8 @@ export type Proposal = {
   calendar_event_id?: string | null;
   /** When the event begins, HH:mm. Never an arrival or a pickup. */
   event_start?: string | null;
+  /** True only when the parent asked for an all-day event. */
+  all_day?: boolean;
   /** Arrival or "needs to be there by", HH:mm. Written to the description, not start_time. */
   arrival_time?: string | null;
   /** Pickup or drop-off, HH:mm. Written to the description, not end_time. */
@@ -84,6 +86,8 @@ export type Proposal = {
   recipient_name?: string | null;
   recipient_email?: string | null;
   subject?: string | null;
+  /** Set when the approved save should change the event status, such as canceled. */
+  event_status?: string | null;
 };
 
 export type Plan = {

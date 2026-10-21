@@ -4,6 +4,7 @@
  */
 
 import { getServiceRoleClient } from "@/lib/supabase/server";
+import { savedEventPointer } from "@/lib/sage/calendar-chat";
 import { eventSubjectFromTexts, preferEventSubject } from "@/lib/sage/event-subject";
 import { parseClockMinutes, resolveDate } from "@/lib/sage/resolver";
 
@@ -19,6 +20,8 @@ export type ConversationEvent = {
   date: string | null;
   /** Clock already established, such as "8:00 AM". */
   time: string | null;
+  /** Saved calendar event this conversation is about. */
+  eventId?: string | null;
 };
 
 export type ConversationContext = {
@@ -238,7 +241,7 @@ export async function loadConversationContext(
 ): Promise<ConversationContext> {
   const empty: ConversationContext = {
     thread_subject: null,
-    event: { subject: null, child: null, date: null, time: null },
+    event: { subject: null, child: null, date: null, time: null, eventId: null },
     open_proposals: [],
   };
   const { data: sessionRow } = await admin
@@ -282,6 +285,7 @@ export async function loadConversationContext(
   let child: string | null = null;
   let date: string | null = null;
   let time: string | null = null;
+  let eventId: string | null = null;
   const open: OpenProposalContext[] = [];
 
   for (const row of items as {
@@ -295,6 +299,13 @@ export async function loadConversationContext(
     } | null;
   }[]) {
     const proposals = Array.isArray(row.plan?.proposals) ? row.plan.proposals : [];
+    if (!eventId) {
+      const saved = savedEventPointer(proposals);
+      if (saved) {
+        eventId = saved.id;
+        if (!time && saved.time) time = saved.time;
+      }
+    }
     const texts: string[] = [row.summary ?? "", row.evidence_excerpt ?? ""];
     if (!date && row.tool_input && Array.isArray(row.tool_input.resolved_dates)) {
       for (const entry of row.tool_input.resolved_dates) {
@@ -354,7 +365,7 @@ export async function loadConversationContext(
 
   return {
     thread_subject: thread,
-    event: { subject, child, date, time },
+    event: { subject, child, date, time, eventId },
     open_proposals: open.slice(0, 6),
   };
 }

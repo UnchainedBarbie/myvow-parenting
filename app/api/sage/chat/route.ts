@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
 import { processChatMessage } from "@/lib/sage/chat";
 import type { ConversationContext } from "@/lib/sage/conversation-context";
+import { loadCalendarContext } from "@/lib/sage/calendar-chat";
 import { loadKnownCoparents } from "@/lib/sage/known-coparents";
 
 export const runtime = "nodejs";
@@ -68,6 +69,7 @@ export async function POST(req: NextRequest) {
         : "America/Denver";
 
     const coparents = await loadKnownCoparents(admin, caseId, user.id);
+    const calendarContext = await loadCalendarContext(admin, caseId, user.id);
     const context = body?.conversation_context;
     const conversation =
       context && typeof context === "object"
@@ -79,6 +81,9 @@ export async function POST(req: NextRequest) {
       timezone,
       conversation,
       coparents,
+      children: calendarContext.children,
+      events: calendarContext.events,
+      viewerId: user.id,
     });
 
     return NextResponse.json({

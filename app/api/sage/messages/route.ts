@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { ClassifyPayload } from "@/lib/ai-classify";
 import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
+import { loadCalendarContext } from "@/lib/sage/calendar-chat";
 import { reconcileCalendarPlan } from "@/lib/sage/calendar-match";
 import { processChatMessage } from "@/lib/sage/chat";
 import { applySessionControl } from "@/lib/sage/chat-control";
@@ -428,6 +429,35 @@ async function revisePendingDraft(opts: {
     reply: revisionReply(opts.target.proposalType),
     item: { id: opts.target.itemId, plan: updatedPlan },
   };
+}
+
+/** The time answer completed the question, so the clarification is no longer an open item. */
+async function closeAnsweredClarification(
+  admin: AdminClient,
+  userId: string,
+  target: RevisableDraft
+): Promise<void> {
+  const { data: fresh } = await admin
+    .from("sage_items")
+    .select("plan")
+    .eq("id", target.itemId)
+    .eq("visible_to", userId)
+    .maybeSingle();
+  const plan =
+    fresh && typeof (fresh as { plan?: unknown }).plan === "object" && (fresh as { plan?: unknown }).plan
+      ? (fresh as { plan: { proposals?: unknown[] } }).plan
+      : null;
+  if (!plan || !Array.isArray(plan.proposals)) return;
+  const proposals = plan.proposals.map((raw, index) => {
+    if (index !== target.proposalIndex || !raw || typeof raw !== "object") return raw;
+    return { ...(raw as Record<string, unknown>), status: "completed" };
+  });
+  const { error } = await admin
+    .from("sage_items")
+    .update({ plan: { ...plan, proposals } })
+    .eq("id", target.itemId)
+    .eq("visible_to", userId);
+  if (error) console.error("[sage/messages] close clarification failed:", error.message);
 }
 
 async function reviseOpenCalendar(opts: {
@@ -967,6 +997,7 @@ export async function POST(request: NextRequest) {
             ? await loadConversationContext(admin, sessionId, user.id, timezone)
             : null;
           const coparents = await loadKnownCoparents(admin, caseId, user.id);
+          const calendarContext = await loadCalendarContext(admin, caseId, user.id);
           const { reply, result, control, revision } = await processChatMessage({
             message: trimmed,
             case_id: caseId,
@@ -974,6 +1005,9 @@ export async function POST(request: NextRequest) {
             source_id: (userRow as { id: string }).id,
             conversation,
             coparents,
+            children: calendarContext.children,
+            events: calendarContext.events,
+            viewerId: user.id,
           });
           if (reply.trim()) sageContent = reply;
 
@@ -1023,7 +1057,9 @@ export async function POST(request: NextRequest) {
           const eventName = result.event_subject ?? conversation?.event.subject ?? null;
           if (sessionId && (noteOnly || turnHasCalendar)) {
             const openReply = await latestRevisableDraft(admin, sessionId, user.id);
-            if (openReply && openReply.proposalType !== "calendar_update") {
+            if (openReply?.proposalType === "ask_clarification" && turnHasCalendar) {
+              await closeAnsweredClarification(admin, user.id, openReply);
+            } else if (openReply && openReply.proposalType !== "calendar_update") {
               establishedReply = openReply.currentDraft;
               const revisedReply = await revisePendingDraft({
                 admin,
@@ -1128,7 +1164,7 @@ export async function POST(request: NextRequest) {
             revisionNarration = null;
           }
 
-          if (!(noteOnly && foldedReply) && !foldedCalendar) {
+          if (!(noteOnly && foldedReply) && !foldedCalendar && result.plan.proposals.length > 0) {
             const { intent, entities } = result.interpretation;
             const { data: itemRow, error: insertItemError } = await admin
               .from("sage_items")

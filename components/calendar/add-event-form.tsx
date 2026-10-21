@@ -87,6 +87,11 @@ export type AddEventFormInitialValues = {
   childId?: string;
   /** When set, saving edits this event instead of creating another. */
   eventId?: string;
+  /** Set only when the parent asked for an all-day event. */
+  allDay?: boolean;
+  kidTitle?: string;
+  /** Applied on an update, such as canceled. */
+  eventStatus?: string;
 };
 
 interface AddEventFormProps {
@@ -110,25 +115,30 @@ export function AddEventForm({
   hideHeader = false,
 }: AddEventFormProps) {
   const router = useRouter();
-  const [title, setTitle] = useState("");
-  const [eventType, setEventType] = useState<string>("other");
-  const [childId, setChildId] = useState<string>("");
-  const [description, setDescription] = useState("");
+  const [title, setTitle] = useState(initialValues?.title ?? "");
+  const [eventType, setEventType] = useState<string>(initialValues?.eventType ?? "other");
+  const [childId, setChildId] = useState<string>(initialValues?.childId ?? "");
+  const [description, setDescription] = useState(initialValues?.description ?? "");
   const [date, setDate] = useState(() => {
     const d = new Date(initialYear, initialMonth - 1, 1);
     return d.toISOString().slice(0, 10);
   });
-  const [startTime, setStartTime] = useState("09:00");
-  const [endTime, setEndTime] = useState("10:00");
+  const [startTime, setStartTime] = useState(
+    initialValues ? initialValues.startTime ?? "" : "09:00"
+  );
+  const [endTime, setEndTime] = useState(
+    initialValues ? initialValues.endTime ?? "" : "10:00"
+  );
+  const [allDay, setAllDay] = useState(initialValues?.allDay === true);
   const [visibility, setVisibility] = useState<
     "family" | "family_read_only" | "parents_only" | "just_me_and_kids" | "private"
-  >("family");
+  >(initialValues?.visibility ?? "family");
   const [isRepeating, setIsRepeating] = useState(false);
   const [repeat, setRepeat] = useState<string>("weekly");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [kidTitle, setKidTitle] = useState("");
+  const [kidTitle, setKidTitle] = useState(initialValues?.kidTitle ?? "");
   const [autoParentsOnlyHint, setAutoParentsOnlyHint] = useState(false);
   const [visibilityTouched, setVisibilityTouched] = useState(false);
   const [sourceMessageId, setSourceMessageId] = useState<string | null>(null);
@@ -149,7 +159,9 @@ export function AddEventForm({
     if (!initialValues) return;
     if (initialValues.title != null) setTitle(initialValues.title);
     if (initialValues.date != null) setDate(initialValues.date);
-    if (initialValues.startTime != null) {
+    setAllDay(initialValues.allDay === true);
+    if (initialValues.kidTitle != null) setKidTitle(initialValues.kidTitle);
+    if (initialValues.startTime != null && initialValues.startTime !== "") {
       setStartTime(initialValues.startTime);
       // Default duration: 1 hour when no explicit end time is provided
       if (initialValues.endTime == null) {
@@ -163,6 +175,9 @@ export function AddEventForm({
           );
         }
       }
+    } else {
+      setStartTime("");
+      setEndTime("");
     }
     if (initialValues.endTime != null) setEndTime(initialValues.endTime);
     if (initialValues.description != null) setDescription(initialValues.description);
@@ -294,12 +309,12 @@ export function AddEventForm({
       setError("Please enter a date.");
       return;
     }
-    if (!startTime.trim()) {
+    if (!allDay && !startTime.trim()) {
       setError("Please enter a start time.");
       return;
     }
-    const startTimeValue = startTime;
-    const endTimeValue = endTime || "";
+    const startTimeValue = allDay ? startTime.trim() || "00:00" : startTime;
+    const endTimeValue = allDay ? "" : endTime || "";
     // date is "YYYY-MM-DD", times are "HH:mm" — interpret as LOCAL, convert to UTC
     const [sy, sm, sd] = date.split("-").map(Number);
     const [sh, smin] = startTimeValue.split(":").map(Number);
@@ -326,9 +341,10 @@ export function AddEventForm({
               child_id: childId || null,
               start_time: start,
               end_time: end,
-              all_day: false,
+              all_day: allDay,
               visibility,
               kid_title: kidTitle.trim() || null,
+              ...(initialValues?.eventStatus ? { status: initialValues.eventStatus } : {}),
               recurring_rule: isRepeating ? repeat : null,
             }),
           })
@@ -343,7 +359,7 @@ export function AddEventForm({
               child_id: childId || undefined,
               start_time: start,
               end_time: end,
-              all_day: false,
+              all_day: allDay,
               visibility,
               is_private: visibility === "private",
               recurring_rule: isRepeating ? repeat : undefined,
@@ -663,6 +679,24 @@ export function AddEventForm({
                 )}
               />
             </div>
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                id="all_day"
+                checked={allDay}
+                onChange={(e) => setAllDay(e.target.checked)}
+                className="rounded border-border"
+              />
+              <Label htmlFor="all_day" className="font-normal text-xs font-medium">
+                All day
+              </Label>
+            </div>
+            {initialValues?.eventStatus === "canceled" && (
+              <p className="text-[11px] text-foreground-secondary">
+                Saving will mark this event canceled. The appointment time stays the same.
+              </p>
+            )}
+            {!allDay && (
             <div className="grid grid-cols-2 gap-2">
               <div className="space-y-2">
                 <Label htmlFor="start_time" className="text-xs font-medium">
@@ -673,7 +707,7 @@ export function AddEventForm({
                   type="time"
                   value={startTime}
                   onChange={(e) => setStartTime(e.target.value)}
-                  required
+                  required={!allDay}
                   className={cn(
                     "flex h-8 w-full min-w-[120px] rounded-card border border-input bg-background px-2 py-1 text-xs",
                     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
@@ -696,6 +730,7 @@ export function AddEventForm({
                 />
               </div>
             </div>
+            )}
           </div>
           <div className="space-y-2">
             <div className="flex items-center gap-2">

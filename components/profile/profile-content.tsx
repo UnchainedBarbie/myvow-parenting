@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { ChevronRight, ChevronDown, FileText, Image, Trash2, Pencil, X, Download, UserPlus, Copy, Info } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import { showErrorToast } from "@/components/ui/toaster";
+import { showErrorToast, showSuccessToast } from "@/components/ui/toaster";
 import { CustodyScheduleSetup } from "@/components/custody/CustodyScheduleSetup";
 import { SchoolCalendarSection } from "@/components/profile/school-calendar-section";
 
@@ -694,10 +694,14 @@ export function ProfileContent({
       setShowAddCoparentForm(false);
       setCoparentInviteEmail("");
       setCoparentInviteName("");
-      if (data.emailSent === false) {
-        setCoparentNotice(data.error ?? "The co-parent was saved, but the invitation email was not delivered.");
+      if (data.emailSent !== true) {
+        const message = data.error ?? "The co-parent was saved, but the invitation email was not accepted.";
+        setCoparentNotice(message);
+        showErrorToast(message, 8000);
       } else {
-        setCoparentNotice("Invitation sent.");
+        const message = "The email provider accepted the invitation. Check the inbox to confirm it arrived.";
+        setCoparentNotice(message);
+        showSuccessToast(message, 8000);
       }
       router.refresh();
     } finally {
@@ -716,12 +720,20 @@ export function ProfileContent({
         body: JSON.stringify({ memberId: coparent.id }),
       });
       const data = (await res.json().catch(() => ({}))) as { error?: string; emailSent?: boolean };
-      if (!res.ok || data.emailSent === false) {
-        setCoparentNotice(data.error ?? "The invitation email was not delivered.");
+      if (!res.ok || data.emailSent !== true) {
+        const message = data.error ?? "The invitation email was not accepted.";
+        setCoparentNotice(message);
+        showErrorToast(message, 8000);
       } else {
-        setCoparentNotice("Invitation sent.");
+        const message = "The email provider accepted the invitation. Check the inbox to confirm it arrived.";
+        setCoparentNotice(message);
+        showSuccessToast(message, 8000);
       }
       router.refresh();
+    } catch {
+      const message = "The invitation request failed before the server responded.";
+      setCoparentNotice(message);
+      showErrorToast(message, 8000);
     } finally {
       setCoparentResending(false);
     }
@@ -2036,6 +2048,17 @@ export function ProfileContent({
             </div>
           )}
 
+          {(coparentNotice || (coparent?.status === "invited" && coparent.invitationError)) && (
+            <p role="alert" className="text-sm rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-amber-950">
+              {coparentNotice || coparent?.invitationError}
+            </p>
+          )}
+          {coparent?.status === "invited" && coparent.invitationSentAt && !coparent.invitationError && !coparentNotice && (
+            <p role="status" className="text-sm rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 text-emerald-950">
+              The email provider accepted the invitation on {invitationSentLabel(coparent.invitationSentAt)}. Check the inbox to confirm it arrived.
+            </p>
+          )}
+
           {(coparent != null || children.length > 0) ? (
             <div className="overflow-x-auto w-full rounded-card border border-border bg-background">
               <table className="table-fixed w-full text-xs">
@@ -2125,9 +2148,9 @@ export function ProfileContent({
                         <tr className="border-b border-stone-100">
                           <td colSpan={9} className="px-2 py-2 text-xs text-stone-600">
                             {invitationSentLabel(coparent.invitationSentAt) ? (
-                              <span>Invitation sent {invitationSentLabel(coparent.invitationSentAt)}. </span>
+                              <span>Email provider accepted the invitation on {invitationSentLabel(coparent.invitationSentAt)}. </span>
                             ) : (
-                              <span>No invitation email has been delivered yet. </span>
+                              <span>No invitation email has been accepted yet. </span>
                             )}
                             {coparent.invitationError && (
                               <span className="text-destructive">{coparent.invitationError} </span>

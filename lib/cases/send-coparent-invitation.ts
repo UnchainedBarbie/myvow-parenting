@@ -29,9 +29,17 @@ export async function sendCoparentInvitationEmail(input: {
   text: string;
 }): Promise<MailResult> {
   const token = process.env.POSTMARK_SERVER_TOKEN?.trim();
-  if (!token) return { accepted: false, message: "Email delivery is not configured." };
+  if (!token) {
+    return {
+      accepted: false,
+      message: "The invitation was not emailed because outbound email is not configured on the server.",
+    };
+  }
   if (!input.from) {
-    return { accepted: false, message: "No sender address is configured for invitation email." };
+    return {
+      accepted: false,
+      message: "The invitation was not emailed because no sender address is configured.",
+    };
   }
   try {
     const client = new ServerClient(token);

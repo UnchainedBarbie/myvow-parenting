@@ -87,6 +87,18 @@ assert.equal(firstSend.fields.invitation_sent_at, now.toISOString());
 assert.equal("user_id" in firstSend.fields, false);
 assert.equal("external_email" in firstSend.fields, false);
 
+const notConfigured = invitationDeliveryFields({
+  previousSentAt: null,
+  now,
+  mail: { accepted: false, message: "The invitation was not emailed because outbound email is not configured on the server." },
+  tokenHash: "hash-config",
+  expiresAt: future,
+});
+assert.equal(notConfigured.emailSent, false);
+assert.equal(notConfigured.fields.invitation_sent_at, null);
+assert.match(notConfigured.error ?? "", /not configured on the server/);
+assert.doesNotMatch(notConfigured.error ?? "", /delivered/i);
+
 const failedSend = invitationDeliveryFields({
   previousSentAt: null,
   now,

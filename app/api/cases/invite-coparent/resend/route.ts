@@ -58,6 +58,12 @@ export async function POST(req: NextRequest) {
       origin: req.nextUrl.origin,
       previousSentAt: row.invitation_sent_at ?? null,
     });
+    if (!delivery.emailSent) {
+      console.error(
+        "[cases/invite-coparent/resend] provider did not accept the invitation:",
+        delivery.error
+      );
+    }
     return NextResponse.json({ ok: true, emailSent: delivery.emailSent, error: delivery.error });
   } catch {
     console.error("[cases/invite-coparent/resend] failed");

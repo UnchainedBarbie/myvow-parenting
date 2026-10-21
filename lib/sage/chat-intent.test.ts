@@ -44,7 +44,7 @@ function types(message: string, extra?: Parameters<typeof routeChatIntent>[0]) {
 }
 
 const calendar = routeChatIntent({
-  message: "Ashley needs to be at school at 6 tomorrow.",
+  message: "Ashley needs to be at school at 6 pm tomorrow.",
   coparents: [kevin],
   timezone: "America/Denver",
   today,

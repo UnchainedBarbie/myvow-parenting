@@ -55,10 +55,14 @@ export type SageProposal = {
   calendar_event_id?: string | null;
   /** When the event begins, HH:mm. Never an arrival or a pickup. */
   event_start?: string | null;
+  /** True only when the parent asked for an all-day event. */
+  all_day?: boolean;
   /** Arrival or "needs to be there by", HH:mm. Description only, not start_time. */
   arrival_time?: string | null;
   /** Pickup or drop-off, HH:mm. Description only, not end_time. */
   pickup_time?: string | null;
+  /** Applied on save when the proposal marks an existing event canceled. */
+  event_status?: string | null;
 };
 
 export type SagePlan = {

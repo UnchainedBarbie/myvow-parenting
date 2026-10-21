@@ -9,6 +9,7 @@ import {
   type KnownCoparent,
   type PendingRevision,
 } from "@/lib/sage/chat-intent";
+import type { CaseEvent, KnownChild } from "@/lib/sage/calendar-chat";
 import type { ConversationContext } from "@/lib/sage/conversation-context";
 import { buildObservationFromChat } from "@/lib/sage/observation-builder";
 import {
@@ -40,6 +41,9 @@ export type ProcessChatMessageInput = {
   conversation?: ConversationContext | null;
   /** Other parents on the case. Pronouns resolve only when this list has one person. */
   coparents?: KnownCoparent[];
+  children?: KnownChild[];
+  events?: CaseEvent[];
+  viewerId?: string;
   /** self_forward holds the email privately and does not propose an action. */
   intake?: "chat" | "self_forward";
   today?: Date;
@@ -76,6 +80,9 @@ export async function processChatMessage(
     message: input.message,
     conversation: input.conversation ?? null,
     coparents: input.coparents ?? [],
+    children: input.children ?? [],
+    events: input.events ?? [],
+    viewerId: input.viewerId,
     intake: input.intake ?? "chat",
     timezone: input.timezone,
     today: input.today,

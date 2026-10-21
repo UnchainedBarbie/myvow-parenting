@@ -9,7 +9,25 @@ import type { Observation } from "@/lib/sage/observation-builder";
 import type { Plan, Proposal } from "@/lib/sage/planner";
 import { isInactiveProposal, reviseProposal } from "@/lib/sage/proposal-lifecycle";
 import type { ProcessObservationResult } from "@/lib/sage/process-observation";
-import { formatClockLabel } from "@/lib/sage/event-subject";
+import {
+  answerCalendarQuestion,
+  appointmentSubject,
+  appointmentTitle,
+  calendarCategory,
+  clockWithMeridiem,
+  composeEventDescription,
+  earlyArrivalNote,
+  followUpTargets,
+  isCalendarQuestion,
+  isCancelRequest,
+  isEventDetailUpdate,
+  locationPhrase,
+  matchChildren,
+  wantsAllDay,
+  type CaseEvent,
+  type KnownChild,
+} from "@/lib/sage/calendar-chat";
+import { formatClockLabel, preferEventSubject } from "@/lib/sage/event-subject";
 import { resolveDate } from "@/lib/sage/resolver";
 import type { SageInterpretation } from "@/lib/sage/understanding";
 
@@ -38,6 +56,10 @@ export type RouteChatIntentInput = {
   message: string;
   conversation?: ConversationContext | null;
   coparents?: KnownCoparent[];
+  children?: KnownChild[];
+  /** Saved events the signed-in parent is allowed to see. */
+  events?: CaseEvent[];
+  viewerId?: string;
   /** A forwarded email is private intake until the user asks for an action. */
   intake?: "chat" | "self_forward";
   timezone?: string;
@@ -98,16 +120,10 @@ function article(subject: string): string {
 }
 
 function eventSubject(text: string, conversation: ConversationContext | null): string | null {
-  const lower = text.toLowerCase();
-  if (/\bschool\b/.test(lower)) return "school";
-  if (/\b(ot|occupational therapy)\b/.test(lower)) return "OT appointment";
-  if (/\bappointment\b/.test(lower)) return "appointment";
-  if (/\bpickup|pick-up|pick up\b/.test(lower)) return "pickup";
-  if (/\bdrop-?off|drop off\b/.test(lower)) return "drop-off";
-  if (/\bpractice\b/.test(lower)) return "practice";
-  if (/\brecital\b/.test(lower)) return "recital";
-  if (/\btherapy\b/.test(lower)) return "therapy";
-  return conversation?.event.subject ?? null;
+  return preferEventSubject(
+    appointmentSubject(text)?.subject ?? null,
+    conversation?.event.subject ?? null
+  );
 }
 
 const NOT_A_CHILD = new Set([
@@ -383,6 +399,7 @@ function shell(opts: {
   child: string | null;
   dateIso: string | null;
   eventSubject: string | null;
+  childIds?: string[];
 }): ProcessObservationResult {
   const interpretation: SageInterpretation = {
     intent: {
@@ -418,8 +435,8 @@ function shell(opts: {
   return {
     observation,
     interpretation,
-    child_ids: [],
-    unresolved_children: opts.child ? [opts.child] : [],
+    child_ids: opts.childIds ?? [],
+    unresolved_children: opts.childIds?.length ? [] : opts.child ? [opts.child] : [],
     resolved_dates: opts.dateIso
       ? [{ raw: opts.dateIso, status: "resolved", iso: opts.dateIso, reason: "chat-intent" }]
       : [],
@@ -441,6 +458,7 @@ function turn(opts: {
   child?: string | null;
   dateIso?: string | null;
   eventSubject?: string | null;
+  childIds?: string[];
   reasoning: string;
 }): RoutedTurn {
   const plan: Plan = {
@@ -461,6 +479,7 @@ function turn(opts: {
       child: opts.child ?? null,
       dateIso: opts.dateIso ?? null,
       eventSubject: opts.eventSubject ?? null,
+      childIds: opts.childIds,
     }),
   };
 }
@@ -491,8 +510,15 @@ export function routeChatIntent(input: RouteChatIntentInput): RoutedTurn {
   const message = input.message ?? "";
   const conversation = input.conversation ?? null;
   const coparents = input.coparents ?? [];
+  const children = input.children ?? [];
+  const events = input.events ?? [];
   const timezone = input.timezone ?? "America/Denver";
   const today = input.today ?? new Date();
+  const named = matchChildren(message, children);
+  const contextChild = conversation?.event.child
+    ? matchChildren(conversation.event.child, children)
+    : [];
+  const childRecord = named.length === 1 ? named[0] : contextChild.length === 1 ? contextChild[0] : null;
 
   if (input.intake === "self_forward") {
     return selfForwardResult(message, input.attachmentNames ?? []);
@@ -539,6 +565,140 @@ export function routeChatIntent(input: RouteChatIntentInput): RoutedTurn {
     });
   }
 
+  if (named.length > 1 && (isCalendarQuestion(message) || wantsCalendar(message) || isEventDetailUpdate(message))) {
+    const label = named.map((child) => child.name).join(" and ");
+    return turn({
+      handled: true,
+      reply: `Which ${label} do you mean?`,
+      message,
+      summary: "More than one child matches that name.",
+      itemType: "note",
+      proposals: [
+        proposal("ask_clarification", `Which ${label} do you mean?`, { audience: "parent" }),
+      ],
+      status: "awaiting_clarification",
+      reasoning: "A child name matched more than one child on the case.",
+    });
+  }
+
+  const lookup = answerCalendarQuestion({
+    message,
+    children,
+    events,
+    viewerId: input.viewerId ?? "",
+    today,
+    timezone,
+  });
+  if (lookup) {
+    return turn({
+      handled: true,
+      reply: lookup,
+      message,
+      summary: lookup,
+      itemType: "note",
+      proposals: [],
+      status: "no_action",
+      reasoning: "A calendar question is answered from saved events and does not create a record.",
+    });
+  }
+
+  const saved = events.find((event) => event.id === conversation?.event.eventId) ?? null;
+  if (isEventDetailUpdate(message) && (conversation?.event.subject || conversation?.event.eventId)) {
+    const openCalendar = (conversation?.open_proposals ?? []).some((p) => p.type === "calendar_update");
+    const nextTime = clockWithMeridiem(message);
+    const place = locationPhrase(message);
+    const early = earlyArrivalNote(message);
+    const cancel = isCancelRequest(message);
+    if (openCalendar && nextTime && !place && !early && !cancel) {
+      const resolved = resolvedDay(message, today, timezone);
+      const label = resolved?.label ?? conversation?.event.date ?? "the same day";
+      return turn({
+        handled: true,
+        control: "revise_pending",
+        revision: {
+          date: resolved?.iso ?? conversation?.event.date ?? "",
+          label: typeof label === "string" ? label : label,
+          time: nextTime,
+        },
+        reply: "Updated the pending calendar suggestion.",
+        message,
+        summary: "Update the pending event time.",
+        itemType: "note",
+        proposals: [proposal("note_only", "Pending calendar time updated.")],
+        reasoning: "A time correction updates the pending calendar proposal.",
+      });
+    }
+    let targetId = conversation?.event.eventId ?? null;
+    let target = saved;
+    if (!targetId) {
+      const matches = followUpTargets({
+        events,
+        childId: childRecord?.id ?? null,
+        date: conversation.event.date,
+        subject: conversation.event.subject,
+        timezone,
+      });
+      if (matches.length === 1) {
+        target = matches[0];
+        targetId = matches[0].id;
+      } else {
+        const choices =
+          matches.length > 1 ? ` ${matches.map((event) => event.title).join("; ")}.` : "";
+        return turn({
+          handled: true,
+          reply: `Which appointment should I update?${choices}`,
+          message,
+          summary: "More than one event could match.",
+          itemType: "note",
+          proposals: [
+            proposal("ask_clarification", `Which appointment should I update?${choices}`, {
+              audience: "parent",
+            }),
+          ],
+          status: "awaiting_clarification",
+          reasoning: "An update needs one saved event.",
+        });
+      }
+    }
+    const start =
+      nextTime && !early && !cancel ? nextTime : clockWithMeridiem(conversation?.event.time ?? "");
+    const description = composeEventDescription({
+      existing: target?.description ?? null,
+      location: place,
+      note: early,
+    });
+    const subject = conversation.event.subject;
+    const child = childRecord?.name ?? conversation.event.child;
+    const title = appointmentTitle(child, subject);
+    const category = calendarCategory(appointmentSubject(subject ?? "")?.category ?? null);
+    return turn({
+      handled: true,
+      reply: cancel
+        ? `I can mark ${title} canceled once you approve it. The time stays the same.`
+        : `I can update ${title}. Nothing changes until you approve it.`,
+      message,
+      summary: cancel ? `Cancel ${title}.` : `Update ${title}.`,
+      itemType: "calendar_event",
+      child,
+      childIds: childRecord ? [childRecord.id] : [],
+      dateIso: conversation.event.date,
+      eventSubject: subject,
+      proposals: [
+        proposal("calendar_update", cancel ? `Mark ${title} canceled.` : `Update ${title}.`, {
+          calendar_intent: "update",
+          calendar_event_id: targetId,
+          date: conversation.event.date,
+          event_start: start,
+          title,
+          ...(description ? { description } : {}),
+          category: category ?? undefined,
+          event_status: cancel ? "canceled" : undefined,
+        }),
+      ],
+      reasoning: "A follow-up updates the saved event instead of creating another.",
+    });
+  }
+
   if (isDateCorrection(message, conversation)) {
     const resolved = resolvedDay(message, today, timezone);
     if (resolved) {
@@ -563,7 +723,8 @@ export function routeChatIntent(input: RouteChatIntentInput): RoutedTurn {
   const document = wantsDocument(message);
   const expense = wantsExpense(message);
   const notify = resolveNotify(message, coparents, conversation);
-  const child = childName(message, coparents) ?? conversation?.event.child ?? null;
+  const child = childRecord?.name ?? childName(message, coparents) ?? conversation?.event.child ?? null;
+  const childIds = childRecord ? [childRecord.id] : [];
   const subject =
     eventSubject(message, conversation) ??
     (calendar ? "event" : null);
@@ -571,18 +732,37 @@ export function routeChatIntent(input: RouteChatIntentInput): RoutedTurn {
   const dateIso = resolved?.iso ?? conversation?.event.date ?? null;
   const dateLabel = dateIso ? prettyDate(dateIso) : null;
   const clock = clockFromText(message);
-  const timeLabel = clock?.label ?? conversation?.event.time ?? null;
+  const messageTime = clockWithMeridiem(message);
+  const statedTime = messageTime ?? (clock ? null : clockWithMeridiem(conversation?.event.time ?? ""));
+  const timeLabel = statedTime ? formatClockLabel(statedTime) : clock?.label ?? null;
+  const allDay = wantsAllDay(message);
+  const completingTime =
+    !calendar &&
+    Boolean(messageTime) &&
+    Boolean(conversation?.event.subject) &&
+    Boolean(conversation?.event.date) &&
+    !isEventDetailUpdate(message);
 
   const proposals: Proposal[] = [];
-  if (calendar) {
-    const bits = [child, subject !== "event" ? subject : null, dateLabel, timeLabel ? `at ${timeLabel}` : null]
+  const specific = appointmentSubject(`${message} ${subject ?? ""}`);
+  const title = appointmentTitle(child, specific?.subject ?? subject);
+  const category = specific?.category ?? null;
+  if ((calendar || completingTime) && !statedTime && !allDay) {
+    const what = (specific?.subject ?? subject ?? "appointment").toLowerCase();
+    const ask = child ? `What time is ${child}'s ${what}?` : `What time is that ${what}?`;
+    proposals.push(proposal("ask_clarification", ask, { audience: "parent" }));
+  } else if (calendar || completingTime) {
+    const bits = [title, dateLabel, statedTime ? `at ${formatClockLabel(statedTime)}` : allDay ? "all day" : null]
       .filter(Boolean)
       .join(", ");
     proposals.push(
-      proposal("calendar_update", `Add to calendar: ${bits || "event"}.`, {
+      proposal("calendar_update", `Add to calendar: ${bits || title}.`, {
         calendar_intent: "offer",
         date: dateIso,
-        event_start: clock?.eventStart ?? null,
+        event_start: allDay ? null : statedTime,
+        ...(allDay ? { all_day: true } : {}),
+        title,
+        category: category ?? undefined,
         depends_on: dateIso ? null : "date",
       })
     );
@@ -688,8 +868,12 @@ export function routeChatIntent(input: RouteChatIntentInput): RoutedTurn {
     itemType,
     proposals,
     child,
+    childIds,
     dateIso,
-    eventSubject: subject,
+    eventSubject: specific?.subject ?? subject,
+    status: proposals.every((p) => p.type === "ask_clarification")
+      ? "awaiting_clarification"
+      : undefined,
     reasoning: "Chat intent prepared approval cards and did not execute them.",
   });
 }

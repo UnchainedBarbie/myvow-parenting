@@ -5,6 +5,7 @@ import {
   inferExpenseCategoryFromText,
   parseExpenseAmountFromText,
 } from "@/lib/expenses-share";
+import { appointmentTitle, calendarCategory, visibilityForCategory } from "@/lib/sage/calendar-chat";
 import { eventSubjectFromTexts, formatClockLabel } from "@/lib/sage/event-subject";
 import { splitSchedule } from "@/lib/sage/outbound-facts";
 import { isCalendarUpdateProposal, isFormExecuteProposal, isLogDocumentProposal } from "@/lib/sage/proposal-kind";
@@ -486,16 +487,17 @@ function storedEventSubject(item: SageItem): string | null {
 
 export function buildCalendarTitle(
   item: SageItem,
-  _proposal?: SageProposal
+  proposal?: SageProposal
 ): string {
+  const proposed = typeof proposal?.title === "string" ? proposal.title.trim() : "";
+  if (proposed) return proposed.slice(0, 120);
   const name = displayName(childNamesFromItem(item)[0] ?? "");
   const eventName =
     storedEventSubject(item) ||
     eventSubjectFromTexts([item.evidence_excerpt ?? ""]) ||
     eventSubjectFromTexts([item.summary ?? ""]) ||
     "Calendar event";
-  const title = name ? `${eventName} - ${name}` : eventName;
-  return title.slice(0, 60);
+  return appointmentTitle(name || null, eventName).slice(0, 120);
 }
 
 function hhmmField(value: string | null | undefined): string | null {
@@ -556,19 +558,30 @@ export function buildCalendarInitialValues(
   const parsed =
     carried.start || carried.arrival || carried.pickup ? carried : splitSchedule(blob);
   const startTime = parsed.start ?? undefined;
-  const eventType = inferCalendarEventType(item, proposal);
-  const description = detailLines(
+  const titled = buildCalendarTitle(item, proposal);
+  const storedCategory = calendarCategory(proposal.category);
+  const eventType = storedCategory ?? inferCalendarEventType(item, proposal);
+  const visibility = visibilityForCategory(eventType);
+  const details = detailLines(
     childOnProposal(item, blob),
     parsed.arrival,
     parsed.pickup
   );
+  const proposedDescription =
+    typeof proposal.description === "string" ? proposal.description.trim() : "";
+  const description = [proposedDescription, details].filter(Boolean).join("\n");
+  const kidVisible = visibility === "family";
   return {
     childId,
     date,
     ...(startTime ? { startTime } : {}),
-    title: buildCalendarTitle(item, proposal),
+    ...(proposal.all_day ? { allDay: true } : {}),
+    title: titled,
     eventType,
-    description: description ?? "",
+    visibility,
+    description,
+    ...(kidVisible ? { kidTitle: titled } : {}),
+    ...(proposal.event_status ? { eventStatus: proposal.event_status } : {}),
     ...(proposal.calendar_event_id
       ? { eventId: proposal.calendar_event_id }
       : {}),

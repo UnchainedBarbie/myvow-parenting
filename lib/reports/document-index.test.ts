@@ -44,6 +44,9 @@ const prepared = prepareDocumentIndex({
       createdAt: "2026-01-02T00:00:00.000Z",
       visibility: "family",
       conversations: ["Pickup change"],
+      uploadedByName: "Alex Rivera",
+      linkedExpenses: ["EXP-010"],
+      linkedMessages: [],
     },
     {
       id: "a",
@@ -55,6 +58,9 @@ const prepared = prepareDocumentIndex({
       createdAt: "2026-03-01T00:00:00.000Z",
       visibility: "private",
       conversations: [],
+      uploadedByName: null,
+      linkedExpenses: [],
+      linkedMessages: ["Message link stored"],
     },
   ],
   parents: [{ name: "Alex Rivera" }],
@@ -76,17 +82,25 @@ assert.deepEqual(table.headers, [
   "Category",
   "Child",
   "Upload date",
+  "Uploaded by",
   "Visibility",
   "Linked conversations",
+  "Linked records",
+  "Supporting evidence",
 ]);
 assert.equal(table.widths.reduce((sum, width) => sum + width, 0), 255.4);
 assert.equal(table.rows[0][0], "DOC-004");
 assert.equal(table.rows[0][1], "scan.png");
 assert.equal(table.rows[0][3], "Medical");
-assert.equal(table.rows[0][6], "Just me");
-assert.equal(table.rows[0][7], "—");
+assert.equal(table.rows[0][6], "Not recorded");
+assert.equal(table.rows[0][7], "Just me");
+assert.equal(table.rows[0][8], "No linked conversation stored");
+assert.match(table.rows[0][10], /Attachments excluded from this export/);
+assert.doesNotMatch(table.rows[0][10], /pp\./);
 assert.equal(table.rows[1][0], "DOC-012");
-assert.equal(table.rows[1][7], "Pickup change");
+assert.equal(table.rows[1][6], "Alex Rivera");
+assert.equal(table.rows[1][8], "Pickup change");
+assert.match(table.rows[1][9], /EXP-010/);
 assert.match(prepared.document.completeness, /1 document is omitted/);
 assert.equal(prepared.includedCount, 2);
 
@@ -184,9 +198,9 @@ const opened = await PDFDocument.load(appended.pdf);
 assert.equal(opened.getPageCount(), 7);
 const pages = opened.getPages();
 assert.equal(pages[2].getWidth(), 200);
-assert.equal(pages[2].getHeight(), 180);
+assert.equal(pages[2].getHeight(), 208);
 assert.equal(pages[3].getWidth(), 300);
-assert.equal(pages[3].getHeight(), 240);
+assert.equal(pages[3].getHeight(), 268);
 assert.equal(pages[4].getWidth(), 792);
 assert.equal(pages[4].getHeight(), 612);
 assert.equal(appended.bundle.length, 1);

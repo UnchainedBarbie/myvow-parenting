@@ -1,5 +1,6 @@
 import { getCustodyFromRotation, type CustodySchedule } from "@/lib/calendarCustody";
 import { formatDateSpan, zonedDayEndMs, zonedDayStartMs } from "@/lib/record/record-filters";
+import { supportingEvidenceCell } from "@/lib/reports/evidence-refs";
 
 export const CALENDAR_CATEGORY_LABELS: Record<string, string> = {
   medical: "Medical",
@@ -525,6 +526,7 @@ export function prepareCalendarReport(input: {
   withheldCount: number;
   fieldWarning: string | null;
   fileLines: string[];
+  evidenceLabels?: Map<string, string> | null;
 }): { includedCount: number; verificationPayload: string; document: CalendarReportDocument } {
   const from = dayKey(input.dateStart);
   const to = dayKey(input.dateEnd);
@@ -642,10 +644,12 @@ export function prepareCalendarReport(input: {
         "Created on",
         "Parenting time",
         "Visibility",
-        "Attachments",
+        "Supporting evidence",
       ],
       widths: [16, 26, 28, 16, 18, 16, 22, 20, 22, 30, 18, 23.4],
-      rows: included.map((event) => eventRow(event, input, userSide, otherSide)),
+      rows: included.map((event) =>
+        eventRow(event, input, userSide, otherSide, input.options.includeFiles, input.evidenceLabels ?? null)
+      ),
       empty: "No events start in the selected dates.",
     });
     const exchanges = included.filter((event) => event.eventType === "custody_exchange");
@@ -733,7 +737,7 @@ export function prepareCalendarReport(input: {
       blocks,
       completeness: `This report includes ${included.length} event${included.length === 1 ? "" : "s"} that start in the selected dates and that this person is allowed to see on the Calendar tab. ${withheld}`,
       verificationExplanation:
-        "This SHA-256 hash is computed from the included event identifiers, numbers, start times, statuses, and creating parents. It can be compared with a later export of the same records. It is not an independent certification.",
+        "This SHA-256 hash covers the included event identifiers, numbers, start times, statuses, and creating parents when those values are stored. It does not cover attachment file bytes. It is not an independent certification. Schedule history that was never stored is not reconstructed.",
     },
   };
 }
@@ -891,12 +895,29 @@ function eventRow(
     viewerId: string;
   },
   userSide: string,
-  otherSide: string
+  otherSide: string,
+  includeFiles: boolean,
+  evidenceLabels: Map<string, string> | null
 ): string[] {
   const description = eventDescriptionForReport(event.description, event.visibility);
   const recurring = event.recurringRule?.trim() ? ` Repeats: ${event.recurringRule.trim()}.` : "";
+  const eventId = formatEventNumber(event.eventNumber);
+  const evidenceKey = eventId === "—" ? event.id : eventId;
+  const includePages = evidenceLabels != null && includeFiles;
+  const planned = includePages ? evidenceLabels?.get(evidenceKey) ?? null : null;
+  const evidence =
+    event.attachmentNames.length === 0
+      ? "No attachment"
+      : (planned ??
+        supportingEvidenceCell({
+          linked: true,
+          documentLabel: "No document ID stored",
+          includeFiles: includePages,
+          pageLabel: null,
+          unavailable: false,
+        }));
   return [
-    formatEventNumber(event.eventNumber),
+    eventId,
     event.title.trim() || "Untitled",
     formatWhen(event, input.timeZone),
     event.childName?.trim() || "All children",
@@ -916,7 +937,7 @@ function eventRow(
       otherSide,
     }),
     calendarVisibilityLabel(event.visibility, false),
-    event.attachmentNames.length > 0 ? event.attachmentNames.join("; ") : "—",
+    evidence,
   ];
 }
 

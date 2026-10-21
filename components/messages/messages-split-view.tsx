@@ -789,7 +789,7 @@ export function MessagesSplitView({
               rel="noopener noreferrer"
               className="shrink-0 text-[12px] font-medium text-[#5B7A52] underline"
             >
-              Print record
+              View record
             </a>
           </div>
           {/* Single row: search + topic + children + status + new button */}

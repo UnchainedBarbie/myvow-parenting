@@ -1,6 +1,7 @@
 import { PDFArray, PDFDocument, PDFName } from "pdf-lib";
 import { appendSupportingFiles, supportingPageCount, uniqueSupportingFiles, type SupportingFile } from "@/lib/reports/embed-attachments";
 import { planEvidence, type EvidenceRef } from "@/lib/reports/communication-record";
+import { evidenceWarnings } from "@/lib/reports/evidence-refs";
 import type { LedgerPdf, PdfLink } from "@/lib/reports/communication-record-pdf";
 
 export async function applyPdfLinks(pdfBytes: Buffer, links: PdfLink[], pageHeightMm: number): Promise<Buffer> {
@@ -39,10 +40,10 @@ export async function assembleCommunicationPdf(
   build: (evidence: Map<string, EvidenceRef[]> | null) => LedgerPdf,
   files: SupportingFile[],
   includeAttachments: boolean
-): Promise<{ pdf: Buffer; bundle: { name: string; buffer: Buffer }[] }> {
+): Promise<{ pdf: Buffer; bundle: { name: string; buffer: Buffer }[]; warnings: string[] }> {
   if (!includeAttachments || files.length === 0) {
     const ledger = build(includeAttachments ? new Map() : null);
-    return { pdf: ledger.buffer, bundle: [] };
+    return { pdf: ledger.buffer, bundle: [], warnings: [] };
   }
 
   const unique = uniqueSupportingFiles(files);
@@ -54,7 +55,12 @@ export async function assembleCommunicationPdf(
   for (let pass = 0; pass < 8; pass += 1) {
     const planned = planEvidence(
       ledger.pageCount,
-      unique.map((file, index) => ({ records: file.records, pages: counts[index] ?? 1 }))
+      unique.map((file, index) => ({
+        records: file.records,
+        pages: counts[index] ?? 1,
+        documentLabel: file.documentLabel ?? null,
+        unavailable: !file.bytes || file.bytes.length === 0 || Boolean(file.unavailableReason),
+      }))
     );
     const next = build(planned);
     if (next.pageCount === ledger.pageCount) {
@@ -67,7 +73,12 @@ export async function assembleCommunicationPdf(
   if (!stable) {
     const planned = planEvidence(
       ledger.pageCount,
-      unique.map((file, index) => ({ records: file.records, pages: counts[index] ?? 1 }))
+      unique.map((file, index) => ({
+        records: file.records,
+        pages: counts[index] ?? 1,
+        documentLabel: file.documentLabel ?? null,
+        unavailable: !file.bytes || file.bytes.length === 0 || Boolean(file.unavailableReason),
+      }))
     );
     const next = build(planned);
     if (next.pageCount === ledger.pageCount) ledger = next;
@@ -75,5 +86,5 @@ export async function assembleCommunicationPdf(
 
   const appended = await appendSupportingFiles(ledger.buffer, unique, "attachments");
   const pdf = await applyPdfLinks(appended.pdf, ledger.links, ledger.pageHeightMm);
-  return { pdf, bundle: appended.bundle };
+  return { pdf, bundle: appended.bundle, warnings: evidenceWarnings(unique) };
 }

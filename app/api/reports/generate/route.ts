@@ -15,7 +15,8 @@ import { expenseReportOptions, loadExpenseReport, zipReport } from "@/lib/report
 import { documentIndexOptions, prepareDocumentIndex } from "@/lib/reports/document-index";
 import { buildDocumentIndexPdf } from "@/lib/reports/document-index-pdf";
 import { loadDocumentIndex } from "@/lib/reports/document-index-load";
-import { appendSupportingFiles, bundleAvailableFiles } from "@/lib/reports/embed-attachments";
+import { bundleAvailableFiles } from "@/lib/reports/embed-attachments";
+import { assembleLabeledPdf } from "@/lib/reports/evidence-refs";
 import { calendarReportOptions, prepareCalendarReport } from "@/lib/reports/calendar-report";
 import { buildCalendarReportPdf } from "@/lib/reports/calendar-report-pdf";
 import { loadCalendarReport } from "@/lib/reports/calendar-report-load";
@@ -109,6 +110,8 @@ export async function POST(request: NextRequest) {
     let recordCount = 0;
     let contentType = "application/pdf";
     let fileExt = "pdf";
+    let warnings: string[] = [];
+    let bundleBuffer: Buffer | null = null;
 
     if (report_type === "communication_report") {
       const includeTone = options?.tone_classifications === true;
@@ -205,20 +208,40 @@ export async function POST(request: NextRequest) {
           }
         }
       } else {
-        const result = buildExpenseReportPdf(
-          prepared.document,
-          loaded.caseLabel,
-          prepared.verificationPayload
-        );
-        buffer = result.buffer;
-        if (optionsSelected.receiptsZip && loaded.receiptFiles.length > 0) {
-          const appended = await appendSupportingFiles(buffer, loaded.receiptFiles, "receipts");
-          buffer = appended.pdf;
-          if (appended.bundle.length > 0) {
-            buffer = await zipReport(`${reportBase}.pdf`, buffer, appended.bundle);
-            contentType = "application/zip";
-            fileExt = "zip";
-          }
+        const assembled = await assembleLabeledPdf({
+          files: loaded.receiptFiles,
+          includeFiles: optionsSelected.receiptsZip,
+          bundleFolder: "receipts",
+          build: (labels) => {
+            const labeled = prepareExpenseReport({
+              expenses: loaded.expenses,
+              parents: loaded.parents,
+              caseLabel: loaded.caseLabel,
+              timeZone: loaded.timeZone,
+              dateStart: start,
+              dateEnd: end,
+              generatedAt: new Date(),
+              viewerId: loaded.viewerId,
+              viewerName: loaded.viewerName,
+              options: optionsSelected,
+              receiptLines: loaded.receiptLines,
+              evidenceLabels: labels,
+            });
+            verificationPayload = labeled.verificationPayload;
+            return buildExpenseReportPdf(labeled.document, loaded.caseLabel, labeled.verificationPayload);
+          },
+        });
+        buffer = assembled.pdf;
+        warnings = assembled.warnings;
+        if (assembled.bundle.length > 0) {
+          bundleBuffer = await zipReport(
+            "README.txt",
+            Buffer.from(
+              "These files could not be placed in the PDF. The report lists each one as unavailable.\n",
+              "utf8"
+            ),
+            assembled.bundle
+          );
         }
       }
     } else if (report_type === "calendar_report") {
@@ -250,17 +273,46 @@ export async function POST(request: NextRequest) {
       });
       recordCount = prepared.includedCount;
       verificationPayload = prepared.verificationPayload;
-      const result = buildCalendarReportPdf(prepared.document, loaded.caseLabel, prepared.verificationPayload);
-      buffer = result.buffer;
-      if (optionsSelected.includeFiles && loaded.files.length > 0) {
-        const appended = await appendSupportingFiles(buffer, loaded.files, "events");
-        buffer = appended.pdf;
-        if (appended.bundle.length > 0) {
-          const reportBase = `Calendar-Custody-Report-${loaded.caseLabel}`.replace(/[\\/:*?"<>|]+/g, "-");
-          buffer = await zipReport(`${reportBase}.pdf`, buffer, appended.bundle);
-          contentType = "application/zip";
-          fileExt = "zip";
-        }
+      const assembled = await assembleLabeledPdf({
+        files: loaded.files,
+        includeFiles: optionsSelected.includeFiles,
+        bundleFolder: "events",
+        build: (labels) => {
+          const labeled = prepareCalendarReport({
+            events: loaded.events,
+            parents: loaded.parents,
+            caseLabel: loaded.caseLabel,
+            timeZone: loaded.timeZone,
+            dateStart: start,
+            dateEnd: end,
+            generatedAt: new Date(),
+            viewerId: user.id,
+            viewerName: loaded.viewerName,
+            viewerIsParent: loaded.viewerIsParent,
+            options: optionsSelected,
+            schedule: loaded.schedule,
+            overrides: loaded.overrides,
+            holidays: loaded.holidays,
+            withheldCount: loaded.withheldCount,
+            fieldWarning: loaded.fieldWarning,
+            fileLines: loaded.fileLines,
+            evidenceLabels: labels,
+          });
+          verificationPayload = labeled.verificationPayload;
+          return buildCalendarReportPdf(labeled.document, loaded.caseLabel, labeled.verificationPayload);
+        },
+      });
+      buffer = assembled.pdf;
+      warnings = assembled.warnings;
+      if (assembled.bundle.length > 0) {
+        bundleBuffer = await zipReport(
+          "README.txt",
+          Buffer.from(
+            "These files could not be placed in the PDF. The report lists each one as unavailable.\n",
+            "utf8"
+          ),
+          assembled.bundle
+        );
       }
     } else if (report_type === "document_index") {
       const optionsSelected = documentIndexOptions(options);
@@ -283,17 +335,38 @@ export async function POST(request: NextRequest) {
       });
       recordCount = prepared.includedCount;
       verificationPayload = prepared.verificationPayload;
-      const result = buildDocumentIndexPdf(prepared.document, loaded.caseLabel, prepared.verificationPayload);
-      buffer = result.buffer;
-      if (optionsSelected.includeFiles && loaded.files.length > 0) {
-        const appended = await appendSupportingFiles(buffer, loaded.files, "documents");
-        buffer = appended.pdf;
-        if (appended.bundle.length > 0) {
-          const reportBase = `Document-Index-${loaded.caseLabel}`.replace(/[\\/:*?"<>|]+/g, "-");
-          buffer = await zipReport(`${reportBase}.pdf`, buffer, appended.bundle);
-          contentType = "application/zip";
-          fileExt = "zip";
-        }
+      const assembled = await assembleLabeledPdf({
+        files: loaded.files,
+        includeFiles: optionsSelected.includeFiles,
+        bundleFolder: "documents",
+        build: (labels) => {
+          const labeled = prepareDocumentIndex({
+            documents: loaded.documents,
+            parents: loaded.parents,
+            caseLabel: loaded.caseLabel,
+            timeZone: loaded.timeZone,
+            generatedAt: new Date(),
+            options: optionsSelected,
+            withheldCount: loaded.withheldCount,
+            fileLines: loaded.fileLines,
+            linkWarning: loaded.linkWarning,
+            evidenceLabels: labels,
+          });
+          verificationPayload = labeled.verificationPayload;
+          return buildDocumentIndexPdf(labeled.document, loaded.caseLabel, labeled.verificationPayload);
+        },
+      });
+      buffer = assembled.pdf;
+      warnings = assembled.warnings;
+      if (assembled.bundle.length > 0) {
+        bundleBuffer = await zipReport(
+          "README.txt",
+          Buffer.from(
+            "These files could not be placed in the PDF. The report lists each one as unavailable.\n",
+            "utf8"
+          ),
+          assembled.bundle
+        );
       }
     } else if (report_type === "interaction_log") {
       const pdf = buildPlaceholderPdf(
@@ -411,10 +484,27 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    if (bundleBuffer) {
+      const bundlePath = `exports/${case_id}/${exportId}-bundle.zip`;
+      const { error: bundleError } = await admin.storage
+        .from("reports")
+        .upload(bundlePath, bundleBuffer, { contentType: "application/zip", upsert: false });
+      if (bundleError) {
+        warnings = [
+          ...warnings,
+          "Some files could not be embedded, and the separate file bundle could not be saved.",
+        ];
+        bundleBuffer = null;
+      }
+    }
+
     return NextResponse.json({
       export_id: exportId,
       record_count: recordCount,
       verification_hash: verificationHash,
+      warnings,
+      has_bundle: Boolean(bundleBuffer),
+      preview: fileExt === "pdf",
     });
   } catch (e) {
     return NextResponse.json(

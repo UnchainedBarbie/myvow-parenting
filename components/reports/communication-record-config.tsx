@@ -102,19 +102,42 @@ export function CommunicationRecordConfig({ caseId }: { caseId: string }) {
       params.set("format", format);
       params.set("layout", layout);
       params.set("include_attachments", includeFiles ? "1" : "0");
+      if (format === "pdf") params.set("store", "1");
       const response = await fetch(`/api/reports/communication-record?${params.toString()}`);
       if (!response.ok) {
         setDownloadError("The export could not be created.");
         return;
       }
+      if (format === "pdf") {
+        const data = (await response.json().catch(() => ({}))) as {
+          export_id?: string;
+          warnings?: string[];
+          has_bundle?: boolean;
+        };
+        if (!data.export_id) {
+          setDownloadError("The export could not be created.");
+          return;
+        }
+        if (data.warnings && data.warnings.length > 0) {
+          sessionStorage.setItem(`report-warnings:${data.export_id}`, JSON.stringify(data.warnings));
+          setDownloadError(data.warnings[0] ?? "Some supporting files could not be included.");
+        }
+        const preview = window.open(
+          `/reports/preview/${data.export_id}${data.has_bundle ? "?bundle=1" : ""}`,
+          "_blank"
+        );
+        if (!preview) {
+          setDownloadError("The preview tab was blocked. Allow popups for this site, then generate the report again.");
+        }
+        return;
+      }
       const blob = await response.blob();
       const disposition = response.headers.get("Content-Disposition") ?? "";
       const match = /filename="([^"]+)"/.exec(disposition);
-      const fallback = format === "csv" ? "Communication-Record.csv" : "Communication-Record.pdf";
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
-      anchor.download = match?.[1] || fallback;
+      anchor.download = match?.[1] || "Communication-Record.csv";
       document.body.appendChild(anchor);
       anchor.click();
       anchor.remove();
@@ -319,7 +342,7 @@ export function CommunicationRecordConfig({ caseId }: { caseId: string }) {
           onClick={() => void download("pdf")}
           className="inline-flex h-9 items-center justify-center rounded-full border border-[#5B7A52] bg-white px-5 text-sm text-[#5B7A52] hover:bg-[#F2F5EF] disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#5B7A52]"
         >
-          {busy === "pdf" ? "Preparing PDF…" : "Download PDF"}
+          {busy === "pdf" ? "Preparing preview…" : "Generate report"}
         </button>
         <button
           type="button"

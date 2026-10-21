@@ -15,8 +15,6 @@ import {
   type RecordEntry,
   type UserRow,
 } from "@/lib/record/record-present";
-import { PrintRecordButton } from "./print-record-button";
-
 export const dynamic = "force-dynamic";
 
 const UUID_RE =
@@ -93,7 +91,6 @@ async function renderRecord(
       <article className="sheet">
         <div className="screen-bar no-print">
           <p>Communication Record</p>
-          <PrintRecordButton />
         </div>
         <header className="cover">
           <p className="brand">MyVow Parenting</p>

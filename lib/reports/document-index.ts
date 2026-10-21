@@ -3,6 +3,7 @@ import {
   documentVisibilityLabel,
   formatDocumentNumber,
 } from "@/lib/documents-tab";
+import { supportingEvidenceCell } from "@/lib/reports/evidence-refs";
 
 export type DocumentIndexSource = {
   id: string;
@@ -14,6 +15,9 @@ export type DocumentIndexSource = {
   createdAt: string;
   visibility: string;
   conversations: string[];
+  uploadedByName: string | null;
+  linkedExpenses: string[];
+  linkedMessages: string[];
 };
 
 export type DocumentIndexOptions = {
@@ -76,33 +80,52 @@ export function prepareDocumentIndex(input: {
   withheldCount: number;
   fileLines: string[];
   linkWarning: string | null;
+  evidenceLabels?: Map<string, string> | null;
 }): { includedCount: number; verificationPayload: string; document: DocumentIndexDocument } {
   const sorted = [...input.documents].sort((a, b) => {
     if (a.createdAt !== b.createdAt) return a.createdAt < b.createdAt ? 1 : -1;
     return a.id < b.id ? 1 : -1;
   });
 
-  const headers = ["Document ID", "Title", "Original filename", "Category", "Child", "Upload date", "Visibility"];
-  const widths = [24, 48, 50, 28, 30, 30, 45.4];
+  const headers = ["Document ID", "Title", "Original filename", "Category", "Child", "Upload date", "Uploaded by", "Visibility", "Linked records", "Supporting evidence"];
+  const widths = [18, 32, 34, 20, 20, 22, 28, 22, 28, 31.4];
   if (input.options.linkedConversations) {
-    headers.push("Linked conversations");
-    widths.splice(0, widths.length, 22, 36, 40, 24, 26, 26, 28, 53.4);
+    headers.splice(8, 0, "Linked conversations");
+    widths.splice(0, widths.length, 16, 28, 28, 18, 16, 20, 24, 18, 24, 28, 35.4);
   }
 
   const rows = sorted.map((doc) => {
     const title = doc.title?.trim() || doc.fileName.trim() || "—";
+    const id = formatDocumentNumber(doc.documentNumber);
+    const links = [
+      ...doc.linkedExpenses,
+      ...doc.linkedMessages,
+    ];
+    const includePages = input.evidenceLabels != null && input.options.includeFiles;
+    const evidence =
+      (includePages ? input.evidenceLabels?.get(id) : null) ??
+      supportingEvidenceCell({
+        linked: true,
+        documentLabel: id === "—" ? null : id,
+        includeFiles: includePages,
+        pageLabel: null,
+        unavailable: false,
+      });
     const row = [
-      formatDocumentNumber(doc.documentNumber),
+      id,
       title,
       doc.fileName.trim() || "—",
       documentCategoryLabel(doc.category),
       doc.childName.trim() || "All children",
       uploadDate(doc.createdAt, input.timeZone),
+      doc.uploadedByName?.trim() || "Not recorded",
       documentVisibilityLabel(doc.visibility),
     ];
     if (input.options.linkedConversations) {
-      row.push(doc.conversations.length > 0 ? doc.conversations.join("; ") : "—");
+      row.push(doc.conversations.length > 0 ? doc.conversations.join("; ") : "No linked conversation stored");
     }
+    row.push(links.length > 0 ? links.join("; ") : "No linked expense or message stored");
+    row.push(evidence);
     return row;
   });
 
@@ -137,7 +160,7 @@ export function prepareDocumentIndex(input: {
     blocks.push({
       kind: "table",
       title: "Documents",
-      intro: "Columns match the Documents tab. The list is ordered by upload date, newest first.",
+      intro: "Columns match the Documents tab, with the parent who uploaded the file when that name is stored. Linked records use saved expense receipts and message links. Calendar events are not stored as document links, so this index does not assign event IDs. The list is ordered by upload date, newest first.",
       headers,
       widths,
       rows,
@@ -186,7 +209,7 @@ export function prepareDocumentIndex(input: {
       blocks,
       completeness: `This report includes ${sorted.length} document${sorted.length === 1 ? "" : "s"} from the Documents tab that this person is allowed to access. ${withheld}`,
       verificationExplanation:
-        "This SHA-256 hash is computed from the included document identifiers, numbers, upload times, file names, categories, visibility, and linked conversation labels when that section is selected. It can be compared with a later export of the same records. It is not an independent certification.",
+        "This SHA-256 hash covers the included document identifiers, numbers, upload times, file names, categories, and visibility. It does not cover file bytes. It is not an independent certification. Unavailable files stay listed in Supporting evidence.",
     },
   };
 }

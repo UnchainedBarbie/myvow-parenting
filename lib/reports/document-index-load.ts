@@ -298,6 +298,58 @@ export async function loadDocumentIndex(input: {
     }
   }
 
+  const uploaderIds = [
+    ...new Set(
+      visible
+        .map((doc) => doc.uploaded_by)
+        .filter((id): id is string => typeof id === "string" && id.length > 0)
+    ),
+  ];
+  const uploaderResult =
+    uploaderIds.length > 0
+      ? await admin.from("users").select("id, full_name, email").in("id", uploaderIds)
+      : { data: [] as { id: string; full_name?: string | null; email?: string | null }[] };
+  const uploaderNames = new Map(
+    ((uploaderResult.data ?? []) as { id: string; full_name?: string | null; email?: string | null }[]).map((user) => [
+      user.id,
+      user.full_name?.trim() || user.email?.trim() || "",
+    ])
+  );
+  const linkedExpenses = new Map<string, string[]>();
+  const linkedMessages = new Map<string, string[]>();
+  if (visibleIds.length > 0) {
+    const expenseLinks = await admin
+      .from("expenses")
+      .select("expense_number, receipt_file_id")
+      .eq("case_id", caseId)
+      .is("deleted_at", null)
+      .in("receipt_file_id", visibleIds);
+    if (!expenseLinks.error) {
+      for (const row of expenseLinks.data ?? []) {
+        const documentId = (row as { receipt_file_id?: string | null }).receipt_file_id;
+        const number = (row as { expense_number?: number | null }).expense_number;
+        if (!documentId || typeof number !== "number") continue;
+        const list = linkedExpenses.get(documentId) ?? [];
+        list.push(`EXP-${String(number).padStart(3, "0")}`);
+        linkedExpenses.set(documentId, list);
+      }
+    }
+    const messageLinks = await admin
+      .from("message_documents")
+      .select("document_id, message_id")
+      .in("document_id", visibleIds);
+    if (!messageLinks.error) {
+      for (const row of messageLinks.data ?? []) {
+        const documentId = (row as { document_id?: string }).document_id;
+        const messageId = (row as { message_id?: string }).message_id;
+        if (!documentId || !messageId) continue;
+        const list = linkedMessages.get(documentId) ?? [];
+        if (!list.includes("Message link stored")) list.push("Message link stored");
+        linkedMessages.set(documentId, list);
+      }
+    }
+  }
+
   const documents: DocumentIndexSource[] = visible.map((doc) => ({
     id: doc.id,
     documentNumber: typeof doc.document_number === "number" ? doc.document_number : null,
@@ -308,6 +360,14 @@ export async function loadDocumentIndex(input: {
     createdAt: doc.created_at ?? "",
     visibility: doc.visibility ?? "private",
     conversations: [...(conversationsByDocument.get(doc.id) ?? [])].sort((a, b) => a.localeCompare(b)),
+    uploadedByName: doc.uploaded_by ? uploaderNames.get(doc.uploaded_by) || null : null,
+    linkedExpenses: linkedExpenses.get(doc.id) ?? [],
+    linkedMessages: [
+      ...new Set([
+        ...(doc.related_comm_id?.trim() ? ["Message link stored"] : []),
+        ...(linkedMessages.get(doc.id) ?? []),
+      ]),
+    ],
   }));
 
   const files: SupportingFile[] = [];
@@ -320,9 +380,11 @@ export async function loadDocumentIndex(input: {
     for (const doc of ordered) {
       const rawDoc = visible.find((item) => item.id === doc.id);
       const record = formatDocumentNumber(doc.documentNumber);
+      const supports = [record === "—" ? doc.id : record, ...doc.linkedExpenses];
       const file: SupportingFile = {
         key: doc.id,
-        records: [record === "—" ? doc.id : record],
+        records: supports,
+        documentLabel: record === "—" ? null : record,
         fileName: doc.fileName,
         mimeType: rawDoc?.mime_type ?? null,
         bytes: null,

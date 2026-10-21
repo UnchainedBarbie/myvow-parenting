@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
+import { randomUUID } from "crypto";
 import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
 import { loadCommunicationFiles, loadCommunicationRecord } from "@/lib/record/load-communication-record";
 import { communicationCsv, verificationPayload } from "@/lib/reports/communication-record";
 import { assembleCommunicationPdf } from "@/lib/reports/communication-record-assemble";
 import { buildChronologicalPdf, buildTranscriptPdf } from "@/lib/reports/communication-record-pdf";
+import { sha256Buffer, sha256String } from "@/lib/reports/build-pdf";
 import { zipReport } from "@/lib/reports/expense-report-load";
 
 export const dynamic = "force-dynamic";
@@ -37,10 +39,11 @@ export async function GET(request: Request) {
   const layout = url.searchParams.get("layout") === "transcript" ? "transcript" : "table";
   const includeFlag = (url.searchParams.get("include_attachments") ?? "1").trim().toLowerCase();
   const includeAttachments = includeFlag !== "0" && includeFlag !== "false";
+  const store = url.searchParams.get("store") === "1";
 
   const searchParams: Record<string, string> = {};
   url.searchParams.forEach((value, key) => {
-    if (key === "case_id" || key === "format" || key === "layout" || key === "include_attachments") return;
+    if (key === "case_id" || key === "format" || key === "layout" || key === "include_attachments" || key === "store") return;
     searchParams[key] = value;
   });
 
@@ -73,14 +76,57 @@ export async function GET(request: Request) {
         : (evidence: Parameters<typeof buildChronologicalPdf>[1]) =>
             buildChronologicalPdf(loaded.model, evidence, payload);
     const assembled = await assembleCommunicationPdf(build, files, includeAttachments);
-    const name = downloadName(loaded.model.caseLabel, assembled.bundle.length > 0 ? "zip" : "pdf");
-    const body =
-      assembled.bundle.length > 0
-        ? await zipReport(downloadName(loaded.model.caseLabel, "pdf"), assembled.pdf, assembled.bundle)
-        : assembled.pdf;
-    return new NextResponse(new Uint8Array(body), {
+    if (store) {
+      const exportId = randomUUID();
+      const filePath = `exports/${caseId}/${exportId}.pdf`;
+      const { error: uploadError } = await admin.storage
+        .from("reports")
+        .upload(filePath, assembled.pdf, { contentType: "application/pdf", upsert: false });
+      if (uploadError) {
+        return NextResponse.json({ error: uploadError.message || "Upload failed" }, { status: 500 });
+      }
+      let hasBundle = false;
+      if (assembled.bundle.length > 0) {
+        const bundle = await zipReport(
+          "README.txt",
+          Buffer.from(
+            "These files could not be placed in the PDF. The report lists each one as unavailable.\n",
+            "utf8"
+          ),
+          assembled.bundle
+        );
+        const bundlePath = `exports/${caseId}/${exportId}-bundle.zip`;
+        const uploaded = await admin.storage
+          .from("reports")
+          .upload(bundlePath, bundle, { contentType: "application/zip", upsert: false });
+        hasBundle = !uploaded.error;
+      }
+      const { error: insertError } = await admin.from("court_exports").insert({
+        id: exportId,
+        case_id: caseId,
+        exported_by: user.id,
+        export_type: "communication_record",
+        date_range_start: null,
+        date_range_end: null,
+        file_path: filePath,
+        file_hash: sha256Buffer(assembled.pdf),
+        verification_hash: sha256String(payload),
+        record_count: loaded.model.rows.length,
+      });
+      if (insertError) {
+        return NextResponse.json({ error: insertError.message }, { status: 500 });
+      }
+      return NextResponse.json({
+        export_id: exportId,
+        warnings: assembled.warnings,
+        has_bundle: hasBundle,
+        preview: true,
+      });
+    }
+    const name = downloadName(loaded.model.caseLabel, "pdf");
+    return new NextResponse(new Uint8Array(assembled.pdf), {
       headers: {
-        "Content-Type": assembled.bundle.length > 0 ? "application/zip" : "application/pdf",
+        "Content-Type": "application/pdf",
         "Content-Disposition": `attachment; filename="${name}"`,
         "Cache-Control": "no-store",
       },

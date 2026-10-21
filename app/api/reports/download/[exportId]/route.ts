@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
 
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ exportId: string }> }
 ) {
   try {
@@ -32,16 +32,21 @@ export async function GET(
     if (!membership) {
       return NextResponse.json({ message: "Forbidden" }, { status: 403 });
     }
+    const bundle = request.nextUrl.searchParams.get("bundle") === "1";
+    const inline = request.nextUrl.searchParams.get("inline") === "1";
+    const filePath = bundle
+      ? `exports/${row.case_id}/${exportId}-bundle.zip`
+      : row.file_path;
     const { data: file, error: downloadError } = await admin.storage
       .from("reports")
-      .download(row.file_path);
+      .download(filePath);
     if (downloadError || !file) {
       return NextResponse.json(
         { message: downloadError?.message || "File not found" },
         { status: 404 }
       );
     }
-    const ext = row.file_path.split(".").pop()?.toLowerCase() ?? "pdf";
+    const ext = filePath.split(".").pop()?.toLowerCase() ?? "pdf";
     const contentType =
       ext === "csv"
         ? "text/csv"
@@ -50,11 +55,13 @@ export async function GET(
           : ext === "xlsx"
             ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             : "application/pdf";
-    const filename = `export-${exportId}.${ext}`;
+    const filename = bundle ? `omitted-files-${exportId}.zip` : `export-${exportId}.${ext}`;
+    const disposition = inline && contentType === "application/pdf" ? "inline" : "attachment";
     return new NextResponse(file, {
       headers: {
         "Content-Type": contentType,
-        "Content-Disposition": `attachment; filename="${filename}"`,
+        "Content-Disposition": `${disposition}; filename="${filename}"`,
+        "Cache-Control": "private, no-store",
       },
     });
   } catch (e) {

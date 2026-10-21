@@ -1,6 +1,7 @@
 import { jsPDF } from "jspdf";
 import { sha256String } from "@/lib/reports/build-pdf";
 import type { ExpenseReportDocument, ExpenseTableBlock } from "@/lib/reports/expense-report";
+import { linkTargetPage, type ReportLink } from "@/lib/reports/evidence-refs";
 
 const PAGE_W = 279.4;
 const PAGE_H = 215.9;
@@ -8,7 +9,7 @@ const MARGIN = 12;
 const BOTTOM = PAGE_H - 14;
 const CONTENT_W = PAGE_W - MARGIN * 2;
 
-type Cursor = { doc: jsPDF; y: number };
+type Cursor = { doc: jsPDF; y: number; links: ReportLink[] };
 
 function newPage(cursor: Cursor, caseLabel: string) {
   cursor.doc.addPage();
@@ -142,7 +143,19 @@ function paintRow(
     const visible = lines.slice(0, lineBudget);
     rest[index] = lines.slice(lineBudget);
     visible.forEach((line, lineIndex) => {
-      cursor.doc.text(line, x, cursor.y + lineIndex * 3.4);
+      const y = cursor.y + lineIndex * 3.4;
+      cursor.doc.text(line, x, y);
+      const target = linkTargetPage(line);
+      if (target) {
+        cursor.links.push({
+          page: cursor.doc.getCurrentPageInfo().pageNumber,
+          x,
+          y: y - 2.6,
+          w: Math.max(widths[index] - 2, 8),
+          h: 3.2,
+          target,
+        });
+      }
     });
     x += widths[index];
   });
@@ -167,9 +180,9 @@ export function buildExpenseReportPdf(
   report: ExpenseReportDocument,
   caseLabel: string,
   verificationPayload: string
-): { buffer: Buffer; verificationHash: string; pageCount: number } {
+): { buffer: Buffer; verificationHash: string; pageCount: number; links: ReportLink[]; pageHeightMm: number } {
   const doc = new jsPDF({ unit: "mm", format: "letter", orientation: "landscape" });
-  const cursor: Cursor = { doc, y: MARGIN };
+  const cursor: Cursor = { doc, y: MARGIN, links: [] };
   doc.setProperties({ title: "Expense Report", subject: "MyVow Parenting expense report" });
 
   doc.setFont("times", "normal");
@@ -256,5 +269,7 @@ export function buildExpenseReportPdf(
     buffer: Buffer.from(new Uint8Array(out as ArrayBuffer)),
     verificationHash: hash,
     pageCount: pages,
+    links: cursor.links,
+    pageHeightMm: PAGE_H,
   };
 }

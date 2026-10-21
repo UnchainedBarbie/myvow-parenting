@@ -10,6 +10,8 @@ import {
   type ExpenseTabRow,
 } from "@/lib/expenses-tab";
 import { formatDateSpan, zonedDayEndMs, zonedDayStartMs } from "@/lib/record/record-filters";
+import { formatDocumentNumber } from "@/lib/documents-tab";
+import { supportingEvidenceCell } from "@/lib/reports/evidence-refs";
 
 export type ExpenseParty = {
   userId: string | null;
@@ -42,6 +44,8 @@ export type ExpenseReportSource = {
   paymentNotes: string | null;
   receiptName: string | null;
   receiptDocumentNumber: number | null;
+  receiptFileId?: string | null;
+  receiptUnavailable?: boolean;
   childName: string | null;
 };
 
@@ -467,6 +471,7 @@ export function prepareExpenseReport(input: {
   viewerName: string;
   options: ExpenseReportOptions;
   receiptLines: string[];
+  evidenceLabels?: Map<string, string> | null;
 }): PreparedExpenseReport {
   const parents = namedParents(input.parents);
   const byUserId = parentByUserId(parents, input.parents);
@@ -567,16 +572,33 @@ export function prepareExpenseReport(input: {
     const otherNote =
       expense.category === "other" ? expense.categoryDescription?.trim() ?? "" : "";
     const subtitle = [categoryName, expense.receiptName?.trim() || ""].filter(Boolean).join(" • ");
+    const documentLabel =
+      expense.receiptFileId && formatDocumentNumber(expense.receiptDocumentNumber) !== "—"
+        ? formatDocumentNumber(expense.receiptDocumentNumber)
+        : null;
+    const includePages = input.evidenceLabels != null && input.options.receiptsZip;
+    const planned = includePages ? input.evidenceLabels?.get(id) ?? null : null;
+    const evidence =
+      planned ??
+      supportingEvidenceCell({
+        linked: Boolean(expense.receiptFileId),
+        documentLabel,
+        includeFiles: includePages,
+        pageLabel: null,
+        unavailable: Boolean(expense.receiptUnavailable),
+      });
     ledgerRows.push([
       id,
       [expense.description.trim() || "—", subtitle].filter(Boolean).join("\n"),
       [categoryName || "—", otherNote].filter(Boolean).join("\n"),
       expense.childName?.trim() || "—",
-      tabDateLabel(expense, input.timeZone),
+      dateCell(expense, input.timeZone),
+      submitterName,
       expenseTabTotalText(expense.amount),
       expenseTabSplitText(tabRow),
       expenseTabTheirShareText(tabRow, input.viewerId),
       expenseTabStatus(tabRow, input.viewerId),
+      evidence,
     ]);
 
     if (isPaid(expense) || hasPaymentDetails(expense)) {
@@ -702,9 +724,21 @@ export function prepareExpenseReport(input: {
     blocks.push({
       kind: "table",
       title: "All expenses",
-      intro: `Columns match the Expenses tab for ${input.viewerName.trim() || "the parent who generated this report"}.`,
-      headers: ["Expense ID", "Description", "Category", "Child", "Date", "Total", "Split", "Their share", "Status"],
-      widths: [22, 58, 32, 26, 28, 22, 18, 24, 25.4],
+      intro: `Columns follow the Expenses tab for ${input.viewerName.trim() || "the parent who generated this report"}. Submitted by is the parent who entered the expense. Their share is that parent's co-parent share, which is separate from who paid. Dates show the incurred date and the entered date. The report date filter uses the entered date.`,
+      headers: [
+        "Expense ID",
+        "Description",
+        "Category",
+        "Child",
+        "Date",
+        "Submitted by",
+        "Total",
+        "Split",
+        "Their share",
+        "Status",
+        "Supporting evidence",
+      ],
+      widths: [16, 36, 20, 16, 28, 28, 16, 14, 18, 16, 47.4],
       rows: ledgerRows,
       empty: "No expenses were entered in the selected dates.",
     });
@@ -761,14 +795,14 @@ export function prepareExpenseReport(input: {
           label: "Parties",
           value: parents.length > 0 ? parents.map((parent) => parent.name).join("; ") : "Not recorded",
         },
-        { label: "Date range", value: `${dateLabel}. The range uses the date the expense was entered.` },
+        { label: "Date range", value: `${dateLabel}. Expenses are included by the date they were entered, not the incurred date.` },
         { label: "Generated", value: generatedLabel },
         { label: "Sections", value: sectionNames.join("; ") },
       ],
       blocks,
       completeness,
       verificationExplanation:
-        "This SHA-256 hash is computed from the included expense identifiers, numbers, entered and incurred dates, amounts, recorded shares, statuses, and submitting parents. It can be compared with a later export of the same records. It is not an independent certification.",
+        "This SHA-256 hash covers the included expense identifiers, numbers, entered and incurred dates, amounts, recorded shares, statuses, and submitting parents. It does not cover receipt file bytes. It is not an independent certification. Unavailable receipts stay listed in Supporting evidence.",
     },
   };
 }

@@ -180,25 +180,53 @@ assert.deepEqual(ledger.headers, [
   "Category",
   "Child",
   "Date",
+  "Submitted by",
   "Total",
   "Split",
   "Their share",
   "Status",
+  "Supporting evidence",
 ]);
 assert.equal(ledger.rows.length, 8);
 const byId = new Map(ledger.rows.map((row) => [row[0], row]));
-assert.equal(byId.get("EXP-001")?.[6], "40/60");
-assert.equal(byId.get("EXP-001")?.[7], "$40.00");
-assert.equal(byId.get("EXP-001")?.[8], "Pending");
+assert.equal(byId.get("EXP-001")?.[5], "Alex Rivera");
+assert.equal(byId.get("EXP-001")?.[7], "40/60");
+assert.equal(byId.get("EXP-001")?.[8], "$40.00");
+assert.equal(byId.get("EXP-001")?.[9], "Pending");
+assert.equal(byId.get("EXP-001")?.[10], "No attachment");
 assert.equal(byId.get("EXP-001")?.[3], "Sam");
 assert.match(byId.get("EXP-001")?.[1] ?? "", /Therapy visit/);
-assert.equal(byId.get("EXP-003")?.[7], "$25.00");
-assert.equal(byId.get("EXP-003")?.[8], "Paid");
-assert.equal(byId.get("EXP-004")?.[7], "$0.00");
-assert.equal(byId.get("EXP-004")?.[8], "Logged");
-assert.equal(byId.get("EXP-005")?.[7], "$30.00");
-assert.equal(byId.get("EXP-005")?.[8], "Disputed");
-assert.equal(byId.get("EXP-006")?.[8], "Logged");
+assert.equal(byId.get("EXP-003")?.[5], "Jordan Lee");
+assert.equal(byId.get("EXP-003")?.[8], "$25.00");
+assert.equal(byId.get("EXP-003")?.[9], "Paid");
+assert.equal(byId.get("EXP-004")?.[8], "$0.00");
+assert.equal(byId.get("EXP-004")?.[9], "Logged");
+assert.equal(byId.get("EXP-005")?.[8], "$30.00");
+assert.equal(byId.get("EXP-005")?.[9], "Disputed");
+assert.equal(byId.get("EXP-006")?.[9], "Logged");
+
+const jordanView = prepareExpenseReport({
+  expenses: records,
+  parents,
+  caseLabel: "FAM-100",
+  timeZone: "America/Denver",
+  dateStart: "2026-10-01",
+  dateEnd: "2026-10-20",
+  generatedAt: new Date("2026-10-20T18:00:00.000Z"),
+  viewerId: "jordan",
+  viewerName: "Jordan Lee",
+  options,
+  receiptLines: [],
+});
+const jordanLedger = jordanView.document.blocks.find((block) => block.kind === "table" && block.title === "All expenses");
+assert.equal(jordanLedger?.kind, "table");
+if (jordanLedger?.kind === "table") {
+  const jordanById = new Map(jordanLedger.rows.map((row) => [row[0], row]));
+  assert.equal(jordanById.get("EXP-001")?.[5], "Alex Rivera");
+  assert.equal(jordanById.get("EXP-001")?.[8], "$60.00");
+  assert.equal(jordanById.get("EXP-003")?.[5], "Jordan Lee");
+  assert.match(jordanView.document.facts.map((fact) => fact.value).join(" "), /date they were entered/);
+}
 
 const payments = prepared.document.blocks.find((block) => block.kind === "table" && block.title === "Payment history");
 assert.equal(payments?.kind, "table");

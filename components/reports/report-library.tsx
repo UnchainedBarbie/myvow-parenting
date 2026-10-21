@@ -225,13 +225,31 @@ export function ReportLibrary({ caseId }: { caseId: string }) {
         export_id?: string;
         download_url?: string;
         message?: string;
+        warnings?: string[];
+        has_bundle?: boolean;
+        preview?: boolean;
       };
       if (!res.ok) {
         showErrorToast(data.message ?? "Report generation failed.");
         return;
       }
-      showSuccessToast("Report generated.");
-      if (data.export_id) {
+      if (data.warnings && data.warnings.length > 0) {
+        showErrorToast(data.warnings[0] ?? "Some supporting files could not be included.");
+      } else {
+        showSuccessToast("Report generated.");
+      }
+      if (data.export_id && data.preview) {
+        if (data.warnings && data.warnings.length > 0) {
+          sessionStorage.setItem(`report-warnings:${data.export_id}`, JSON.stringify(data.warnings));
+        }
+        const preview = window.open(
+          `/reports/preview/${data.export_id}${data.has_bundle ? "?bundle=1" : ""}`,
+          "_blank"
+        );
+        if (!preview) {
+          showErrorToast("The preview tab was blocked. Allow popups for this site, then generate the report again.");
+        }
+      } else if (data.export_id) {
         window.open(`/api/reports/download/${data.export_id}`, "_blank");
       } else if (data.download_url) {
         window.open(data.download_url, "_blank");

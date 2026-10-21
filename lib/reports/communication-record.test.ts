@@ -140,7 +140,8 @@ const tableText = table.buffer.toString("latin1");
 assert.match(tableText, /END-OF-ORIGINAL-BODY-XYZ/);
 assert.match(tableText, /No subject recorded/);
 assert.match(tableText, /MYVOW PARENTING/);
-assert.doesNotMatch(tableText, /Evidence/);
+assert.match(tableText, /No attachment/);
+assert.match(tableText, /does not cover attachment file bytes/);
 assert.equal(table.pageCount >= 1, true);
 
 const transcript = buildTranscriptPdf(record, null, "payload");
@@ -182,7 +183,7 @@ async function main() {
   }
   assert.equal(linked, true);
   const planned = planEvidence(1, [{ records: ["MSG-002"], pages: 2 }]);
-  assert.equal(planned.get("MSG-002")?.[0].label, "pp. 2-3");
+  assert.equal(planned.get("MSG-002")?.[0].label, "Document number not assigned, pp. 2–3");
   console.log("communication record tests passed");
 }
 

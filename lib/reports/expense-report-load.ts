@@ -1,6 +1,7 @@
 import archiver from "archiver";
 import { getServiceRoleClient } from "@/lib/supabase/server";
 import { documentAuthorizedForViewer, formatDocumentNumber } from "@/lib/documents-tab";
+import { classifyReceiptDocument } from "@/lib/reports/evidence-refs";
 import {
   classifySupportingFile,
   supportingFileSentence,
@@ -208,16 +209,15 @@ export async function loadExpenseReport(input: {
       mimeType: string | null;
       visibility: string | null;
       uploadedBy: string | null;
+      include: boolean;
+      reason: string;
     }
   >();
   if (receiptIds.length > 0) {
     const { data } = await admin
       .from("documents")
-      .select("id, file_name, document_number, storage_path, mime_type, visibility, uploaded_by")
-      .in("id", receiptIds)
-      .eq("case_id", caseId)
-      .eq("status", "active")
-      .is("deleted_at", null);
+      .select("id, file_name, document_number, storage_path, mime_type, visibility, uploaded_by, status, deleted_at, case_id")
+      .in("id", receiptIds);
     for (const row of data ?? []) {
       const doc = row as {
         id: string;
@@ -227,7 +227,18 @@ export async function loadExpenseReport(input: {
         mime_type?: string | null;
         visibility?: string | null;
         uploaded_by?: string | null;
+        status?: string | null;
+        deleted_at?: string | null;
+        case_id?: string | null;
       };
+      const decision = classifyReceiptDocument(
+        {
+          caseId: doc.case_id ?? null,
+          status: doc.status ?? null,
+          deletedAt: doc.deleted_at ?? null,
+        },
+        caseId
+      );
       receiptDocs.set(doc.id, {
         fileName: doc.file_name ?? null,
         documentNumber: typeof doc.document_number === "number" ? doc.document_number : null,
@@ -235,6 +246,8 @@ export async function loadExpenseReport(input: {
         mimeType: doc.mime_type ?? null,
         visibility: doc.visibility ?? null,
         uploadedBy: doc.uploaded_by ?? null,
+        include: decision.include,
+        reason: decision.reason,
       });
     }
   }
@@ -269,6 +282,8 @@ export async function loadExpenseReport(input: {
       paymentNotes: typeof row.payment_notes === "string" ? row.payment_notes : null,
       receiptName: receipt?.fileName ?? null,
       receiptDocumentNumber: receipt?.documentNumber ?? null,
+      receiptFileId: receiptId,
+      receiptUnavailable: Boolean(receiptId) && (!receipt || !receipt.include),
       childName: childNamesForExpense(
         String(row.id),
         typeof row.child_id === "string" ? row.child_id : null,
@@ -303,14 +318,18 @@ export async function loadExpenseReport(input: {
       const expenseLabel = formatExpenseNumber(expense.expenseNumber) || expense.id;
       const doc = receiptDocs.get(raw.receipt_file_id);
       const docLabel = doc ? formatDocumentNumber(doc.documentNumber) : "";
-      const records = [expenseLabel, docLabel].filter((label) => label && label !== "—");
       pending.push({
         key: raw.receipt_file_id,
-        records,
+        records: [expenseLabel],
+        documentLabel: docLabel && docLabel !== "—" ? docLabel : null,
         fileName: doc?.fileName?.trim() || "receipt",
         mimeType: doc?.mimeType ?? null,
         bytes: null,
-        unavailableReason: doc ? null : "The receipt document is missing or no longer active.",
+        unavailableReason: !doc
+          ? `Attachment unavailable. The receipt document was not found. Stored receipt id: ${raw.receipt_file_id}.`
+          : doc.include
+            ? null
+            : doc.reason,
       });
     }
     const unique = uniqueSupportingFiles(pending);
@@ -323,11 +342,13 @@ export async function loadExpenseReport(input: {
           { userId, role: viewerRole }
         );
       if (!doc) {
-        file.unavailableReason = "The receipt document is missing or no longer active.";
+        file.unavailableReason = `Attachment unavailable. The receipt document was not found. Stored receipt id: ${file.key}.`;
+      } else if (!doc.include) {
+        file.unavailableReason = doc.reason;
       } else if (!allowed) {
-        file.unavailableReason = "This file is visible only to the parent who uploaded it.";
+        file.unavailableReason = "Attachment unavailable. This file is visible only to the parent who uploaded it.";
       } else if (!doc.storagePath) {
-        file.unavailableReason = "No file is stored for this receipt.";
+        file.unavailableReason = "Attachment unavailable. No file is stored for this receipt.";
       } else {
         const { data, error } = await admin.storage.from("documents").download(doc.storagePath);
         if (error || !data) file.unavailableReason = "The file could not be downloaded.";

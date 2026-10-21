@@ -299,6 +299,7 @@ export async function loadCalendarReport(input: {
       const file: SupportingFile = {
         key: attachment.id,
         records: [label],
+        documentLabel: "No document ID stored",
         fileName,
         mimeType: null,
         bytes: null,

@@ -200,12 +200,17 @@ export function communicationCsv(model: CommunicationRecordModel): string {
 }
 
 export function evidenceLabel(start: number, end: number): string {
-  return start === end ? `p. ${start}` : `pp. ${start}-${end}`;
+  return start === end ? `p. ${start}` : `pp. ${start}–${end}`;
+}
+
+function attachmentDocumentLabel(number: number | null): string {
+  if (number == null || !Number.isFinite(number)) return "Document number not assigned";
+  return `DOC-${String(Math.trunc(number)).padStart(3, "0")}`;
 }
 
 export function planEvidence(
   ledgerPages: number,
-  files: { records: string[]; pages: number }[]
+  files: { records: string[]; pages: number; documentLabel?: string | null; unavailable?: boolean }[]
 ): Map<string, EvidenceRef[]> {
   const map = new Map<string, EvidenceRef[]>();
   let page = Math.max(ledgerPages, 0) + 1;
@@ -214,7 +219,11 @@ export function planEvidence(
     const start = page;
     const end = page + count - 1;
     page = end + 1;
-    const ref = { label: evidenceLabel(start, end), page: start };
+    const id = file.documentLabel?.trim() || "Document number not assigned";
+    const label = file.unavailable
+      ? `${id}\nAttachment unavailable`
+      : `${id}, ${evidenceLabel(start, end)}`;
+    const ref = { label, page: file.unavailable ? 0 : start };
     for (const record of file.records) {
       const list = map.get(record) ?? [];
       list.push(ref);
@@ -228,15 +237,30 @@ export function evidenceLines(
   row: CommunicationRow,
   planned: Map<string, EvidenceRef[]> | null
 ): { text: string; targetPage: number | null }[] {
-  if (!planned) return [];
+  if (row.attachments.length === 0) return [{ text: "No attachment", targetPage: null }];
+  if (!planned) {
+    return row.attachments.map((attachment) => ({
+      text: `${attachmentDocumentLabel(attachment.documentNumber)}\nAttachments excluded from this export`,
+      targetPage: null,
+    }));
+  }
   const lines: { text: string; targetPage: number | null }[] = (planned.get(row.number) ?? []).map((ref) => ({
     text: ref.label,
-    targetPage: ref.page,
+    targetPage: ref.page > 0 ? ref.page : null,
   }));
-  if (row.attachments.some((attachment) => !attachment.authorized)) {
-    lines.push({ text: "Not available", targetPage: null });
+  for (const attachment of row.attachments) {
+    if (attachment.authorized) continue;
+    lines.push({
+      text: `${attachmentDocumentLabel(attachment.documentNumber)}\nAttachment unavailable`,
+      targetPage: null,
+    });
   }
-  if (lines.length === 0) lines.push({ text: "—", targetPage: null });
+  if (lines.length === 0) {
+    return row.attachments.map((attachment) => ({
+      text: `${attachmentDocumentLabel(attachment.documentNumber)}\nAttachment unavailable`,
+      targetPage: null,
+    }));
+  }
   return lines;
 }
 

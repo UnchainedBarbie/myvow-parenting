@@ -1,11 +1,13 @@
-import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
+import { PDFDocument, PDFName, StandardFonts, rgb } from "pdf-lib";
 import sharp from "sharp";
 
 export type SupportingFile = {
   /** Stable id used to keep one copy when several records share a file. */
   key: string;
-  /** DOC and EXP numbers that reference this file, in record order. */
+  /** Record IDs this file supports, such as EXP-010 or MSG-004. */
   records: string[];
+  /** Stable document ID when one is stored, such as DOC-018. */
+  documentLabel?: string | null;
   fileName: string;
   mimeType: string | null;
   bytes: Buffer | null;
@@ -34,13 +36,14 @@ export function uniqueSupportingFiles(files: SupportingFile[]): SupportingFile[]
   for (const file of files) {
     const existing = grouped.get(file.key);
     if (!existing) {
-      grouped.set(file.key, { ...file, records: [...file.records] });
+      grouped.set(file.key, { ...file, records: [...file.records], documentLabel: file.documentLabel ?? null });
       order.push(file.key);
       continue;
     }
     for (const record of file.records) {
       if (!existing.records.includes(record)) existing.records.push(record);
     }
+    if (!existing.documentLabel && file.documentLabel) existing.documentLabel = file.documentLabel;
     if (!existing.bytes && file.bytes) {
       existing.bytes = file.bytes;
       existing.mimeType = existing.mimeType ?? file.mimeType;
@@ -171,6 +174,27 @@ function wrapText(text: string, maxChars: number): string[] {
   return lines.length > 0 ? lines : [" "];
 }
 
+export function supportingHeading(file: SupportingFile): string {
+  const id = file.documentLabel?.trim() || "Document number not assigned";
+  const name = file.fileName.trim() || "Untitled file";
+  const supports = file.records.filter(Boolean).join(", ") || "Unnumbered record";
+  return `${id} | ${name} | Supports ${supports}`;
+}
+
+function stampPageNumber(
+  page: ReturnType<PDFDocument["addPage"]>,
+  font: Awaited<ReturnType<PDFDocument["embedFont"]>>,
+  pageNumber: number
+) {
+  page.drawText(`Page ${pageNumber}`, {
+    x: 18,
+    y: 12,
+    size: 9,
+    font,
+    color: rgb(0.27, 0.27, 0.27),
+  });
+}
+
 async function addNoticePage(
   pdf: PDFDocument,
   font: Awaited<ReturnType<PDFDocument["embedFont"]>>,
@@ -178,6 +202,7 @@ async function addNoticePage(
   lines: { text: string; bold?: boolean }[]
 ) {
   const page = pdf.addPage([792, 612]);
+  stampPageNumber(page, font, pdf.getPageCount());
   page.drawText("MYVOW PARENTING", {
     x: 36,
     y: 572,
@@ -247,16 +272,15 @@ export async function appendSupportingFiles(
   const usedNames = new Map<string, number>();
 
   for (const file of unique) {
-    const records = file.records.filter(Boolean).join(", ") || "Unnumbered record";
+    const heading = supportingHeading(file);
     const name = file.fileName.trim() || "Untitled file";
     const disposition = await classifySupportingFile(file);
 
     if (disposition === "unavailable" || !file.bytes) {
       await addNoticePage(pdf, font, bold, [
-        { text: records, bold: true },
-        { text: `File: ${name}` },
-        { text: file.unavailableReason?.trim() || "This file is not available." },
-        { text: "The file is not included in the download bundle." },
+        { text: heading, bold: true },
+        { text: file.unavailableReason?.trim() || "Attachment unavailable." },
+        { text: "The original file is not included." },
       ]);
       continue;
     }
@@ -266,21 +290,29 @@ export async function appendSupportingFiles(
         const src = await PDFDocument.load(file.bytes, { ignoreEncryption: true, updateMetadata: false });
         const count = src.getPageCount();
         await addNoticePage(pdf, font, bold, [
-          { text: records, bold: true },
-          { text: `File: ${name}` },
+          { text: heading, bold: true },
           {
-            text: `${count} page${count === 1 ? "" : "s"} from the original file follow, in their original order. The file content is unchanged.`,
+            text: `${count} original page${count === 1 ? "" : "s"} follow. The file content is unchanged. A page label is printed in the added margin.`,
           },
         ]);
-        const copied = await pdf.copyPages(src, src.getPageIndices());
-        for (const page of copied) pdf.addPage(page);
+        for (const index of src.getPageIndices()) {
+          const srcPage = src.getPage(index);
+          if (!srcPage.node.Contents()) {
+            srcPage.node.set(PDFName.of("Contents"), src.context.stream(""));
+          }
+          const embedded = await pdf.embedPage(srcPage);
+          const footer = 28;
+          const pageNumber = pdf.getPageCount() + 1;
+          const page = pdf.addPage([srcPage.getWidth(), srcPage.getHeight() + footer]);
+          page.drawPage(embedded, { x: 0, y: footer });
+          stampPageNumber(page, font, pageNumber);
+        }
         continue;
       } catch {
         const bundledName = safeBundleName(bundleFolder, name, usedNames);
         bundle.push({ name: bundledName, buffer: file.bytes });
         await addNoticePage(pdf, font, bold, [
-          { text: records, bold: true },
-          { text: `File: ${name}` },
+          { text: heading, bold: true },
           { text: "This PDF could not be placed in the report. The original file is included in the download bundle." },
           { text: `Bundle path: ${bundledName}` },
         ]);
@@ -294,6 +326,7 @@ export async function appendSupportingFiles(
         const embedded =
           image.kind === "jpg" ? await pdf.embedJpg(image.bytes) : await pdf.embedPng(image.bytes);
         const page = pdf.addPage([792, 612]);
+        stampPageNumber(page, font, pdf.getPageCount());
         page.drawText("MYVOW PARENTING", {
           x: 36,
           y: 572,
@@ -301,7 +334,7 @@ export async function appendSupportingFiles(
           font,
           color: rgb(0.29, 0.29, 0.29),
         });
-        const recordLines = wrapText(records, 80);
+        const recordLines = wrapText(heading, 80);
         recordLines.forEach((part, index) => {
           page.drawText(part, {
             x: 36,
@@ -333,8 +366,7 @@ export async function appendSupportingFiles(
         const bundledName = safeBundleName(bundleFolder, name, usedNames);
         bundle.push({ name: bundledName, buffer: file.bytes });
         await addNoticePage(pdf, font, bold, [
-          { text: records, bold: true },
-          { text: `File: ${name}` },
+          { text: heading, bold: true },
           { text: "This image could not be placed in the report. The original file is included in the download bundle." },
           { text: `Bundle path: ${bundledName}` },
         ]);
@@ -345,8 +377,7 @@ export async function appendSupportingFiles(
     const bundledName = safeBundleName(bundleFolder, name, usedNames);
     bundle.push({ name: bundledName, buffer: file.bytes });
     await addNoticePage(pdf, font, bold, [
-      { text: records, bold: true },
-      { text: `File: ${name}` },
+      { text: heading, bold: true },
       { text: "This file type cannot be placed in the PDF. The original file is included in the download bundle." },
       { text: `Bundle path: ${bundledName}` },
     ]);

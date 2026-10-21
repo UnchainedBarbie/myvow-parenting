@@ -232,8 +232,8 @@ function sharedFacts(
     {
       label: "Attachments",
       value: includeAttachments
-        ? "Included after the message ledger. Evidence page numbers refer to this PDF."
-        : "Not included in this PDF.",
+        ? "Included after the message ledger. Page numbers refer to this PDF. The record hash does not cover attachment file bytes."
+        : "Attachments excluded from this export. Document IDs are listed without page numbers.",
     },
     { label: "Filters", value: filterText },
   ];
@@ -353,17 +353,15 @@ function tableRow(
     row.body,
   ];
   const lines = cells.map((cell, index) => plainLines(doc, cell, widths[index] - 2));
-  if (evidence) {
-    const evidenceWidth = widths[widths.length - 1] - 2;
-    const evidenceCells = evidenceLines(row, evidence).flatMap((line) => {
-      const wrapped = wrapExact(doc, line.text, evidenceWidth);
-      return wrapped.map((text, index) => ({
-        text,
-        targetPage: index === 0 ? line.targetPage : null,
-      }));
-    });
-    lines.push(evidenceCells);
-  }
+  const evidenceWidth = widths[widths.length - 1] - 2;
+  const evidenceCells = evidenceLines(row, evidence).flatMap((line) => {
+    const wrapped = wrapExact(doc, line.text, evidenceWidth);
+    return wrapped.map((text, index) => ({
+      text,
+      targetPage: index === 0 ? line.targetPage : null,
+    }));
+  });
+  lines.push(evidenceCells);
   return lines;
 }
 
@@ -402,11 +400,8 @@ export function buildChronologicalPdf(
   );
   cursor.y += 3;
 
-  const widths = includeAttachments
-    ? [22, 40, 32, 32, 32, 73.4, 24]
-    : [22, 40, 32, 32, 32, 97.4];
-  const headers = ["Message ID", "Date & Time", "From", "To", "Subject", "Message"];
-  if (includeAttachments) headers.push("Evidence");
+  const widths = [22, 36, 28, 28, 28, 69.4, 44];
+  const headers = ["Message ID", "Date & Time", "From", "To", "Subject", "Message", "Supporting evidence"];
 
   if (model.rows.length === 0) {
     writeLines(
@@ -425,7 +420,7 @@ export function buildChronologicalPdf(
   return finish(
     cursor,
     verification,
-    "This fingerprint covers the message identifiers, timestamps, parties, subjects, original wording, and attachment identifiers in this export. It is a hash of this file's source data, not an independent certification."
+    "This fingerprint covers the message identifiers, timestamps, parties, subjects, original wording, and attachment identifiers in this export. It does not cover attachment file bytes. It is not an independent certification."
   );
 }
 
@@ -496,17 +491,15 @@ function transcriptMessage(cursor: Cursor, row: CommunicationRow, evidence: Map<
       [51, 51, 51]
     );
   }
-  if (evidence) {
-    for (const line of evidenceLines(row, evidence)) {
-      writeLines(
-        cursor,
-        [{ text: `Evidence: ${line.text}`, targetPage: line.targetPage }],
-        cursor.geom.margin,
-        8,
-        "normal",
-        [22, 22, 22]
-      );
-    }
+  for (const line of evidenceLines(row, evidence)) {
+    writeLines(
+      cursor,
+      [{ text: `Supporting evidence: ${line.text}`, targetPage: line.targetPage }],
+      cursor.geom.margin,
+      8,
+      "normal",
+      [22, 22, 22]
+    );
   }
   cursor.y += 1;
   cursor.doc.setDrawColor(208, 208, 208);
@@ -576,6 +569,6 @@ export function buildTranscriptPdf(
   return finish(
     cursor,
     verification,
-    "This fingerprint covers the message identifiers, timestamps, parties, subjects, transcript text, and attachment identifiers in this export. It is a hash of this file's source data, not an independent certification. The conversation transcript follows the on-screen record, including omission of a detected signature block. The chronological table and CSV keep the complete original wording."
+    "This fingerprint covers the message identifiers, timestamps, parties, subjects, transcript text, and attachment identifiers in this export. It does not cover attachment file bytes. It is not an independent certification. The conversation transcript follows the on-screen record, including omission of a detected signature block. The chronological table and CSV keep the complete original wording."
   );
 }

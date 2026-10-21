@@ -1,3 +1,4 @@
+import { formatDocumentNumber } from "@/lib/documents-tab";
 import { isMissingRelation, recordCategoryLabel } from "@/lib/record/record-categories";
 import { renderRecordBody } from "@/lib/record/message-text";
 import {
@@ -568,9 +569,11 @@ export async function loadCommunicationFiles(
           bytes = Buffer.from(await downloaded.data.arrayBuffer());
         }
       }
+      const numberLabel = formatDocumentNumber(attachment.documentNumber);
       const file: SupportingFile = {
         key: attachment.documentId,
         records: [row.number],
+        documentLabel: numberLabel === "—" ? null : numberLabel,
         fileName: attachment.fileName,
         mimeType: attachment.mimeType,
         bytes,

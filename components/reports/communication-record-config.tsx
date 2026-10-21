@@ -6,8 +6,14 @@ import { cn } from "@/lib/utils";
 import { RECORD_CATEGORIES } from "@/lib/record/record-categories";
 
 type DatePreset = "all" | "30" | "90" | "180" | "custom";
+type ReportLayout = "table" | "transcript";
 
 type ConversationOption = { id: string; subject: string };
+
+const LAYOUTS: { id: ReportLayout; label: string }[] = [
+  { id: "table", label: "Chronological Table" },
+  { id: "transcript", label: "Conversation Transcript" },
+];
 
 const DATE_PRESETS: { id: DatePreset; label: string }[] = [
   { id: "all", label: "All time" },
@@ -29,6 +35,10 @@ export function CommunicationRecordConfig({ caseId }: { caseId: string }) {
   const [direction, setDirection] = useState("all");
   const [search, setSearch] = useState("");
   const [attachmentsOnly, setAttachmentsOnly] = useState(false);
+  const [layout, setLayout] = useState<ReportLayout>("table");
+  const [includeFiles, setIncludeFiles] = useState(true);
+  const [busy, setBusy] = useState<"pdf" | "csv" | null>(null);
+  const [downloadError, setDownloadError] = useState("");
   const [conversations, setConversations] = useState<ConversationOption[]>([]);
 
   useEffect(() => {
@@ -61,7 +71,7 @@ export function CommunicationRecordConfig({ caseId }: { caseId: string }) {
 
   const customReady = preset !== "custom" || (from !== "" && to !== "");
 
-  const href = useMemo(() => {
+  const filterParams = useMemo(() => {
     const params = new URLSearchParams();
     if (preset !== "all") params.set("range", preset);
     if (preset === "custom") {
@@ -74,17 +84,72 @@ export function CommunicationRecordConfig({ caseId }: { caseId: string }) {
     const query = search.trim();
     if (query) params.set("q", query);
     if (attachmentsOnly) params.set("attachments", "1");
-    const qs = params.toString();
+    return params;
+  }, [attachmentsOnly, category, conversationId, direction, from, preset, search, to]);
+
+  const href = useMemo(() => {
+    const qs = filterParams.toString();
     return `/cases/${caseId}/record${qs ? `?${qs}` : ""}`;
-  }, [attachmentsOnly, caseId, category, conversationId, direction, from, preset, search, to]);
+  }, [caseId, filterParams]);
+
+  async function download(format: "pdf" | "csv") {
+    if (!customReady || busy) return;
+    setBusy(format);
+    setDownloadError("");
+    try {
+      const params = new URLSearchParams(filterParams);
+      params.set("case_id", caseId);
+      params.set("format", format);
+      params.set("layout", layout);
+      params.set("include_attachments", includeFiles ? "1" : "0");
+      const response = await fetch(`/api/reports/communication-record?${params.toString()}`);
+      if (!response.ok) {
+        setDownloadError("The export could not be created.");
+        return;
+      }
+      const blob = await response.blob();
+      const disposition = response.headers.get("Content-Disposition") ?? "";
+      const match = /filename="([^"]+)"/.exec(disposition);
+      const fallback = format === "csv" ? "Communication-Record.csv" : "Communication-Record.pdf";
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = match?.[1] || fallback;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      setDownloadError("The export could not be created.");
+    } finally {
+      setBusy(null);
+    }
+  }
 
   return (
     <div className="mt-5 space-y-4">
-      <p className="text-sm leading-relaxed text-foreground-secondary">
-        This opens the communication record for the case. It lists messages exchanged between the
-        parents and does not include Sage analysis. You can review it and print or save it from
-        that page.
-      </p>
+      <div className="space-y-2">
+        <Label className="text-xs font-medium text-[#3D3D3D]">Report layout</Label>
+        <div className="flex flex-wrap gap-2" role="group" aria-label="Report layout">
+          {LAYOUTS.map((option) => (
+            <button
+              key={option.id}
+              type="button"
+              aria-pressed={layout === option.id}
+              className={cn(
+                "rounded-full border px-3 py-1.5 text-xs transition-colors",
+                "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#5B7A52]",
+                layout === option.id
+                  ? "border-[#7C8B6E] bg-[#F2F5EF] text-[#5B7A52]"
+                  : "border-[#E8E4DC] bg-white text-foreground hover:bg-[#F7F3EA]"
+              )}
+              onClick={() => setLayout(option.id)}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      </div>
 
       <div className="space-y-2">
         <Label className="text-xs font-medium text-[#3D3D3D]">Date range</Label>
@@ -218,6 +283,18 @@ export function CommunicationRecordConfig({ caseId }: { caseId: string }) {
         Only messages with attachments
       </label>
 
+      <label htmlFor="record-include-files" className="flex items-start gap-2 text-sm text-foreground">
+        <input
+          id="record-include-files"
+          type="checkbox"
+          checked={includeFiles}
+          onChange={(event) => setIncludeFiles(event.target.checked)}
+          className="mt-0.5 h-3.5 w-3.5 rounded border-[#E8E4DC] text-[#5B7A52] focus:ring-[#5B7A52]"
+        />
+        Include attachment files in the PDF
+      </label>
+
+      <div className="flex flex-wrap gap-2">
       {customReady ? (
         <a
           href={href}
@@ -236,6 +313,24 @@ export function CommunicationRecordConfig({ caseId }: { caseId: string }) {
           View Record
         </button>
       )}
+        <button
+          type="button"
+          disabled={!customReady || busy !== null}
+          onClick={() => void download("pdf")}
+          className="inline-flex h-9 items-center justify-center rounded-full border border-[#5B7A52] bg-white px-5 text-sm text-[#5B7A52] hover:bg-[#F2F5EF] disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#5B7A52]"
+        >
+          {busy === "pdf" ? "Preparing PDF…" : "Download PDF"}
+        </button>
+        <button
+          type="button"
+          disabled={!customReady || busy !== null}
+          onClick={() => void download("csv")}
+          className="inline-flex h-9 items-center justify-center rounded-full border border-[#5B7A52] bg-white px-5 text-sm text-[#5B7A52] hover:bg-[#F2F5EF] disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#5B7A52]"
+        >
+          {busy === "csv" ? "Preparing CSV…" : "Download CSV"}
+        </button>
+      </div>
+      {downloadError ? <p className="text-sm text-[#8C3A3A]">{downloadError}</p> : null}
     </div>
   );
 }

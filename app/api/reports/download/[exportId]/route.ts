@@ -45,9 +45,11 @@ export async function GET(
     const contentType =
       ext === "csv"
         ? "text/csv"
-        : ext === "xlsx"
-          ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-          : "application/pdf";
+        : ext === "zip"
+          ? "application/zip"
+          : ext === "xlsx"
+            ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            : "application/pdf";
     const filename = `export-${exportId}.${ext}`;
     return new NextResponse(file, {
       headers: {

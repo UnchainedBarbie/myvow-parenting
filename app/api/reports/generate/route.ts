@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
 import {
   buildMessageTranscriptPdf,
-  buildExpenseLedgerPdf,
   buildFullReportPdf,
   sha256Buffer,
   sha256String,
@@ -10,6 +9,16 @@ import {
   type ExpenseRecord,
   type InteractionRecord,
 } from "@/lib/reports/build-pdf";
+import { buildExpenseReportCsv, prepareExpenseReport } from "@/lib/reports/expense-report";
+import { buildExpenseReportPdf } from "@/lib/reports/expense-report-pdf";
+import { expenseReportOptions, loadExpenseReport, zipReport } from "@/lib/reports/expense-report-load";
+import { documentIndexOptions, prepareDocumentIndex } from "@/lib/reports/document-index";
+import { buildDocumentIndexPdf } from "@/lib/reports/document-index-pdf";
+import { loadDocumentIndex } from "@/lib/reports/document-index-load";
+import { appendSupportingFiles, bundleAvailableFiles } from "@/lib/reports/embed-attachments";
+import { calendarReportOptions, prepareCalendarReport } from "@/lib/reports/calendar-report";
+import { buildCalendarReportPdf } from "@/lib/reports/calendar-report-pdf";
+import { loadCalendarReport } from "@/lib/reports/calendar-report-load";
 import { jsPDF } from "jspdf";
 import { randomUUID } from "crypto";
 
@@ -37,26 +46,6 @@ function buildPlaceholderPdf(title: string, body: string): Buffer {
   const lines = doc.splitTextToSize(body, 170);
   doc.text(lines, 20, 38);
   return getBuffer(doc);
-}
-
-function buildExpenseCsv(expenses: ExpenseRecord[]): string {
-  const headers = [
-    "Date",
-    "Description",
-    "Category",
-    "Amount",
-    "Status",
-    "Amount Owed",
-  ];
-  const rows = expenses.map((e) => [
-    new Date(e.created_at).toLocaleDateString(),
-    (e.description ?? "").replace(/"/g, '""'),
-    e.category ?? "",
-    e.amount ?? "",
-    e.status ?? "",
-    e.amount_owed ?? "",
-  ].map((c) => `"${String(c)}"`).join(","));
-  return [headers.join(","), ...rows].join("\r\n");
 }
 
 export async function POST(request: NextRequest) {
@@ -176,53 +165,136 @@ export async function POST(request: NextRequest) {
       buffer = result.buffer;
       verificationPayload = result.verificationPayload;
     } else if (report_type === "expense_report") {
-      let query = admin
-        .from("expenses")
-        .select("id, created_at, description, amount, category, status, amount_owed")
-        .eq("case_id", case_id)
-        .is("deleted_at", null)
-        .order("created_at", { ascending: true });
-      if (start) query = query.gte("created_at", start);
-      if (end) query = query.lte("created_at", end);
-      const { data: expenses } = await query;
-      const rows: ExpenseRecord[] = (expenses ?? []).map((e) => ({
-        id: e.id,
-        created_at: e.created_at,
-        description: e.description,
-        amount: String(e.amount),
-        category: e.category,
-        status: e.status,
-        amount_owed: e.amount_owed != null ? String(e.amount_owed) : null,
-      }));
-      recordCount = rows.length;
-
+      const optionsSelected = expenseReportOptions(options);
+      const loaded = await loadExpenseReport({
+        admin,
+        caseId: case_id,
+        userId: user.id,
+        dateStart: start,
+        dateEnd: end,
+        options: optionsSelected,
+        embedInPdf: format !== "csv",
+      });
+      const prepared = prepareExpenseReport({
+        expenses: loaded.expenses,
+        parents: loaded.parents,
+        caseLabel: loaded.caseLabel,
+        timeZone: loaded.timeZone,
+        dateStart: start,
+        dateEnd: end,
+        generatedAt: new Date(),
+        viewerId: loaded.viewerId,
+        viewerName: loaded.viewerName,
+        options: optionsSelected,
+        receiptLines: loaded.receiptLines,
+      });
+      recordCount = prepared.includedCount;
+      verificationPayload = prepared.verificationPayload;
+      const reportBase = `Expense-Report-${loaded.caseLabel}`.replace(/[\\/:*?"<>|]+/g, "-");
       if (format === "csv") {
-        const csv = buildExpenseCsv(rows);
+        const csv = buildExpenseReportCsv(prepared.document);
         buffer = Buffer.from("\uFEFF" + csv, "utf-8");
-        verificationPayload = csv;
         contentType = "text/csv";
         fileExt = "csv";
+        if (optionsSelected.receiptsZip) {
+          const bundled = bundleAvailableFiles(loaded.receiptFiles, "receipts");
+          if (bundled.length > 0) {
+            buffer = await zipReport(`${reportBase}.csv`, buffer, bundled);
+            contentType = "application/zip";
+            fileExt = "zip";
+          }
+        }
       } else {
-        const result = await buildExpenseLedgerPdf(rows, start, end);
+        const result = buildExpenseReportPdf(
+          prepared.document,
+          loaded.caseLabel,
+          prepared.verificationPayload
+        );
         buffer = result.buffer;
-        verificationPayload = result.verificationPayload;
+        if (optionsSelected.receiptsZip && loaded.receiptFiles.length > 0) {
+          const appended = await appendSupportingFiles(buffer, loaded.receiptFiles, "receipts");
+          buffer = appended.pdf;
+          if (appended.bundle.length > 0) {
+            buffer = await zipReport(`${reportBase}.pdf`, buffer, appended.bundle);
+            contentType = "application/zip";
+            fileExt = "zip";
+          }
+        }
       }
     } else if (report_type === "calendar_report") {
-      const pdf = buildPlaceholderPdf(
-        "Calendar & Custody Report",
-        "This report type is in development. Custody schedule, schedule changes, and calendar events by child will be included in a future update."
-      );
-      buffer = pdf;
-      verificationPayload = "calendar_report_placeholder";
-      recordCount = 0;
+      const optionsSelected = calendarReportOptions(options);
+      const loaded = await loadCalendarReport({
+        admin,
+        caseId: case_id,
+        userId: user.id,
+        options: optionsSelected,
+      });
+      const prepared = prepareCalendarReport({
+        events: loaded.events,
+        parents: loaded.parents,
+        caseLabel: loaded.caseLabel,
+        timeZone: loaded.timeZone,
+        dateStart: start,
+        dateEnd: end,
+        generatedAt: new Date(),
+        viewerId: user.id,
+        viewerName: loaded.viewerName,
+        viewerIsParent: loaded.viewerIsParent,
+        options: optionsSelected,
+        schedule: loaded.schedule,
+        overrides: loaded.overrides,
+        holidays: loaded.holidays,
+        withheldCount: loaded.withheldCount,
+        fieldWarning: loaded.fieldWarning,
+        fileLines: loaded.fileLines,
+      });
+      recordCount = prepared.includedCount;
+      verificationPayload = prepared.verificationPayload;
+      const result = buildCalendarReportPdf(prepared.document, loaded.caseLabel, prepared.verificationPayload);
+      buffer = result.buffer;
+      if (optionsSelected.includeFiles && loaded.files.length > 0) {
+        const appended = await appendSupportingFiles(buffer, loaded.files, "events");
+        buffer = appended.pdf;
+        if (appended.bundle.length > 0) {
+          const reportBase = `Calendar-Custody-Report-${loaded.caseLabel}`.replace(/[\\/:*?"<>|]+/g, "-");
+          buffer = await zipReport(`${reportBase}.pdf`, buffer, appended.bundle);
+          contentType = "application/zip";
+          fileExt = "zip";
+        }
+      }
     } else if (report_type === "document_index") {
-      const pdf = buildPlaceholderPdf(
-        "Document Index",
-        "This report type is in development. Document list with categories, dates, and linked conversations will be included in a future update."
-      );
-      buffer = pdf;
-      verificationPayload = "document_index_placeholder";
-      recordCount = 0;
+      const optionsSelected = documentIndexOptions(options);
+      const loaded = await loadDocumentIndex({
+        admin,
+        caseId: case_id,
+        userId: user.id,
+        options: optionsSelected,
+      });
+      const prepared = prepareDocumentIndex({
+        documents: loaded.documents,
+        parents: loaded.parents,
+        caseLabel: loaded.caseLabel,
+        timeZone: loaded.timeZone,
+        generatedAt: new Date(),
+        options: optionsSelected,
+        withheldCount: loaded.withheldCount,
+        fileLines: loaded.fileLines,
+        linkWarning: loaded.linkWarning,
+      });
+      recordCount = prepared.includedCount;
+      verificationPayload = prepared.verificationPayload;
+      const result = buildDocumentIndexPdf(prepared.document, loaded.caseLabel, prepared.verificationPayload);
+      buffer = result.buffer;
+      if (optionsSelected.includeFiles && loaded.files.length > 0) {
+        const appended = await appendSupportingFiles(buffer, loaded.files, "documents");
+        buffer = appended.pdf;
+        if (appended.bundle.length > 0) {
+          const reportBase = `Document-Index-${loaded.caseLabel}`.replace(/[\\/:*?"<>|]+/g, "-");
+          buffer = await zipReport(`${reportBase}.pdf`, buffer, appended.bundle);
+          contentType = "application/zip";
+          fileExt = "zip";
+        }
+      }
     } else if (report_type === "interaction_log") {
       const pdf = buildPlaceholderPdf(
         "Interaction Log",

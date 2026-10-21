@@ -14,25 +14,13 @@ import { ColumnFilterPopover } from "@/components/documents/column-filter-popove
 import { TitleFilterPopover } from "@/components/documents/title-filter-popover";
 import { Filter, Pencil, Download, Trash2 } from "lucide-react";
 import { showErrorToast, showSuccessToast } from "@/components/ui/toaster";
+import { DOCUMENT_CATEGORY_LABELS, DOCUMENT_VISIBILITY_LABELS } from "@/lib/documents-tab";
 
 const CHILD_NONE_VALUE = "__none__";
 /** Value for "All children" filter (documents where child_id is null). */
 const CHILD_ALL_VALUE = "__all__";
 
-const CATEGORY_LABELS: Record<string, string> = {
-  court_order: "Court Order",
-  school: "School",
-  medical: "Medical",
-  expenses: "Expenses",
-  therapy: "Therapy",
-  legal: "Legal",
-  custody: "Custody",
-  photos: "Photos",
-  communication: "Communication",
-  incident: "Incident",
-  other: "Other",
-  financial: "Expenses",
-};
+const CATEGORY_LABELS = DOCUMENT_CATEGORY_LABELS;
 
 /** Full list of category options for the filter (show all, not just those in current documents). */
 const ALL_CATEGORY_OPTIONS = [
@@ -68,13 +56,7 @@ function getDocumentCategoryDot(category: string | null | undefined): string {
   return DOCUMENT_CATEGORY_DOT[key] ?? "bg-gray-400";
 }
 
-const VISIBILITY_LABELS: Record<string, string> = {
-  private: "Just me",
-  family: "Family",
-  parents_only: "Parents only",
-  family_read_only: "Family",
-  shared_ai_review: "Parents only",
-};
+const VISIBILITY_LABELS = DOCUMENT_VISIBILITY_LABELS;
 
 export type DocumentRow = {
   id: string;

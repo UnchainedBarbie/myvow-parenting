@@ -13,28 +13,14 @@ import { Download, Trash2, Check, XCircle, Filter, Paperclip, Pencil, Lock, Chev
 import { showErrorToast, showSuccessToast } from "@/components/ui/toaster";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { coparentShareInvolves } from "@/lib/expenses-share";
+import {
+  EXPENSE_CATEGORY_LABELS as CATEGORY_LABELS,
+  coparentShareForExpense as coparentShareForRow,
+  displayExpenseStatus,
+  formatStoredExpenseNumber,
+} from "@/lib/expenses-tab";
 import { Label } from "@/components/ui/label";
 import { ChildMultiSelect } from "@/components/documents/child-multi-select";
-
-const CATEGORY_LABELS: Record<string, string> = {
-  medical: "Medical",
-  dental: "Dental",
-  therapy: "Therapy",
-  school: "School",
-  extracurricular: "Extracurricular",
-  clothing: "Clothing",
-  childcare: "Childcare",
-  transportation: "Transportation",
-  other: "Other",
-};
-
-const STATUS_LABELS: Record<string, string> = {
-  submitted: "Pending",
-  disputed: "Disputed",
-  resolved: "Resolved",
-  paid: "Paid",
-  logged: "Logged",
-};
 
 const STATUS_FILTER_OPTIONS = [
   { value: "submitted", label: "Pending" },
@@ -152,18 +138,6 @@ function csvEnteredDate(createdAt: string): string {
   return `${y}-${mo}-${day}`;
 }
 
-function coparentShareForRow(
-  exp: ExpenseRow,
-  currentUserId: string
-): number {
-  const amountNum = Number(exp.amount);
-  const owedNum = exp.amount_owed != null ? Number(exp.amount_owed) : 0;
-  const isMine = exp.submitted_by === currentUserId;
-  if (exp.allocation_status === "NONE") return 0;
-  const theirShare = isMine ? owedNum : amountNum - owedNum;
-  return Number.isFinite(theirShare) ? theirShare : 0;
-}
-
 function dateTiebreak(a: ExpenseRow, b: ExpenseRow): number {
   const ka = ledgerDateKey(a);
   const kb = ledgerDateKey(b);
@@ -259,21 +233,6 @@ function SortHeaderButton({
       ) : null}
     </button>
   );
-}
-
-function displayExpenseStatus(exp: ExpenseRow, involved: boolean): string {
-  if (
-    !involved &&
-    (exp.status === "submitted" || exp.status === "resolved" || exp.status === "logged")
-  ) {
-    return "Logged";
-  }
-  return STATUS_LABELS[exp.status] ?? exp.status;
-}
-
-function formatStoredExpenseNumber(n: number | null | undefined): string {
-  if (n == null || !Number.isFinite(Number(n))) return "—";
-  return `EXP-${String(Math.trunc(Number(n))).padStart(3, "0")}`;
 }
 
 function csvStoredExpenseNumber(n: number | null | undefined): string {

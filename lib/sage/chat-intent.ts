@@ -175,10 +175,31 @@ type Notify =
   | { kind: "one"; coparent: KnownCoparent }
   | { kind: "clarify"; reply: string };
 
+const ROLE_TOKEN = new Set([
+  "co",
+  "coparent",
+  "coparents",
+  "parent",
+  "parents",
+  "other",
+  "the",
+  "my",
+  "a",
+  "an",
+]);
+
+/** Relationship words. These are never looked up as a person's name. */
+export function refersToCoparentRole(text: string): boolean {
+  return /\bco[-\s]?parents?\b/i.test(text) || /\b(?:the\s+)?other\s+parent\b/i.test(text);
+}
+
 function wantsNotify(text: string): boolean {
   const lower = text.toLowerCase();
-  if (/\btell me\b/.test(lower) && !/\b(him|her|them)\b/.test(lower)) {
+  if (/\btell me\b/.test(lower) && !/\b(him|her|them)\b/.test(lower) && !refersToCoparentRole(text)) {
     return false;
+  }
+  if (refersToCoparentRole(text) && /\b(let|tell|notify|message|email|text|remind|know)\b/.test(lower)) {
+    return true;
   }
   if (/\b(let|tell|notify|message|email|text|remind)\b/.test(lower) && /\b(know|him|her|them)\b/.test(lower)) {
     return true;
@@ -189,6 +210,20 @@ function wantsNotify(text: string): boolean {
   return false;
 }
 
+function soleRecipient(coparents: KnownCoparent[]): Notify {
+  if (coparents.length === 1) return { kind: "one", coparent: coparents[0] };
+  if (coparents.length === 0) {
+    return {
+      kind: "clarify",
+      reply: "I don't have a co-parent on this case to send that to.",
+    };
+  }
+  return {
+    kind: "clarify",
+    reply: "Who should I send that to? I won't guess between co-parents.",
+  };
+}
+
 function resolveNotify(
   text: string,
   coparents: KnownCoparent[],
@@ -196,6 +231,9 @@ function resolveNotify(
 ): Notify {
   if (!wantsNotify(text)) return { kind: "none" };
   const lower = text.toLowerCase();
+  if (refersToCoparentRole(text) || /\b(him|her|them)\b/.test(lower)) {
+    return soleRecipient(coparents);
+  }
   const named: KnownCoparent[] = [];
   for (const coparent of coparents) {
     const token = firstName(coparent.name);
@@ -212,23 +250,12 @@ function resolveNotify(
   }
   if (uniqueNamed.length === 1) return { kind: "one", coparent: uniqueNamed[0] };
 
-  const pronoun = /\b(him|her|them)\b/.test(lower);
-  if (pronoun) {
-    if (coparents.length === 1) return { kind: "one", coparent: coparents[0] };
-    if (coparents.length === 0) {
-      return {
-        kind: "clarify",
-        reply: "I don't have a co-parent on this case to send that to.",
-      };
-    }
-    return {
-      kind: "clarify",
-      reply: "Who should I send that to? I won't guess between co-parents.",
-    };
-  }
-
   const directed = lower.match(/\b(?:let|tell|notify|message|email)\s+([a-z]{2,20})\b/);
-  if (directed && !["him", "her", "them", "know", "me", "you"].includes(directed[1])) {
+  if (
+    directed &&
+    !["him", "her", "them", "know", "me", "you"].includes(directed[1]) &&
+    !ROLE_TOKEN.has(directed[1])
+  ) {
     const hits = matchCoparent(directed[1], coparents);
     if (hits.length === 1) return { kind: "one", coparent: hits[0] };
     return {

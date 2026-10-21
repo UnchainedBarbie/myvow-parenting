@@ -244,9 +244,15 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email }),
       });
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data?.error ?? "Failed to send invite");
+        throw new Error((data as { error?: string }).error ?? "Failed to send invite");
+      }
+      if ((data as { emailSent?: boolean }).emailSent === false) {
+        throw new Error(
+          (data as { error?: string }).error ??
+            "The co-parent was saved, but the invitation email was not delivered."
+        );
       }
       await patchOnboarding({ onboarding_step: 5 });
       setStep(6);

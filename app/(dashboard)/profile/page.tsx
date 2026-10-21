@@ -1,4 +1,5 @@
 import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
+import { presentCoparent } from "@/lib/cases/coparent-invitation";
 import { redirect } from "next/navigation";
 import { ProfileContent, type CourtOrderRow } from "@/components/profile/profile-content";
 
@@ -40,27 +41,68 @@ export default async function ProfilePage() {
 
   let children: { id: string; first_name: string; date_of_birth: string | null; grade_level: string | null; member_status: "not_invited" | "invited" | "active"; invited_email: string | null; invited_phone: string | null; case_id?: string | null; profile_image?: string | null; pin_set_at?: string | null; kid_sage_tone?: string | null }[] = [];
   let courtOrders: CourtOrderRow[] = [];
-  let coparent: { id: string | null; name: string; email: string | null; status: "not_invited" | "invited" | "connected" } | null = null;
+  let coparent: {
+    id: string | null;
+    name: string;
+    email: string | null;
+    status: "not_invited" | "invited" | "connected";
+    invitationSentAt: string | null;
+    invitationError: string | null;
+  } | null = null;
 
   if (caseId) {
-    const membersResult = await admin
+    const withDelivery = await admin
       .from("case_members")
-      .select("id, user_id, display_name, external_email, invitation_status")
+      .select("id, user_id, display_name, external_email, invitation_status, invitation_sent_at, invitation_last_error")
       .eq("case_id", caseId);
-    const members = (membersResult.data ?? []) as { id: string; user_id: string | null; display_name: string | null; external_email: string | null; invitation_status: string | null }[];
-    const otherMembers = members.filter((m) => m.user_id !== user.id);
-    const invitedRow = otherMembers.find((m) => m.user_id == null);
-    const connectedRow = otherMembers.find((m) => m.user_id != null);
-    if (connectedRow?.user_id) {
-      const userRow = await admin.from("users").select("full_name").eq("id", connectedRow.user_id).single();
-      const fullName = (userRow.data as { full_name?: string | null } | null)?.full_name ?? connectedRow.display_name ?? "Co-Parent";
-      coparent = { id: connectedRow.id, name: fullName, email: null, status: "connected" };
-    } else if (invitedRow) {
-      const name = invitedRow.display_name ?? invitedRow.external_email ?? "Co-Parent";
-      coparent = { id: invitedRow.id, name, email: invitedRow.external_email, status: "invited" };
-    } else {
-      coparent = { id: null, name: "", email: null, status: "not_invited" };
-    }
+    const membersResult =
+      withDelivery.error && /invitation_/i.test(withDelivery.error.message)
+        ? await admin
+            .from("case_members")
+            .select("id, user_id, display_name, external_email, invitation_status")
+            .eq("case_id", caseId)
+        : withDelivery;
+    const members = (membersResult.data ?? []) as {
+      id: string;
+      user_id: string | null;
+      display_name: string | null;
+      external_email: string | null;
+      invitation_status: string | null;
+      invitation_sent_at?: string | null;
+      invitation_last_error?: string | null;
+    }[];
+    const otherIds = members.map((member) => member.user_id).filter((id): id is string => Boolean(id) && id !== user.id);
+    const userRows = otherIds.length
+      ? await admin.from("users").select("id, full_name, email").in("id", otherIds)
+      : { data: [] };
+    const addressRows = await admin
+      .from("case_member_emails")
+      .select("case_member_id, email, is_reply")
+      .eq("case_id", caseId);
+    coparent = presentCoparent({
+      currentUserId: user.id,
+      members: members.map((member) => ({
+        id: member.id,
+        userId: member.user_id,
+        displayName: member.display_name,
+        externalEmail: member.external_email,
+        status: member.invitation_status,
+        sentAt: member.invitation_sent_at ?? null,
+        lastError: member.invitation_last_error ?? null,
+      })),
+      users: ((userRows.data ?? []) as { id: string; full_name: string | null; email: string | null }[]).map((row) => ({
+        id: row.id,
+        fullName: row.full_name,
+        email: row.email,
+      })),
+      addresses: ((addressRows.data ?? []) as { case_member_id: string; email: string | null; is_reply: boolean | null }[]).map(
+        (row) => ({
+          caseMemberId: row.case_member_id,
+          email: row.email ?? "",
+          isReply: row.is_reply === true,
+        })
+      ),
+    });
 
     // All children with deleted_at IS NULL; do not filter by member_status — all appear in Family table
     const childrenResult = await admin

@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { safeInviteNext } from "@/lib/cases/coparent-invitation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -38,7 +39,8 @@ export default function LoginPage() {
     }
     // Clear kid session cookie so parent is not redirected to kids app
     document.cookie = "kid_session_token=; path=/; max-age=0";
-    router.push("/dashboard");
+    const next = safeInviteNext(new URLSearchParams(window.location.search).get("next"));
+    router.push(next ?? "/dashboard");
     router.refresh();
   }
 

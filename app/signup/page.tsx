@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { safeInviteNext } from "@/lib/cases/coparent-invitation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -28,10 +29,11 @@ export default function SignupPage() {
     setError(null);
     setLoading(true);
     const supabase = createClient();
+    const next = safeInviteNext(new URLSearchParams(window.location.search).get("next"));
     const { data, error: signUpError } = await supabase.auth.signUp({
       email,
       password,
-      options: { emailRedirectTo: `${window.location.origin}/dashboard` },
+      options: { emailRedirectTo: `${window.location.origin}${next ?? "/dashboard"}` },
     });
     if (signUpError) {
       setError(signUpError.message);
@@ -56,7 +58,7 @@ export default function SignupPage() {
       }
     }
     setLoading(false);
-    router.push("/dashboard");
+    router.push(next ?? "/dashboard");
     router.refresh();
   }
 

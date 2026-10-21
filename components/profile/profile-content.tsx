@@ -97,6 +97,8 @@ export type CoparentRow = {
   name: string;
   email: string | null;
   status: "not_invited" | "invited" | "connected";
+  invitationSentAt?: string | null;
+  invitationError?: string | null;
 };
 
 const GRADE_OPTIONS: { value: string; label: string }[] = [
@@ -313,6 +315,8 @@ export function ProfileContent({
   const [coparentInviteName, setCoparentInviteName] = useState("");
   const [coparentInviteSaving, setCoparentInviteSaving] = useState(false);
   const [coparentInviteError, setCoparentInviteError] = useState<string | null>(null);
+  const [coparentResending, setCoparentResending] = useState(false);
+  const [coparentNotice, setCoparentNotice] = useState<string | null>(null);
   // Child invite flow (email/phone or Minor — no account needed)
   const [childInviteTarget, setChildInviteTarget] = useState<ChildRow | null>(null);
   const [childInviteEmail, setChildInviteEmail] = useState("");
@@ -682,18 +686,52 @@ export function ProfileContent({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, name: coparentInviteName.trim() || undefined }),
       });
+      const data = (await res.json().catch(() => ({}))) as { error?: string; emailSent?: boolean };
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        setCoparentInviteError((data as { error?: string }).error ?? "Failed to send invite");
+        setCoparentInviteError(data.error ?? "Failed to save co-parent");
         return;
       }
       setShowAddCoparentForm(false);
       setCoparentInviteEmail("");
       setCoparentInviteName("");
+      if (data.emailSent === false) {
+        setCoparentNotice(data.error ?? "The co-parent was saved, but the invitation email was not delivered.");
+      } else {
+        setCoparentNotice("Invitation sent.");
+      }
       router.refresh();
     } finally {
       setCoparentInviteSaving(false);
     }
+  }
+
+  async function handleResendCoparent() {
+    if (!coparent?.id || coparentResending) return;
+    setCoparentNotice(null);
+    setCoparentResending(true);
+    try {
+      const res = await fetch("/api/cases/invite-coparent/resend", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ memberId: coparent.id }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string; emailSent?: boolean };
+      if (!res.ok || data.emailSent === false) {
+        setCoparentNotice(data.error ?? "The invitation email was not delivered.");
+      } else {
+        setCoparentNotice("Invitation sent.");
+      }
+      router.refresh();
+    } finally {
+      setCoparentResending(false);
+    }
+  }
+
+  function invitationSentLabel(value: string | null | undefined): string | null {
+    if (!value) return null;
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return null;
+    return date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
   }
 
   async function handleChildInviteSubmit(e: React.FormEvent) {
@@ -1701,7 +1739,7 @@ export function ProfileContent({
           <div className="flex flex-wrap items-center gap-2">
             {!showAddCoparentForm && !showAddChildForm && (
               <>
-                {coparent != null && (
+                {coparent?.status === "not_invited" && (
                   <Button
                     size="sm"
                     variant="outline"
@@ -2037,29 +2075,68 @@ export function ProfileContent({
                 </thead>
                 <tbody>
                   {coparent != null && (
-                    <tr className="border-b border-stone-100">
-                      <td className="py-2 px-2 whitespace-nowrap truncate font-medium text-foreground" title={coparent.name || "Co-Parent"}>
-                        {coparent.status === "not_invited" ? "—" : coparent.name || "—"}
-                      </td>
-                      <td className="py-2 px-2 whitespace-nowrap text-stone-500">Co-Parent</td>
-                      <td className="py-2 px-2 whitespace-nowrap text-stone-500">—</td>
-                      <td className="py-2 px-2 whitespace-nowrap text-stone-500">—</td>
-                      <td className="py-2 px-2 whitespace-nowrap text-stone-500">—</td>
-                      <td className="py-2 px-2 whitespace-nowrap">
-                        {coparent.status === "not_invited" && (
-                          <button type="button" className="text-primary hover:underline" onClick={() => setShowAddCoparentForm(true)}>Invite</button>
-                        )}
-                        {coparent.status === "invited" && (
-                          <span className="rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200 px-2 py-0.5 font-medium">Pending</span>
-                        )}
-                        {coparent.status === "connected" && (
-                          <span className="rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200 px-2 py-0.5 font-medium">Active</span>
-                        )}
-                      </td>
-                      <td className="py-2 px-2 whitespace-nowrap text-stone-500">—</td>
-                      <td className="py-2 px-2 whitespace-nowrap text-stone-500">—</td>
-                      <td className="py-2 px-2 whitespace-nowrap text-right" />
-                    </tr>
+                    <>
+                      <tr className="border-b border-stone-100">
+                        <td className="py-2 px-2 font-medium text-foreground" title={coparent.status === "not_invited" ? undefined : coparent.email || coparent.name}>
+                          {coparent.status === "not_invited" ? (
+                            "—"
+                          ) : (
+                            <div className="min-w-0">
+                              <div className="truncate">{coparent.name || "—"}</div>
+                              {coparent.email && (
+                                <div className="truncate text-stone-500 font-normal" title={coparent.email}>
+                                  {coparent.email}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </td>
+                        <td className="py-2 px-2 whitespace-nowrap text-stone-500">Co-Parent</td>
+                        <td className="py-2 px-2 whitespace-nowrap text-stone-500">—</td>
+                        <td className="py-2 px-2 whitespace-nowrap text-stone-500">—</td>
+                        <td className="py-2 px-2 whitespace-nowrap text-stone-500">—</td>
+                        <td className="py-2 px-2 whitespace-nowrap">
+                          {coparent.status === "not_invited" && (
+                            <button type="button" className="text-primary hover:underline" onClick={() => setShowAddCoparentForm(true)}>Invite</button>
+                          )}
+                          {coparent.status === "invited" && (
+                            <span className="rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200 px-2 py-0.5 font-medium">Pending</span>
+                          )}
+                          {coparent.status === "connected" && (
+                            <span className="rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200 px-2 py-0.5 font-medium">Active</span>
+                          )}
+                        </td>
+                        <td className="py-2 px-2 whitespace-nowrap text-stone-500">—</td>
+                        <td className="py-2 px-2 whitespace-nowrap text-stone-500">—</td>
+                        <td className="py-2 px-2 whitespace-nowrap text-right">
+                          {coparent.status === "invited" && coparent.id && (
+                            <button
+                              type="button"
+                              className="text-primary hover:underline disabled:opacity-50"
+                              onClick={() => void handleResendCoparent()}
+                              disabled={coparentResending}
+                            >
+                              {coparentResending ? "Sending…" : "Resend"}
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                      {coparent.status === "invited" && (
+                        <tr className="border-b border-stone-100">
+                          <td colSpan={9} className="px-2 py-2 text-xs text-stone-600">
+                            {invitationSentLabel(coparent.invitationSentAt) ? (
+                              <span>Invitation sent {invitationSentLabel(coparent.invitationSentAt)}. </span>
+                            ) : (
+                              <span>No invitation email has been delivered yet. </span>
+                            )}
+                            {coparent.invitationError && (
+                              <span className="text-destructive">{coparent.invitationError} </span>
+                            )}
+                            {coparentNotice && <span>{coparentNotice}</span>}
+                          </td>
+                        </tr>
+                      )}
+                    </>
                   )}
                   {[...children].sort((a, b) => a.first_name.localeCompare(b.first_name)).map((c) => (
                     <tr key={c.id} className="border-b border-stone-100 last:border-b-0">

@@ -6,6 +6,7 @@ import {
   selfForwardResult,
   type KnownCoparent,
 } from "@/lib/sage/chat-intent";
+import { knownCoparentsFromRows } from "@/lib/sage/known-coparents";
 import type { ConversationContext } from "@/lib/sage/conversation-context";
 import {
   confirmedDeliveryFields,
@@ -274,5 +275,170 @@ assert.equal(
   messageSendDecision({ send_claim_at: "2026-10-21T18:00:00.000Z" }, Date.parse("2026-10-21T18:02:00.000Z")),
   "send"
 );
+
+for (const message of [
+  "can you let coparent know",
+  "let my co-parent know",
+  "please tell the other parent",
+  "let co-parent know",
+]) {
+  const routed = routeChatIntent({
+    message,
+    coparents: [kevin],
+    conversation: ashleyContext,
+    timezone: "America/Denver",
+    today,
+  });
+  const card = routed.result.plan.proposals.find((p) => p.type === "reply_coparent");
+  assert.ok(card, message);
+  assert.equal(card.recipient_name, "Kevin");
+  assert.equal(card.recipient_email, "kevin@example.com");
+  assert.match(card.draft, /Ashley/);
+  assert.match(card.draft, /OT appointment/);
+  assert.doesNotMatch(card.draft, /coparent|co-parent/i);
+  assert.doesNotMatch(routed.reply, /don't have coparent/i);
+  assert.equal(routed.result.plan.proposals.some((p) => p.type === "calendar_update"), false);
+}
+
+const roleAmbiguous = routeChatIntent({
+  message: "can you let coparent know",
+  coparents: [kevin, { name: "Alex", email: "alex@example.com" }],
+  conversation: ashleyContext,
+  timezone: "America/Denver",
+  today,
+});
+assert.ok(roleAmbiguous.result.plan.proposals.every((p) => p.type !== "reply_coparent"));
+assert.match(roleAmbiguous.reply, /won't guess/i);
+
+const roleMissing = routeChatIntent({
+  message: "can you let coparent know",
+  coparents: [],
+  conversation: ashleyContext,
+  timezone: "America/Denver",
+  today,
+});
+assert.ok(roleMissing.result.plan.proposals.every((p) => p.type !== "reply_coparent"));
+assert.match(roleMissing.reply, /don't have a co-parent on this case/i);
+assert.doesNotMatch(roleMissing.reply, /don't have coparent/i);
+
+const roleNoEmail = routeChatIntent({
+  message: "let my co-parent know",
+  coparents: [{ name: "Kevin", email: null }],
+  conversation: ashleyContext,
+  timezone: "America/Denver",
+  today,
+});
+assert.ok(roleNoEmail.result.plan.proposals.every((p) => p.type !== "reply_coparent"));
+assert.match(roleNoEmail.reply, /delivery email/i);
+
+const owner = { id: "member-owner", user_id: "owner-1", display_name: "Alex", invitation_status: "connected" };
+
+const pendingParent = knownCoparentsFromRows(
+  [
+    owner,
+    {
+      id: "member-pending",
+      user_id: null,
+      display_name: "Kevin",
+      external_email: "kevin@example.com",
+      invitation_status: "invited",
+    },
+    { id: "member-child", user_id: null, child_id: "child-1", display_name: "Ashley", external_email: "ashley@school.test" },
+    { id: "member-empty", user_id: null, invitation_status: "not_invited" },
+  ],
+  [],
+  [{ case_member_id: "member-pending", email: "kevin@example.com", is_reply: true }],
+  "owner-1"
+);
+assert.deepEqual(pendingParent, [{ name: "Kevin", email: "kevin@example.com" }]);
+
+const neverJoined = knownCoparentsFromRows(
+  [owner, { id: "member-pending", user_id: null, display_name: "Kevin", invitation_status: "invited" }],
+  [{ id: "unlinked-login", full_name: "Someone Else", email: "other@example.com" }],
+  [{ case_member_id: "member-pending", email: "kevin@example.com", is_reply: true }],
+  "owner-1"
+);
+assert.deepEqual(neverJoined, [{ name: "Kevin", email: "kevin@example.com" }]);
+
+const active = knownCoparentsFromRows(
+  [
+    owner,
+    { id: "member-active", user_id: "parent-2", invitation_status: "connected" },
+  ],
+  [{ id: "parent-2", full_name: "Kevin", email: "kevin@example.com" }],
+  [{ case_member_id: "member-active", email: "kevin@example.com", is_reply: true }],
+  "owner-1"
+);
+assert.deepEqual(active, [{ name: "Kevin", email: "kevin@example.com" }]);
+
+const none = knownCoparentsFromRows(
+  [owner],
+  [],
+  [{ case_member_id: "member-owner", email: "alex@example.com", is_reply: true }],
+  "owner-1"
+);
+assert.deepEqual(none, []);
+
+const several = knownCoparentsFromRows(
+  [
+    owner,
+    { id: "member-kevin", user_id: null, display_name: "Kevin", invitation_status: "invited" },
+    { id: "member-alex", user_id: null, display_name: "Alex Parent", invitation_status: "invited" },
+  ],
+  [],
+  [
+    { case_member_id: "member-kevin", email: "kevin@example.com", is_reply: true },
+    { case_member_id: "member-alex", email: "alex.parent@example.com", is_reply: true },
+  ],
+  "owner-1"
+);
+assert.deepEqual(several, [
+  { name: "Kevin", email: "kevin@example.com" },
+  { name: "Alex Parent", email: "alex.parent@example.com" },
+]);
+
+const missingEmail = knownCoparentsFromRows(
+  [owner, { id: "member-pending", user_id: null, display_name: "Kevin", invitation_status: "invited" }],
+  [],
+  [],
+  "owner-1"
+);
+assert.deepEqual(missingEmail, [{ name: "Kevin", email: null }]);
+
+const inboundOnly = knownCoparentsFromRows([owner], [], [], "owner-1");
+assert.deepEqual(inboundOnly, []);
+
+const pendingNotice = routeChatIntent({
+  message: "let my co-parent know",
+  coparents: pendingParent,
+  conversation: ashleyContext,
+  timezone: "America/Denver",
+  today,
+});
+const pendingCard = pendingNotice.result.plan.proposals.find((p) => p.type === "reply_coparent");
+assert.ok(pendingCard);
+assert.equal(pendingCard.recipient_name, "Kevin");
+assert.equal(pendingCard.recipient_email, "kevin@example.com");
+assert.match(pendingCard.draft, /Ashley/);
+
+const severalNotice = routeChatIntent({
+  message: "can you let coparent know",
+  coparents: several,
+  conversation: ashleyContext,
+  timezone: "America/Denver",
+  today,
+});
+assert.ok(severalNotice.result.plan.proposals.every((p) => p.type !== "reply_coparent"));
+assert.match(severalNotice.reply, /won't guess/i);
+
+const missingNotice = routeChatIntent({
+  message: "let my co-parent know",
+  coparents: missingEmail,
+  conversation: ashleyContext,
+  timezone: "America/Denver",
+  today,
+});
+assert.ok(missingNotice.result.plan.proposals.every((p) => p.type !== "reply_coparent"));
+assert.match(missingNotice.reply, /delivery email/i);
 
 console.log("chat-intent tests passed");

@@ -5,7 +5,7 @@ import {
   inferExpenseCategoryFromText,
   parseExpenseAmountFromText,
 } from "@/lib/expenses-share";
-import { appointmentTitle, calendarCategory, visibilityForCategory } from "@/lib/sage/calendar-chat";
+import { appointmentTitle, calendarCategory, visibilityForCategory } from "@/lib/sage/calendar-labels";
 import { eventSubjectFromTexts, formatClockLabel } from "@/lib/sage/event-subject";
 import { splitSchedule } from "@/lib/sage/outbound-facts";
 import { isCalendarUpdateProposal, isFormExecuteProposal, isLogDocumentProposal } from "@/lib/sage/proposal-kind";

@@ -21,15 +21,6 @@ export type CaseEvent = {
   createdBy: string | null;
 };
 
-const CATEGORIES = new Set([
-  "medical",
-  "school",
-  "extracurricular",
-  "custody_exchange",
-  "therapy",
-  "other",
-]);
-
 const SUBJECTS: Array<{ subject: string; category: string; pattern: RegExp }> = [
   { subject: "Orthodontist Appointment", category: "medical", pattern: /\borthodont/i },
   { subject: "Dentist Appointment", category: "medical", pattern: /\b(dentist|dental)\b/i },
@@ -49,24 +40,6 @@ export function appointmentSubject(text: string): { subject: string; category: s
     if (entry.pattern.test(text)) return { subject: entry.subject, category: entry.category };
   }
   return null;
-}
-
-export function calendarCategory(value: string | null | undefined): string | null {
-  const key = (value ?? "").trim().toLowerCase();
-  return CATEGORIES.has(key) ? key : null;
-}
-
-/** Family is the calendar form's default. Therapy uses the form's parents-only rule. */
-export function visibilityForCategory(
-  category: string | null
-): "family" | "parents_only" {
-  return category === "therapy" ? "parents_only" : "family";
-}
-
-export function appointmentTitle(child: string | null, subject: string | null): string {
-  const label = (subject ?? "").trim() || "Appointment";
-  if (child?.trim()) return `${child.trim()} — ${label}`.slice(0, 120);
-  return label.slice(0, 120);
 }
 
 export function matchChildren(text: string, children: KnownChild[]): KnownChild[] {

@@ -12,8 +12,6 @@ import type { ProcessObservationResult } from "@/lib/sage/process-observation";
 import {
   answerCalendarQuestion,
   appointmentSubject,
-  appointmentTitle,
-  calendarCategory,
   clockWithMeridiem,
   composeEventDescription,
   earlyArrivalNote,
@@ -27,6 +25,7 @@ import {
   type CaseEvent,
   type KnownChild,
 } from "@/lib/sage/calendar-chat";
+import { appointmentTitle, calendarCategory } from "@/lib/sage/calendar-labels";
 import { formatClockLabel, preferEventSubject } from "@/lib/sage/event-subject";
 import { resolveDate } from "@/lib/sage/resolver";
 import type { SageInterpretation } from "@/lib/sage/understanding";

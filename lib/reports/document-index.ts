@@ -18,6 +18,7 @@ export type DocumentIndexSource = {
   uploadedByName: string | null;
   linkedExpenses: string[];
   linkedMessages: string[];
+  hasStoredFile: boolean;
 };
 
 export type DocumentIndexOptions = {
@@ -212,4 +213,50 @@ export function prepareDocumentIndex(input: {
         "This SHA-256 hash covers the included document identifiers, numbers, upload times, file names, categories, and visibility. It does not cover file bytes. It is not an independent certification. Unavailable files stay listed in Supporting evidence.",
     },
   };
+}
+
+const DOCUMENT_CSV_HEADERS = [
+  "Document ID",
+  "Title",
+  "Original filename",
+  "Category",
+  "Child",
+  "Uploaded date",
+  "Uploaded by",
+  "Visibility",
+  "Linked conversations",
+  "Linked record IDs",
+  "Attachment availability/status",
+] as const;
+
+function csvCell(value: string): string {
+  if (/[",\r\n]/.test(value)) return `"${value.replace(/"/g, '""')}"`;
+  return value;
+}
+
+export function buildDocumentIndexCsv(documents: DocumentIndexSource[], timeZone: string): string {
+  const sorted = [...documents].sort((a, b) => {
+    if (a.createdAt !== b.createdAt) return a.createdAt < b.createdAt ? 1 : -1;
+    return a.id < b.id ? 1 : -1;
+  });
+  const lines = [DOCUMENT_CSV_HEADERS.map((header) => csvCell(header)).join(",")];
+  for (const doc of sorted) {
+    const id = formatDocumentNumber(doc.documentNumber);
+    const links = [...doc.linkedExpenses, ...doc.linkedMessages];
+    const cells = [
+      id,
+      doc.title?.trim() || doc.fileName.trim() || "—",
+      doc.fileName.trim() || "—",
+      documentCategoryLabel(doc.category),
+      doc.childName.trim() || "All children",
+      uploadDate(doc.createdAt, timeZone),
+      doc.uploadedByName?.trim() || "Not recorded",
+      documentVisibilityLabel(doc.visibility),
+      doc.conversations.length > 0 ? doc.conversations.join("; ") : "No linked conversation stored",
+      links.length > 0 ? links.join("; ") : "No linked expense or message stored",
+      doc.hasStoredFile ? "Available" : "Attachment unavailable",
+    ];
+    lines.push(cells.map((cell) => csvCell(cell)).join(","));
+  }
+  return lines.join("\r\n");
 }

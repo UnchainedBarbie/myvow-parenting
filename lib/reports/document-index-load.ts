@@ -368,6 +368,7 @@ export async function loadDocumentIndex(input: {
         ...(linkedMessages.get(doc.id) ?? []),
       ]),
     ],
+    hasStoredFile: Boolean(doc.storage_path?.trim()),
   }));
 
   const files: SupportingFile[] = [];

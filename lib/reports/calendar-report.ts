@@ -529,6 +529,7 @@ export function prepareCalendarReport(input: {
   fieldWarning: string | null;
   fileLines: string[];
   evidenceLabels?: Map<string, string> | null;
+  listEvidence?: boolean;
 }): { includedCount: number; verificationPayload: string; document: CalendarReportDocument } {
   const from = dayKey(input.dateStart);
   const to = dayKey(input.dateEnd);
@@ -626,7 +627,7 @@ export function prepareCalendarReport(input: {
       empty: "No schedule changes or swap requests are recorded for these dates.",
     });
   }
-  if (input.options.eventsByChild) {
+  if (input.options.eventsByChild || input.listEvidence) {
     const counts = childCounts(included);
     blocks.push({
       kind: "lines",
@@ -653,7 +654,15 @@ export function prepareCalendarReport(input: {
       ],
       widths: [16, 26, 28, 16, 18, 16, 22, 20, 22, 30, 18, 23.4],
       rows: included.map((event) =>
-        eventRow(event, input, userSide, otherSide, input.options.includeFiles, input.evidenceLabels ?? null)
+        eventRow(
+          event,
+          input,
+          userSide,
+          otherSide,
+          input.options.includeFiles,
+          input.evidenceLabels ?? null,
+          input.listEvidence === true
+        )
       ),
       empty: "No events start in the selected dates.",
     });
@@ -902,7 +911,8 @@ function eventRow(
   userSide: string,
   otherSide: string,
   includeFiles: boolean,
-  evidenceLabels: Map<string, string> | null
+  evidenceLabels: Map<string, string> | null,
+  listEvidence: boolean
 ): string[] {
   const description = eventDescriptionForReport(event.description, event.visibility);
   const recurring = event.recurringRule?.trim() ? ` Repeats: ${event.recurringRule.trim()}.` : "";
@@ -910,8 +920,13 @@ function eventRow(
   const evidenceKey = eventId === "—" ? event.id : eventId;
   const includePages = evidenceLabels != null && includeFiles;
   const planned = includePages ? evidenceLabels?.get(evidenceKey) ?? null : null;
-  const evidence =
-    event.attachmentNames.length === 0
+  const evidence = listEvidence
+    ? event.attachmentNames.length === 0
+      ? "No attachment"
+      : event.attachmentNames
+          .map((name) => `No document ID stored | ${name.trim() || "Untitled file"} | Stored with the event`)
+          .join("\n")
+    : event.attachmentNames.length === 0
       ? "No attachment"
       : (planned ??
         supportingEvidenceCell({
@@ -955,4 +970,18 @@ export function eventInRangeStart(iso: string, from: string | null, to: string |
   if (from && ms < zonedDayStartMs(from, timeZone)) return false;
   if (to && ms > zonedDayEndMs(to, timeZone)) return false;
   return true;
+}
+
+function csvCell(value: string): string {
+  if (/[",\r\n]/.test(value)) return `"${value.replace(/"/g, '""')}"`;
+  return value;
+}
+
+export function buildCalendarReportCsv(document: CalendarReportDocument): string {
+  const table = document.blocks.find((block) => block.kind === "table" && block.title === "Events");
+  const headers = table && table.kind === "table" ? table.headers : [];
+  const rows = table && table.kind === "table" ? table.rows : [];
+  const lines = [headers.map((header) => csvCell(header)).join(",")];
+  for (const row of rows) lines.push(row.map((cell) => csvCell(cell)).join(","));
+  return lines.join("\r\n");
 }

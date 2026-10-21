@@ -1,5 +1,5 @@
 import { PDFArray, PDFDocument, PDFName } from "pdf-lib";
-import { appendSupportingFiles, supportingPageCount, uniqueSupportingFiles, type SupportingFile } from "@/lib/reports/embed-attachments";
+import { appendSupportingFiles, supportingPlacement, uniqueSupportingFiles, type SupportingFile } from "@/lib/reports/embed-attachments";
 import { planEvidence, type EvidenceRef } from "@/lib/reports/communication-record";
 import { evidenceWarnings } from "@/lib/reports/evidence-refs";
 import type { LedgerPdf, PdfLink } from "@/lib/reports/communication-record-pdf";
@@ -47,21 +47,21 @@ export async function assembleCommunicationPdf(
   }
 
   const unique = uniqueSupportingFiles(files);
-  const counts: number[] = [];
-  for (const file of unique) counts.push(await supportingPageCount(file));
+  const placements: { pages: number; embedded: boolean }[] = [];
+  for (const file of unique) placements.push(await supportingPlacement(file));
+  const described = () =>
+    unique.map((file, index) => ({
+      records: file.records,
+      pages: placements[index]?.pages ?? 0,
+      documentLabel: file.documentLabel ?? null,
+      unavailable: !file.bytes || file.bytes.length === 0 || Boolean(file.unavailableReason),
+      embedded: placements[index]?.embedded === true,
+    }));
 
   let ledger = build(new Map());
   let stable = false;
   for (let pass = 0; pass < 8; pass += 1) {
-    const planned = planEvidence(
-      ledger.pageCount,
-      unique.map((file, index) => ({
-        records: file.records,
-        pages: counts[index] ?? 1,
-        documentLabel: file.documentLabel ?? null,
-        unavailable: !file.bytes || file.bytes.length === 0 || Boolean(file.unavailableReason),
-      }))
-    );
+    const planned = planEvidence(ledger.pageCount, described());
     const next = build(planned);
     if (next.pageCount === ledger.pageCount) {
       ledger = next;
@@ -71,15 +71,7 @@ export async function assembleCommunicationPdf(
     ledger = next;
   }
   if (!stable) {
-    const planned = planEvidence(
-      ledger.pageCount,
-      unique.map((file, index) => ({
-        records: file.records,
-        pages: counts[index] ?? 1,
-        documentLabel: file.documentLabel ?? null,
-        unavailable: !file.bytes || file.bytes.length === 0 || Boolean(file.unavailableReason),
-      }))
-    );
+    const planned = planEvidence(ledger.pageCount, described());
     const next = build(planned);
     if (next.pageCount === ledger.pageCount) ledger = next;
   }

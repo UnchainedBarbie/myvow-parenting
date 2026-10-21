@@ -39,6 +39,8 @@ type GeneratedReport = {
   formats: readonly string[];
 };
 
+const ATTACHMENT_OPTION_IDS = new Set(["receipts_zip", "include_event_files", "include_documents_zip"]);
+
 const GENERATED_REPORTS: GeneratedReport[] = [
   {
     id: "expense_report",
@@ -71,7 +73,7 @@ const GENERATED_REPORTS: GeneratedReport[] = [
       { id: "missed_pickups", label: "Missed pickups/dropoffs (if explicitly logged)", default: true },
       { id: "include_event_files", label: "Include event attachments in the PDF", default: false },
     ],
-    formats: ["pdf"],
+    formats: ["pdf", "csv"],
   },
   {
     id: "document_index",
@@ -85,7 +87,7 @@ const GENERATED_REPORTS: GeneratedReport[] = [
       { id: "linked_conversations", label: "Linked conversations", default: true },
       { id: "include_documents_zip", label: "Include document files in the PDF", default: false },
     ],
-    formats: ["pdf"],
+    formats: ["pdf", "csv"],
   },
   {
     id: "communication_report",
@@ -218,7 +220,9 @@ export function ReportLibrary({ caseId }: { caseId: string }) {
           date_range_end: bounded ? range?.end : undefined,
           options: report.options.reduce(
             (acc, opt) => {
-              acc[opt.id] = isOptionChecked(report.id, opt.id, opt.default);
+              const csv = getFormat(report.id, report.formats) === "csv";
+              acc[opt.id] =
+                csv && ATTACHMENT_OPTION_IDS.has(opt.id) ? false : isOptionChecked(report.id, opt.id, opt.default);
               return acc;
             },
             {} as Record<string, boolean>
@@ -508,22 +512,33 @@ function GeneratedConfig({
           <ul className="space-y-2">
             {report.options.map((opt) => {
               const inputId = `${report.id}-${opt.id}`;
+              const filesDisabled = format === "csv" && ATTACHMENT_OPTION_IDS.has(opt.id);
               return (
                 <li key={opt.id} className="flex items-start gap-2">
                   <input
                     id={inputId}
                     type="checkbox"
-                    checked={isOptionChecked(report.id, opt.id, opt.default)}
-                    onChange={(e) => setOption(report.id, opt.id, e.target.checked)}
-                    className="mt-0.5 h-3.5 w-3.5 rounded border-[#E8E4DC] text-[#5B7A52] focus:ring-[#5B7A52]"
+                    checked={filesDisabled ? false : isOptionChecked(report.id, opt.id, opt.default)}
+                    disabled={filesDisabled}
+                    onChange={(e) => {
+                      if (filesDisabled) return;
+                      setOption(report.id, opt.id, e.target.checked);
+                    }}
+                    className={`mt-0.5 h-3.5 w-3.5 rounded border-[#E8E4DC] text-[#5B7A52] focus:ring-[#5B7A52] ${filesDisabled ? "cursor-not-allowed opacity-40" : ""}`}
                   />
-                  <label htmlFor={inputId} className="text-sm text-foreground">
+                  <label
+                    htmlFor={inputId}
+                    className={`text-sm ${filesDisabled ? "cursor-not-allowed text-[#9A9A9A]" : "text-foreground"}`}
+                  >
                     {opt.label}
                   </label>
                 </li>
               );
             })}
           </ul>
+          {format === "csv" && report.options.some((opt) => ATTACHMENT_OPTION_IDS.has(opt.id)) ? (
+            <p className="text-xs text-[#6B6B6B]">Attachments are available in PDF exports only.</p>
+          ) : null}
         </fieldset>
       ) : null}
 

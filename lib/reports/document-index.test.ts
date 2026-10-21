@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { PDFDocument, StandardFonts } from "pdf-lib";
 import { documentAuthorizedForViewer, documentCategoryLabel, documentVisibilityLabel } from "@/lib/documents-tab";
-import { prepareDocumentIndex } from "@/lib/reports/document-index";
+import { buildDocumentIndexCsv, prepareDocumentIndex } from "@/lib/reports/document-index";
 import { buildDocumentIndexPdf } from "@/lib/reports/document-index-pdf";
 import {
   appendSupportingFiles,
@@ -47,6 +47,7 @@ const prepared = prepareDocumentIndex({
       uploadedByName: "Alex Rivera",
       linkedExpenses: ["EXP-010"],
       linkedMessages: [],
+      hasStoredFile: false,
     },
     {
       id: "a",
@@ -61,6 +62,7 @@ const prepared = prepareDocumentIndex({
       uploadedByName: null,
       linkedExpenses: [],
       linkedMessages: ["Message link stored"],
+      hasStoredFile: true,
     },
   ],
   parents: [{ name: "Alex Rivera" }],
@@ -103,6 +105,36 @@ assert.equal(table.rows[1][8], "Pickup change");
 assert.match(table.rows[1][9], /EXP-010/);
 assert.match(prepared.document.completeness, /1 document is omitted/);
 assert.equal(prepared.includedCount, 2);
+
+const indexCsv = buildDocumentIndexCsv(
+  [
+    {
+      id: "a",
+      documentNumber: 4,
+      title: "Line one\nLine two, \"quoted\"",
+      fileName: "scan.png",
+      category: "medical",
+      childName: "Sam",
+      createdAt: "2026-03-01T00:00:00.000Z",
+      visibility: "private",
+      conversations: ["Pickup, evening"],
+      uploadedByName: null,
+      linkedExpenses: ["EXP-010"],
+      linkedMessages: ["Message link stored"],
+      hasStoredFile: true,
+    },
+  ],
+  "America/Denver"
+);
+assert.match(
+  indexCsv,
+  /Document ID,Title,Original filename,Category,Child,Uploaded date,Uploaded by,Visibility,Linked conversations,Linked record IDs,Attachment availability\/status/
+);
+assert.match(indexCsv, /"Line one\r?\nLine two, ""quoted"""/);
+assert.match(indexCsv, /"Pickup, evening"/);
+assert.match(indexCsv, /EXP-010; Message link stored/);
+assert.match(indexCsv, /Available/);
+assert.doesNotMatch(indexCsv, /\bpp?\./);
 
 const pdf = buildDocumentIndexPdf(prepared.document, "FAM-100", prepared.verificationPayload);
 assert.match(Buffer.from(pdf.buffer).toString("latin1"), /MediaBox \[0 0 792\.? 612\.?\]/);
@@ -195,14 +227,14 @@ const base = await PDFDocument.create();
 base.addPage([792, 612]);
 const appended = await appendSupportingFiles(Buffer.from(await base.save()), files, "documents");
 const opened = await PDFDocument.load(appended.pdf);
-assert.equal(opened.getPageCount(), 7);
+assert.equal(opened.getPageCount(), 5);
 const pages = opened.getPages();
-assert.equal(pages[2].getWidth(), 200);
-assert.equal(pages[2].getHeight(), 208);
-assert.equal(pages[3].getWidth(), 300);
-assert.equal(pages[3].getHeight(), 268);
-assert.equal(pages[4].getWidth(), 792);
-assert.equal(pages[4].getHeight(), 612);
+assert.equal(pages[1].getWidth(), 200);
+assert.ok(pages[1].getHeight() > 208);
+assert.equal(pages[2].getWidth(), 300);
+assert.equal(pages[2].getHeight(), 268);
+assert.equal(pages[3].getWidth(), 792);
+assert.equal(pages[3].getHeight(), 612);
 assert.equal(appended.bundle.length, 1);
 assert.equal(appended.bundle[0].buffer.toString(), "original-docx-bytes");
 assert.match(appended.bundle[0].name, /^documents\/notes\.docx$/);

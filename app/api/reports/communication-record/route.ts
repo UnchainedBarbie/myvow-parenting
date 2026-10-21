@@ -38,7 +38,7 @@ export async function GET(request: Request) {
   const format = url.searchParams.get("format") === "csv" ? "csv" : "pdf";
   const layout = url.searchParams.get("layout") === "transcript" ? "transcript" : "table";
   const includeFlag = (url.searchParams.get("include_attachments") ?? "1").trim().toLowerCase();
-  const includeAttachments = includeFlag !== "0" && includeFlag !== "false";
+  const includeAttachments = format !== "csv" && includeFlag !== "0" && includeFlag !== "false";
   const store = url.searchParams.get("store") === "1";
 
   const searchParams: Record<string, string> = {};

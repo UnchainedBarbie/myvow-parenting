@@ -175,8 +175,8 @@ async function main() {
   const pdf = await PDFDocument.load(assembled.pdf);
   const text = Buffer.from(assembled.pdf).toString("latin1");
   assert.match(text, /DOC-018, p\. 2/);
-  assert.match(text, /DOC-020, pp\. 3\x965/);
-  assert.equal(pdf.getPageCount(), 6);
+  assert.match(text, /DOC-020, pp\. 3\x964/);
+  assert.equal(pdf.getPageCount(), 4);
   assert.doesNotMatch(text, /could not be placed/);
   assert.match(assembled.warnings.join("\n"), /EXP-030/);
   assert.match(assembled.warnings.join("\n"), /DOC-021/);

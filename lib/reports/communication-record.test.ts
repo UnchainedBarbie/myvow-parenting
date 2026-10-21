@@ -133,6 +133,30 @@ assert.match(csv, /"Please bring the forms\.\r?\nLine two, with a comma, and a "
 assert.match(csv, /END-OF-ORIGINAL-BODY-XYZ/);
 assert.equal(csvField("plain"), "plain");
 assert.doesNotMatch(csv, /ai_rewritten|Suggested response|summary/i);
+const fileCsv = communicationCsv(
+  model([
+    row({
+      id: "cccccccc-cccc-cccc-cccc-cccccccccccc",
+      number: "MSG-003",
+      createdAt: "2026-03-02T18:00:00.000Z",
+      attachments: [
+        {
+          documentId: "doc",
+          label: "form.pdf (DOC-007)",
+          fileName: "form.pdf",
+          documentNumber: 7,
+          storagePath: "docs/form.pdf",
+          mimeType: "application/pdf",
+          visibility: "parents_only",
+          uploadedBy: "alex",
+          authorized: true,
+        },
+      ],
+    }),
+  ])
+);
+assert.match(fileCsv, /DOC-007 \| form\.pdf \| Available/);
+assert.doesNotMatch(fileCsv, /\bpp?\./);
 
 const record = model(ordered);
 const table = buildChronologicalPdf(record, null, "payload");
@@ -172,11 +196,11 @@ async function main() {
     [shared, { ...shared, records: ["MSG-010"] }],
     true
   );
-  const pages = seenLabel.match(/\d+/g)?.map(Number) ?? [];
-  assert.equal(pages.length, 2);
-  assert.equal(pages[1] - pages[0] + 1, 2);
+  assert.match(seenLabel, /Document number not assigned, p\. \d+/);
+  assert.doesNotMatch(seenLabel, /pp\./);
   const pdf = await PDFDocument.load(assembled.pdf);
-  assert.equal(pdf.getPageCount(), pages[1]);
+  const attachmentPage = Number(seenLabel.match(/p\. (\d+)/)?.[1]);
+  assert.equal(pdf.getPageCount(), attachmentPage);
   let linked = false;
   for (let index = 0; index < pdf.getPageCount(); index += 1) {
     if (pdf.getPage(index).node.lookup(PDFName.of("Annots"))) linked = true;

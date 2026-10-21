@@ -326,6 +326,36 @@ const csv = buildExpenseReportCsv(prepared.document);
 assert.match(csv, /EXP-001/);
 assert.match(csv, /\$100\.00/);
 assert.doesNotMatch(csv, /Court-Ready/);
+assert.doesNotMatch(csv, /\bpp?\./);
+const csvRows = prepareExpenseReport({
+  expenses: [
+    expense({
+      id: "csv-1",
+      expenseNumber: 8,
+      description: "Line one\nLine two, \"quoted\"",
+      receiptName: "receipt.jpg",
+      receiptDocumentNumber: 18,
+      receiptFileId: "doc-18",
+      receiptUnavailable: false,
+      amount: 12,
+    }),
+  ],
+  parents,
+  caseLabel: "FAM-100",
+  timeZone: "America/Denver",
+  dateStart: null,
+  dateEnd: null,
+  generatedAt: new Date("2026-10-20T18:00:00.000Z"),
+  viewerId: "alex",
+  viewerName: "Alex Rivera",
+  options,
+  receiptLines: [],
+  csvEvidence: true,
+});
+const detailedCsv = buildExpenseReportCsv(csvRows.document);
+assert.match(detailedCsv, /Line one\nLine two, ""quoted""/);
+assert.match(detailedCsv, /DOC-018 \| receipt\.jpg \| Available/);
+assert.doesNotMatch(detailedCsv, /\bpp?\./);
 
 const many = Array.from({ length: 24 }, (_, index) =>
   expense({

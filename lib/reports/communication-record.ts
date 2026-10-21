@@ -191,7 +191,7 @@ export function communicationCsv(model: CommunicationRecordModel): string {
       row.recipient,
       directionLabel(row.direction),
       row.body,
-      row.attachments.map((attachment) => attachment.label).join("; "),
+      csvAttachmentCell(row),
       approvedCategoryText(row.categories),
     ];
     lines.push(values.map((value) => csvField(value)).join(","));
@@ -208,22 +208,50 @@ function attachmentDocumentLabel(number: number | null): string {
   return `DOC-${String(Math.trunc(number)).padStart(3, "0")}`;
 }
 
+function csvAttachmentCell(row: CommunicationRow): string {
+  if (row.attachments.length === 0) return "No attachment";
+  return row.attachments
+    .map((attachment) => {
+      const id = attachmentDocumentLabel(attachment.documentNumber);
+      const name = attachment.fileName.trim() || "Untitled file";
+      const status =
+        attachment.authorized && attachment.storagePath?.trim() ? "Available" : "Attachment unavailable";
+      return `${id} | ${name} | ${status}`;
+    })
+    .join("\n");
+}
+
 export function planEvidence(
   ledgerPages: number,
-  files: { records: string[]; pages: number; documentLabel?: string | null; unavailable?: boolean }[]
+  files: {
+    records: string[];
+    pages: number;
+    documentLabel?: string | null;
+    unavailable?: boolean;
+    embedded?: boolean;
+  }[]
 ): Map<string, EvidenceRef[]> {
   const map = new Map<string, EvidenceRef[]>();
   let page = Math.max(ledgerPages, 0) + 1;
   for (const file of files) {
-    const count = Math.max(file.pages, 1);
-    const start = page;
-    const end = page + count - 1;
-    page = end + 1;
     const id = file.documentLabel?.trim() || "Document number not assigned";
-    const label = file.unavailable
-      ? `${id}\nAttachment unavailable`
-      : `${id}, ${evidenceLabel(start, end)}`;
-    const ref = { label, page: file.unavailable ? 0 : start };
+    if (file.unavailable || file.pages < 1) {
+      const ref = { label: `${id}\nAttachment unavailable`, page: 0 };
+      for (const record of file.records) {
+        const list = map.get(record) ?? [];
+        list.push(ref);
+        map.set(record, list);
+      }
+      continue;
+    }
+    const start = page;
+    const end = page + file.pages - 1;
+    page = end + 1;
+    const placed = file.embedded !== false;
+    const label = placed
+      ? `${id}, ${evidenceLabel(start, end)}`
+      : `${id}\nCould not be placed in the PDF. The original file is in the download bundle.`;
+    const ref = { label, page: placed ? start : 0 };
     for (const record of file.records) {
       const list = map.get(record) ?? [];
       list.push(ref);

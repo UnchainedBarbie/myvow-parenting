@@ -472,6 +472,7 @@ export function prepareExpenseReport(input: {
   options: ExpenseReportOptions;
   receiptLines: string[];
   evidenceLabels?: Map<string, string> | null;
+  csvEvidence?: boolean;
 }): PreparedExpenseReport {
   const parents = namedParents(input.parents);
   const byUserId = parentByUserId(parents, input.parents);
@@ -578,15 +579,16 @@ export function prepareExpenseReport(input: {
         : null;
     const includePages = input.evidenceLabels != null && input.options.receiptsZip;
     const planned = includePages ? input.evidenceLabels?.get(id) ?? null : null;
-    const evidence =
-      planned ??
-      supportingEvidenceCell({
-        linked: Boolean(expense.receiptFileId),
-        documentLabel,
-        includeFiles: includePages,
-        pageLabel: null,
-        unavailable: Boolean(expense.receiptUnavailable),
-      });
+    const evidence = input.csvEvidence
+      ? csvReceiptStatus(expense, documentLabel)
+      : (planned ??
+        supportingEvidenceCell({
+          linked: Boolean(expense.receiptFileId),
+          documentLabel,
+          includeFiles: includePages,
+          pageLabel: null,
+          unavailable: Boolean(expense.receiptUnavailable),
+        }));
     ledgerRows.push([
       id,
       [expense.description.trim() || "—", subtitle].filter(Boolean).join("\n"),
@@ -883,7 +885,16 @@ export function buildExpenseReportCsv(document: ExpenseReportDocument): string {
   return lines.join("\r\n");
 }
 
+function csvReceiptStatus(expense: ExpenseReportSource, documentLabel: string | null): string {
+  if (!expense.receiptFileId) return "No attachment";
+  const id = documentLabel?.trim() || "Document number not assigned";
+  const name = expense.receiptName?.trim();
+  const head = name ? `${id} | ${name}` : id;
+  return expense.receiptUnavailable ? `${head} | Attachment unavailable` : `${head} | Available`;
+}
+
 function csvCell(value: string): string {
-  const text = value.replace(/\r?\n/g, " | ").replace(/"/g, '""');
-  return /[",]/.test(text) ? `"${text}"` : text;
+  const text = value ?? "";
+  if (/[",\r\n]/.test(text)) return `"${text.replace(/"/g, '""')}"`;
+  return text;
 }

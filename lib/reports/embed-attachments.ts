@@ -102,19 +102,27 @@ export async function classifySupportingFile(file: SupportingFile): Promise<Supp
   return "bundle";
 }
 
-/** Pages this file will add: a cover or notice, plus each original PDF page. */
-export async function supportingPageCount(file: SupportingFile): Promise<number> {
+/** Pages added for this file, and whether those pages reproduce the original file. */
+export async function supportingPlacement(
+  file: SupportingFile
+): Promise<{ pages: number; embedded: boolean }> {
   const disposition = await classifySupportingFile(file);
+  if (disposition === "unavailable") return { pages: 0, embedded: false };
+  if (disposition === "image") return { pages: 1, embedded: true };
   if (disposition === "pdf" && file.bytes) {
     try {
       const src = await PDFDocument.load(file.bytes, { ignoreEncryption: true, updateMetadata: false });
       const count = src.getPageCount();
-      return count > 0 ? 1 + count : 1;
+      return count > 0 ? { pages: count, embedded: true } : { pages: 1, embedded: false };
     } catch {
-      return 1;
+      return { pages: 1, embedded: false };
     }
   }
-  return 1;
+  return { pages: 1, embedded: false };
+}
+
+export async function supportingPageCount(file: SupportingFile): Promise<number> {
+  return (await supportingPlacement(file)).pages;
 }
 
 export function supportingFileSentence(
@@ -277,34 +285,48 @@ export async function appendSupportingFiles(
     const disposition = await classifySupportingFile(file);
 
     if (disposition === "unavailable" || !file.bytes) {
-      await addNoticePage(pdf, font, bold, [
-        { text: heading, bold: true },
-        { text: file.unavailableReason?.trim() || "Attachment unavailable." },
-        { text: "The original file is not included." },
-      ]);
       continue;
     }
 
     if (disposition === "pdf") {
       try {
         const src = await PDFDocument.load(file.bytes, { ignoreEncryption: true, updateMetadata: false });
-        const count = src.getPageCount();
-        await addNoticePage(pdf, font, bold, [
-          { text: heading, bold: true },
-          {
-            text: `${count} original page${count === 1 ? "" : "s"} follow. The file content is unchanged. A page label is printed in the added margin.`,
-          },
-        ]);
-        for (const index of src.getPageIndices()) {
+        const indices = src.getPageIndices();
+        if (indices.length === 0) {
+          const bundledName = safeBundleName(bundleFolder, name, usedNames);
+          bundle.push({ name: bundledName, buffer: file.bytes });
+          await addNoticePage(pdf, font, bold, [
+            { text: heading, bold: true },
+            { text: "This PDF has no pages to place. The original file is included in the download bundle." },
+            { text: `Bundle path: ${bundledName}` },
+          ]);
+          continue;
+        }
+        for (const index of indices) {
           const srcPage = src.getPage(index);
           if (!srcPage.node.Contents()) {
             srcPage.node.set(PDFName.of("Contents"), src.context.stream(""));
           }
           const embedded = await pdf.embedPage(srcPage);
           const footer = 28;
+          const headingLines = index === 0 ? wrapText(heading, Math.max(12, Math.floor(srcPage.getWidth() / 5.6))) : [];
+          const headingBand = headingLines.length > 0 ? headingLines.length * 11 + 8 : 0;
           const pageNumber = pdf.getPageCount() + 1;
-          const page = pdf.addPage([srcPage.getWidth(), srcPage.getHeight() + footer]);
+          const page = pdf.addPage([srcPage.getWidth(), srcPage.getHeight() + footer + headingBand]);
           page.drawPage(embedded, { x: 0, y: footer });
+          if (headingLines.length > 0) {
+            let textY = srcPage.getHeight() + footer + headingBand - 12;
+            for (const line of headingLines) {
+              page.drawText(line, {
+                x: 18,
+                y: textY,
+                size: 8,
+                font: bold,
+                color: rgb(0.15, 0.15, 0.15),
+              });
+              textY -= 11;
+            }
+          }
           stampPageNumber(page, font, pageNumber);
         }
         continue;

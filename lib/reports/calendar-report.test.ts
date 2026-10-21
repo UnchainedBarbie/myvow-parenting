@@ -4,6 +4,7 @@ import {
   eventVisibleToViewer,
   parentingTimeForDay,
   parentingTimeLabel,
+  buildCalendarReportCsv,
   prepareCalendarReport,
   type CalendarReportEvent,
   type StoredCustodySchedule,
@@ -256,6 +257,41 @@ const tableOnly = withoutGrid.document.blocks.find((block) => block.kind === "ta
 assert.ok(tableOnly && tableOnly.kind === "table");
 assert.equal(tableOnly.rows[0]?.[0], "EVT-004");
 assert.doesNotMatch(withoutGrid.document.facts.map((fact) => fact.value).join(" "), /Monthly calendars/);
+const listed = prepareCalendarReport({
+  events: [event({ id: "a", eventNumber: 4, startTime: "2026-03-02T18:00:00.000Z", title: "Soccer", attachmentNames: ["soccer.pdf"] })],
+  parents: [
+    { userId: "alex", name: "Alex Rivera" },
+    { userId: "jordan", name: "Jordan Lee" },
+  ],
+  caseLabel: "FAM-100",
+  timeZone: "America/Denver",
+  dateStart: "2026-03-01",
+  dateEnd: "2026-03-31",
+  generatedAt: new Date("2026-04-01T15:00:00.000Z"),
+  viewerId: "alex",
+  viewerName: "Alex Rivera",
+  viewerIsParent: true,
+  options: {
+    custodySchedule: false,
+    scheduleChanges: false,
+    missedPickups: false,
+    eventsByChild: false,
+    monthlyCalendar: false,
+    includeFiles: false,
+  },
+  schedule,
+  overrides: [],
+  holidays: [],
+  withheldCount: 0,
+  fieldWarning: null,
+  fileLines: [],
+  listEvidence: true,
+});
+const calendarCsv = buildCalendarReportCsv(listed.document);
+assert.match(calendarCsv, /Event ID,Title/);
+assert.match(calendarCsv, /EVT-004/);
+assert.match(calendarCsv, /No document ID stored \| soccer\.pdf \| Stored with the event/);
+assert.doesNotMatch(calendarCsv, /\bpp?\./);
 
 assert.match(prepared.document.completeness, /1 event is omitted/);
 assert.match(prepared.verificationPayload, /EVT|a~4/);

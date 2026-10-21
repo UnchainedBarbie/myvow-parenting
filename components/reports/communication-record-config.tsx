@@ -124,7 +124,7 @@ export function CommunicationRecordConfig({ caseId }: { caseId: string }) {
       params.set("case_id", caseId);
       params.set("format", format);
       params.set("layout", layout);
-      params.set("include_attachments", includeFiles ? "1" : "0");
+      params.set("include_attachments", format === "pdf" && includeFiles ? "1" : "0");
       if (format === "pdf") params.set("store", "1");
       const response = await fetch(`/api/reports/communication-record?${params.toString()}`);
       if (!response.ok) {
@@ -333,16 +333,28 @@ export function CommunicationRecordConfig({ caseId }: { caseId: string }) {
         Only messages with attachments
       </label>
 
-      <label htmlFor="record-include-files" className="flex items-start gap-2 text-sm text-foreground">
-        <input
-          id="record-include-files"
-          type="checkbox"
-          checked={includeFiles}
-          onChange={(event) => setIncludeFiles(event.target.checked)}
-          className="mt-0.5 h-3.5 w-3.5 rounded border-[#E8E4DC] text-[#5B7A52] focus:ring-[#5B7A52]"
-        />
-        Include attachment files in the PDF
-      </label>
+      <div className="space-y-1">
+        <label
+          htmlFor="record-include-files"
+          className={`flex items-start gap-2 text-sm ${exportFormat === "csv" ? "cursor-not-allowed text-[#9A9A9A]" : "text-foreground"}`}
+        >
+          <input
+            id="record-include-files"
+            type="checkbox"
+            checked={exportFormat === "csv" ? false : includeFiles}
+            disabled={exportFormat === "csv"}
+            onChange={(event) => {
+              if (exportFormat === "csv") return;
+              setIncludeFiles(event.target.checked);
+            }}
+            className={`mt-0.5 h-3.5 w-3.5 rounded border-[#E8E4DC] text-[#5B7A52] focus:ring-[#5B7A52] ${exportFormat === "csv" ? "cursor-not-allowed opacity-40" : ""}`}
+          />
+          Include attachment files in the PDF
+        </label>
+        {exportFormat === "csv" ? (
+          <p className="text-xs text-[#6B6B6B]">Attachments are available in PDF exports only.</p>
+        ) : null}
+      </div>
 
       <div className="space-y-1">
         <Label htmlFor="record-format" className="text-xs font-medium text-[#3D3D3D]">

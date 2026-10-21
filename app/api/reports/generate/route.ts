@@ -12,12 +12,11 @@ import {
 import { buildExpenseReportCsv, prepareExpenseReport } from "@/lib/reports/expense-report";
 import { buildExpenseReportPdf } from "@/lib/reports/expense-report-pdf";
 import { expenseReportOptions, loadExpenseReport, zipReport } from "@/lib/reports/expense-report-load";
-import { documentIndexOptions, prepareDocumentIndex } from "@/lib/reports/document-index";
+import { buildDocumentIndexCsv, documentIndexOptions, prepareDocumentIndex } from "@/lib/reports/document-index";
 import { buildDocumentIndexPdf } from "@/lib/reports/document-index-pdf";
 import { loadDocumentIndex } from "@/lib/reports/document-index-load";
-import { bundleAvailableFiles } from "@/lib/reports/embed-attachments";
 import { assembleLabeledPdf } from "@/lib/reports/evidence-refs";
-import { calendarReportOptions, prepareCalendarReport } from "@/lib/reports/calendar-report";
+import { buildCalendarReportCsv, calendarReportOptions, prepareCalendarReport } from "@/lib/reports/calendar-report";
 import { buildCalendarReportPdf } from "@/lib/reports/calendar-report-pdf";
 import { loadCalendarReport } from "@/lib/reports/calendar-report-load";
 import { jsPDF } from "jspdf";
@@ -168,7 +167,9 @@ export async function POST(request: NextRequest) {
       buffer = result.buffer;
       verificationPayload = result.verificationPayload;
     } else if (report_type === "expense_report") {
-      const optionsSelected = expenseReportOptions(options);
+      const optionsSelected = expenseReportOptions(
+        format === "csv" ? { ...options, receipts_zip: false } : options
+      );
       const loaded = await loadExpenseReport({
         admin,
         caseId: case_id,
@@ -190,23 +191,15 @@ export async function POST(request: NextRequest) {
         viewerName: loaded.viewerName,
         options: optionsSelected,
         receiptLines: loaded.receiptLines,
+        csvEvidence: format === "csv",
       });
       recordCount = prepared.includedCount;
       verificationPayload = prepared.verificationPayload;
-      const reportBase = `Expense-Report-${loaded.caseLabel}`.replace(/[\\/:*?"<>|]+/g, "-");
       if (format === "csv") {
         const csv = buildExpenseReportCsv(prepared.document);
         buffer = Buffer.from("\uFEFF" + csv, "utf-8");
         contentType = "text/csv";
         fileExt = "csv";
-        if (optionsSelected.receiptsZip) {
-          const bundled = bundleAvailableFiles(loaded.receiptFiles, "receipts");
-          if (bundled.length > 0) {
-            buffer = await zipReport(`${reportBase}.csv`, buffer, bundled);
-            contentType = "application/zip";
-            fileExt = "zip";
-          }
-        }
       } else {
         const assembled = await assembleLabeledPdf({
           files: loaded.receiptFiles,
@@ -237,7 +230,7 @@ export async function POST(request: NextRequest) {
           bundleBuffer = await zipReport(
             "README.txt",
             Buffer.from(
-              "These files could not be placed in the PDF. The report lists each one as unavailable.\n",
+              "These files could not be placed in the PDF. They are included in this bundle and are not embedded in the report.\n",
               "utf8"
             ),
             assembled.bundle
@@ -245,7 +238,9 @@ export async function POST(request: NextRequest) {
         }
       }
     } else if (report_type === "calendar_report") {
-      const optionsSelected = calendarReportOptions(options);
+      const optionsSelected = calendarReportOptions(
+        format === "csv" ? { ...options, include_event_files: false } : options
+      );
       const loaded = await loadCalendarReport({
         admin,
         caseId: case_id,
@@ -270,9 +265,15 @@ export async function POST(request: NextRequest) {
         withheldCount: loaded.withheldCount,
         fieldWarning: loaded.fieldWarning,
         fileLines: loaded.fileLines,
+        listEvidence: format === "csv",
       });
       recordCount = prepared.includedCount;
       verificationPayload = prepared.verificationPayload;
+      if (format === "csv") {
+        buffer = Buffer.from("\uFEFF" + buildCalendarReportCsv(prepared.document), "utf8");
+        contentType = "text/csv";
+        fileExt = "csv";
+      } else {
       const assembled = await assembleLabeledPdf({
         files: loaded.files,
         includeFiles: optionsSelected.includeFiles,
@@ -308,14 +309,17 @@ export async function POST(request: NextRequest) {
         bundleBuffer = await zipReport(
           "README.txt",
           Buffer.from(
-            "These files could not be placed in the PDF. The report lists each one as unavailable.\n",
+            "These files could not be placed in the PDF. They are included in this bundle and are not embedded in the report.\n",
             "utf8"
           ),
           assembled.bundle
         );
       }
+      }
     } else if (report_type === "document_index") {
-      const optionsSelected = documentIndexOptions(options);
+      const optionsSelected = documentIndexOptions(
+        format === "csv" ? { ...options, include_documents_zip: false } : options
+      );
       const loaded = await loadDocumentIndex({
         admin,
         caseId: case_id,
@@ -335,6 +339,11 @@ export async function POST(request: NextRequest) {
       });
       recordCount = prepared.includedCount;
       verificationPayload = prepared.verificationPayload;
+      if (format === "csv") {
+        buffer = Buffer.from("\uFEFF" + buildDocumentIndexCsv(loaded.documents, loaded.timeZone), "utf8");
+        contentType = "text/csv";
+        fileExt = "csv";
+      } else {
       const assembled = await assembleLabeledPdf({
         files: loaded.files,
         includeFiles: optionsSelected.includeFiles,
@@ -362,11 +371,12 @@ export async function POST(request: NextRequest) {
         bundleBuffer = await zipReport(
           "README.txt",
           Buffer.from(
-            "These files could not be placed in the PDF. The report lists each one as unavailable.\n",
+            "These files could not be placed in the PDF. They are included in this bundle and are not embedded in the report.\n",
             "utf8"
           ),
           assembled.bundle
         );
+      }
       }
     } else if (report_type === "interaction_log") {
       const pdf = buildPlaceholderPdf(

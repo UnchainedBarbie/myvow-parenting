@@ -1,7 +1,7 @@
 import { PDFArray, PDFDocument, PDFName } from "pdf-lib";
 import {
   appendSupportingFiles,
-  supportingPageCount,
+  supportingPlacement,
   uniqueSupportingFiles,
   type SupportingFile,
 } from "@/lib/reports/embed-attachments";
@@ -75,17 +75,34 @@ export function evidenceWarnings(files: SupportingFile[]): string[] {
 
 export function labelsForSupportingFiles(
   ledgerPages: number,
-  files: { records: string[]; pages: number; documentLabel: string | null; unavailable: boolean }[]
+  files: {
+    records: string[];
+    pages: number;
+    documentLabel: string | null;
+    unavailable: boolean;
+    embedded?: boolean;
+  }[]
 ): Map<string, string> {
   const grouped = new Map<string, string[]>();
   let page = Math.max(ledgerPages, 0) + 1;
   for (const file of files) {
-    const count = Math.max(file.pages, 1);
-    const start = page;
-    const end = page + count - 1;
-    page = end + 1;
     const id = file.documentLabel?.trim() || "Document number not assigned";
-    const text = file.unavailable ? `${id}\nAttachment unavailable` : `${id}, ${pageRangeLabel(start, end)}`;
+    if (file.unavailable || file.pages < 1) {
+      const text = `${id}\nAttachment unavailable`;
+      for (const record of file.records) {
+        const list = grouped.get(record) ?? [];
+        list.push(text);
+        grouped.set(record, list);
+      }
+      continue;
+    }
+    const start = page;
+    const end = page + file.pages - 1;
+    page = end + 1;
+    const text =
+      file.embedded === false
+        ? `${id}\nCould not be placed in the PDF. The original file is in the download bundle.`
+        : `${id}, ${pageRangeLabel(start, end)}`;
     for (const record of file.records) {
       const list = grouped.get(record) ?? [];
       list.push(text);
@@ -149,20 +166,20 @@ export async function assembleLabeledPdf(input: {
     return { pdf: ledger.buffer, bundle: [], warnings: [] };
   }
   const unique = uniqueSupportingFiles(input.files);
-  const counts: number[] = [];
-  for (const file of unique) counts.push(await supportingPageCount(file));
+  const placements: { pages: number; embedded: boolean }[] = [];
+  for (const file of unique) placements.push(await supportingPlacement(file));
   let ledger = input.build(null);
   let stable = false;
+  const described = () =>
+    unique.map((file, index) => ({
+      records: file.records,
+      pages: placements[index]?.pages ?? 0,
+      documentLabel: file.documentLabel ?? null,
+      unavailable: !file.bytes || file.bytes.length === 0 || Boolean(file.unavailableReason),
+      embedded: placements[index]?.embedded === true,
+    }));
   for (let pass = 0; pass < 8; pass += 1) {
-    const labels = labelsForSupportingFiles(
-      ledger.pageCount,
-      unique.map((file, index) => ({
-        records: file.records,
-        pages: counts[index] ?? 1,
-        documentLabel: file.documentLabel ?? null,
-        unavailable: !file.bytes || file.bytes.length === 0 || Boolean(file.unavailableReason),
-      }))
-    );
+    const labels = labelsForSupportingFiles(ledger.pageCount, described());
     const next = input.build(labels);
     if (next.pageCount === ledger.pageCount) {
       ledger = next;
@@ -172,15 +189,7 @@ export async function assembleLabeledPdf(input: {
     ledger = next;
   }
   if (!stable) {
-    const labels = labelsForSupportingFiles(
-      ledger.pageCount,
-      unique.map((file, index) => ({
-        records: file.records,
-        pages: counts[index] ?? 1,
-        documentLabel: file.documentLabel ?? null,
-        unavailable: !file.bytes || file.bytes.length === 0 || Boolean(file.unavailableReason),
-      }))
-    );
+    const labels = labelsForSupportingFiles(ledger.pageCount, described());
     const next = input.build(labels);
     if (next.pageCount === ledger.pageCount) ledger = next;
   }

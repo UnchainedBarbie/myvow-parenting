@@ -283,7 +283,8 @@ export async function loadExpenseReport(input: {
       receiptName: receipt?.fileName ?? null,
       receiptDocumentNumber: receipt?.documentNumber ?? null,
       receiptFileId: receiptId,
-      receiptUnavailable: Boolean(receiptId) && (!receipt || !receipt.include),
+      receiptUnavailable:
+        Boolean(receiptId) && (!receipt || !receipt.include || !receipt.storagePath?.trim()),
       childName: childNamesForExpense(
         String(row.id),
         typeof row.child_id === "string" ? row.child_id : null,

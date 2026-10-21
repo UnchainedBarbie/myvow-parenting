@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
 import { computeAllocationFromParentingPlan, allocationStatusForDb } from "@/lib/expenses-allocation";
-import { savedExpenseShare, type ExpensePayer } from "@/lib/expenses-sharing";
+import { planExpenseEntry, type ExpenseLoggingIntent, type ExpensePayer } from "@/lib/expenses-sharing";
 import { expenseWorkflowStatus } from "@/lib/expenses-share";
 
 function parseChildIds(childIdsRaw: unknown, childId?: string | null): string[] {
@@ -133,7 +133,7 @@ export async function PATCH(
     const { data: expense, error: fetchError } = await admin
       .from("expenses")
       .select(
-        "id, case_id, submitted_by, amount, amount_owed, split_percent, allocation_status, status, category, child_id, deleted_at"
+        "id, case_id, submitted_by, amount, amount_owed, split_percent, split_label, allocation_status, status, category, child_id, deleted_at"
       )
       .eq("id", expenseId)
       .maybeSingle();
@@ -171,6 +171,9 @@ export async function PATCH(
       payment_reference?: string | null;
       payment_notes?: string | null;
       paid_by?: ExpensePayer | null;
+      sharing_intent?: ExpenseLoggingIntent | null;
+      stated_percent?: number | null;
+      notify_coparent?: boolean;
     };
 
     const isOwner = expense.submitted_by === user.id;
@@ -228,25 +231,47 @@ export async function PATCH(
           : previousOwed < 0
             ? "coparent"
             : "self";
-      const saved = savedExpenseShare(allocation, amountNum, payer);
-      if (!saved.saveable) {
-        return NextResponse.json({ message: saved.clarification }, { status: 422 });
-      }
-      updates.split_percent = saved.fields.other_parent_percent;
-      updates.amount_owed = saved.fields.amount_owed;
-      updates.other_parent_percent = saved.fields.other_parent_percent;
-      updates.other_parent_share = saved.fields.other_parent_share;
-      updates.split_label = saved.fields.split_label;
-      updates.allocation_status = allocationStatusForDb(saved.fields.allocation_status);
-      const currentStatus = String(
-        (updates.status as string | undefined) ??
-          (expense as { status?: string }).status ??
-          ""
-      );
-      if (currentStatus === "submitted" || currentStatus === "resolved") {
-        updates.status = expenseWorkflowStatus({
-          otherParentShare: saved.fields.other_parent_share,
-        });
+      const storedLabel = String((expense as { split_label?: string | null }).split_label ?? "");
+      const intent: ExpenseLoggingIntent =
+        body.sharing_intent === "personal" || body.sharing_intent === "shared"
+          ? body.sharing_intent
+          : storedLabel === "Personal"
+            ? "personal"
+            : "unspecified";
+      const statedPercent =
+        typeof body.stated_percent === "number" && Number.isFinite(body.stated_percent)
+          ? body.stated_percent
+          : null;
+      const plan = planExpenseEntry({
+        intent,
+        statedPercent,
+        notifyOverride: typeof body.notify_coparent === "boolean" ? body.notify_coparent : null,
+        allocation,
+        amount: amountNum,
+        payer,
+      });
+      if (!plan.fields) {
+        if (body.sharing_intent === "shared" || body.sharing_intent === "personal") {
+          return NextResponse.json({ message: plan.review, sharing_mode: plan.mode }, { status: 422 });
+        }
+      } else {
+        updates.split_percent = plan.fields.other_parent_percent;
+        updates.amount_owed = plan.fields.amount_owed;
+        updates.other_parent_percent = plan.fields.other_parent_percent;
+        updates.other_parent_share = plan.fields.other_parent_share;
+        updates.split_label = plan.fields.split_label;
+        updates.allocation_status = allocationStatusForDb(plan.fields.allocation_status);
+        const currentStatus = String(
+          (updates.status as string | undefined) ??
+            (expense as { status?: string }).status ??
+            ""
+        );
+        if (currentStatus === "submitted" || currentStatus === "resolved") {
+          updates.status = expenseWorkflowStatus({
+            otherParentShare: plan.fields.other_parent_share,
+            notifyCoparent: plan.notifyCoparent,
+          });
+        }
       }
     }
 

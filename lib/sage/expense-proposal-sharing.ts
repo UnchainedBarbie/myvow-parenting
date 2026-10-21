@@ -1,44 +1,42 @@
 import {
-  expenseSplitReview,
-  savedExpenseShare,
-  type ExpensePayer,
+  planExpenseEntry,
+  type ExpenseLoggingIntent,
   type SharingResult,
 } from "@/lib/expenses-sharing";
 import type { Proposal } from "@/lib/sage/planner";
 
-export type StampedExpense =
-  | { kind: "proposal"; proposal: Proposal }
-  | { kind: "ask"; question: string };
+export type StampedExpense = { kind: "proposal"; proposal: Proposal };
 
-/** Same share math as a manual save, written onto the approval card. Does not save. */
+/** Same share decision a manual save uses, written onto the approval card. Does not save. */
 export function stampExpenseProposal(
   proposal: Proposal,
-  result: SharingResult,
-  payerName?: string | null
+  result: SharingResult
 ): StampedExpense {
   const amount = typeof proposal.amount === "number" ? proposal.amount : Number.NaN;
-  const payer: ExpensePayer = proposal.paid_by === "coparent" ? "coparent" : "self";
-  const saved = savedExpenseShare(result, amount, payer);
-  if (!saved.saveable) {
-    return { kind: "ask", question: saved.clarification };
-  }
-  const review = expenseSplitReview({
-    result,
+  const intent: ExpenseLoggingIntent = proposal.sharing_intent ?? "unspecified";
+  const plan = planExpenseEntry({
+    intent,
+    statedPercent: proposal.stated_percent ?? null,
+    notifyOverride: proposal.notify_coparent ?? null,
+    conflict: proposal.sharing_conflict === true,
+    allocation: result,
     amount,
-    payer,
-    payerName: payerName ?? proposal.payer_name,
+    payer: proposal.paid_by === "coparent" ? "coparent" : "self",
+    payerName: proposal.payer_name,
   });
   return {
     kind: "proposal",
     proposal: {
       ...proposal,
-      category: proposal.category,
       requires_approval: true,
-      split_label: saved.fields.split_label,
-      other_parent_percent: saved.fields.other_parent_percent,
-      other_parent_share: saved.fields.other_parent_share,
-      amount_owed: saved.fields.amount_owed,
-      split_review: review,
+      sharing_mode: plan.mode,
+      sharing_intent: intent,
+      notify_coparent: plan.notifyCoparent,
+      split_review: plan.review,
+      split_label: plan.fields?.split_label ?? null,
+      other_parent_percent: plan.fields?.other_parent_percent ?? null,
+      other_parent_share: plan.fields?.other_parent_share ?? null,
+      amount_owed: plan.fields?.amount_owed ?? null,
     },
   };
 }

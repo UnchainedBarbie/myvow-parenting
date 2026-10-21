@@ -102,6 +102,12 @@ export type Proposal = {
   amount_owed?: number | null;
   /** Sharing sentence shown on the approval card before the expense is saved. */
   split_review?: string | null;
+  sharing_intent?: "personal" | "shared" | "unspecified" | null;
+  sharing_mode?: "personal" | "shared" | "choose" | "ask_percent" | null;
+  sharing_conflict?: boolean | null;
+  stated_percent?: number | null;
+  /** Null until the parent or the message chooses. True asks the co-parent to respond after save. */
+  notify_coparent?: boolean | null;
 };
 
 export type Plan = {
@@ -219,19 +225,6 @@ function templateCalendar(ctx: PlanContext): string {
     return `Add to your calendar${when}: ${summary}.`;
   }
   return `Propose calendar update${when} based on: ${ctx.summary.trim() || "schedule change from Co-Parent"}.`;
-}
-
-function unresolvedExpensePlan(ctx: PlanContext): Plan | null {
-  const status = ctx.expense_allocation?.allocation_status;
-  if (status !== "UNRESOLVED" && status !== "MANUAL_REQUIRED") return null;
-  const ask =
-    ctx.expense_allocation?.clarification?.trim() ||
-    "What percentage should the other parent pay for this expense?";
-  return {
-    status: "awaiting_clarification",
-    proposals: [proposal("ask_clarification", ask, null, { audience: "parent" })],
-    reasoning: "The sharing rule has to be resolved before this expense is logged.",
-  };
 }
 
 function templateExpense(ctx: PlanContext): string {
@@ -665,8 +658,6 @@ export async function plan(ctx: PlanContext): Promise<Plan> {
 
   // 6. Expense → ready, unless the sharing rule still has to be chosen.
   if (ctx.item_type === "expense") {
-    const unresolved = unresolvedExpensePlan(ctx);
-    if (unresolved) return unresolved;
     if (userCommand(ctx)) {
       const share = ctx.expense_allocation?.other_parent_share;
       const involved = coparentShareInvolves(share);

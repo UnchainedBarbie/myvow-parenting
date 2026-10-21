@@ -27,7 +27,7 @@ import {
 } from "@/lib/sage/calendar-chat";
 import { appointmentTitle, calendarCategory } from "@/lib/sage/calendar-labels";
 import { inferExpenseCategoryFromText, parseExpenseAmountFromText } from "@/lib/expenses-share";
-import { detectExpensePayer } from "@/lib/expenses-sharing";
+import { detectExpenseLoggingIntent, detectExpensePayer } from "@/lib/expenses-sharing";
 import { formatClockLabel, preferEventSubject } from "@/lib/sage/event-subject";
 import { resolveDate } from "@/lib/sage/resolver";
 import type { SageInterpretation } from "@/lib/sage/understanding";
@@ -818,6 +818,7 @@ export function routeChatIntent(input: RouteChatIntentInput): RoutedTurn {
       coparents,
       children.map((child) => ({ name: child.name }))
     );
+    const logging = detectExpenseLoggingIntent(message);
     if (payer.kind === "ask") {
       proposals.push(proposal("ask_clarification", payer.question, { audience: "parent" }));
     } else {
@@ -829,6 +830,10 @@ export function routeChatIntent(input: RouteChatIntentInput): RoutedTurn {
           ...(expenseAmount != null ? { amount: expenseAmount } : {}),
           paid_by: payer.kind === "coparent" ? "coparent" : "self",
           ...(payer.kind === "coparent" ? { payer_name: payer.name } : {}),
+          sharing_intent: logging.intent,
+          ...(logging.statedPercent != null ? { stated_percent: logging.statedPercent } : {}),
+          ...(logging.notify != null ? { notify_coparent: logging.notify } : {}),
+          ...(logging.conflict ? { sharing_conflict: true } : {}),
         })
       );
     }

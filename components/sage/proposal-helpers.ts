@@ -710,6 +710,19 @@ export function buildExpenseInitialValues(
     category: inferExpenseCategory(item, proposal),
     ...(proposal.split_review?.trim() ? { splitReview: proposal.split_review.trim() } : {}),
     ...(proposal.paid_by === "coparent" ? { paidBy: "coparent" as const } : {}),
+    ...(proposal.sharing_mode === "personal" ||
+    proposal.sharing_mode === "shared" ||
+    proposal.sharing_mode === "choose" ||
+    proposal.sharing_mode === "ask_percent"
+      ? { sharingMode: proposal.sharing_mode }
+      : {}),
+    ...(proposal.sharing_intent === "personal" ||
+    proposal.sharing_intent === "shared" ||
+    proposal.sharing_intent === "unspecified"
+      ? { sharingIntent: proposal.sharing_intent }
+      : {}),
+    ...(typeof proposal.stated_percent === "number" ? { statedPercent: proposal.stated_percent } : {}),
+    ...(typeof proposal.notify_coparent === "boolean" ? { notifyCoparent: proposal.notify_coparent } : {}),
     ...(childId ? { childId } : {}),
     ...(childIds.length > 0 ? { childIds } : {}),
     ...(attachedFile ? { attachedFile } : {}),

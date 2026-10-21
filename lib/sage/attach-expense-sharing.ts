@@ -52,23 +52,8 @@ export async function attachExpenseSharing(input: {
       category,
       childId: input.childId,
     });
-    const stamped = stampExpenseProposal(
-      { ...proposal, amount, category },
-      allocation,
-      proposal.payer_name
-    );
+    const stamped = stampExpenseProposal({ ...proposal, amount, category }, allocation);
     changed = true;
-    if (stamped.kind === "ask") {
-      questions.push(stamped.question);
-      next.push({
-        type: "ask_clarification",
-        draft: stamped.question,
-        depends_on: null,
-        requires_approval: true,
-        audience: "parent",
-      });
-      continue;
-    }
     next.push(stamped.proposal);
     if (stamped.proposal.split_review) questions.push(stamped.proposal.split_review);
   }

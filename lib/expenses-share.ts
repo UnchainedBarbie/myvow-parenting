@@ -18,7 +18,8 @@ export function expenseWorkflowStatus(opts: {
   otherParentShare: number | null | undefined;
   notifyCoparent?: boolean;
 }): "submitted" | "resolved" {
-  if (opts.notifyCoparent) return "submitted";
+  if (opts.notifyCoparent === true) return "submitted";
+  if (opts.notifyCoparent === false) return "resolved";
   if (coparentShareInvolves(opts.otherParentShare)) return "submitted";
   return "resolved";
 }
@@ -79,10 +80,11 @@ export function inferExpenseCategoryFromText(
 ): string {
   const blob = text.toLowerCase();
   const domainNorm = (domain ?? "").toLowerCase();
+  if (/dentist|dental|orthodont/.test(blob)) return "dental";
   if (MEDICAL_EXPENSE_RE.test(blob) || domainNorm === "medical") {
     return "medical";
   }
-  if (/school|teacher|tuition|classroom|parent-?teacher/.test(blob)) return "school";
+  if (/school|teacher|tuition|classroom|parent-?teacher|field trip/.test(blob)) return "school";
   if (/therap|counsel/.test(blob)) return "therapy";
   if (
     /concert|choir|music|recital|soccer|practice|dance|\bsports?\b|\bgame\b|extracurricular/.test(

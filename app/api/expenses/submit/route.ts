@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
 import { computeAllocationFromParentingPlan, allocationStatusForDb } from "@/lib/expenses-allocation";
-import { savedExpenseShare, type ExpensePayer } from "@/lib/expenses-sharing";
+import { planExpenseEntry, type ExpenseLoggingIntent, type ExpensePayer } from "@/lib/expenses-sharing";
 import { expenseWorkflowStatus } from "@/lib/expenses-share";
 
 function parseChildIds(childIdsRaw: unknown, childId?: string | null): string[] {
@@ -43,6 +43,8 @@ export async function POST(request: NextRequest) {
       incurred_date,
       category_description,
       paid_by,
+      sharing_intent,
+      stated_percent,
     } = body as {
       case_id?: string;
       description?: string;
@@ -55,6 +57,8 @@ export async function POST(request: NextRequest) {
       incurred_date?: string | null;
       category_description?: string | null;
       paid_by?: ExpensePayer | null;
+      sharing_intent?: ExpenseLoggingIntent | null;
+      stated_percent?: number | null;
     };
     const descTrimmed = (description ?? "").trim();
     if (!case_id || !descTrimmed || amount == null) {
@@ -81,16 +85,27 @@ export async function POST(request: NextRequest) {
       childId: primaryChildId,
     });
     const payer: ExpensePayer = paid_by === "coparent" ? "coparent" : "self";
-    const saved = savedExpenseShare(allocation, amountNum, payer);
-    if (!saved.saveable) {
+    const intent: ExpenseLoggingIntent =
+      sharing_intent === "personal" || sharing_intent === "shared" ? sharing_intent : "unspecified";
+    const statedPercent =
+      typeof stated_percent === "number" && Number.isFinite(stated_percent) ? stated_percent : null;
+    const plan = planExpenseEntry({
+      intent,
+      statedPercent,
+      notifyOverride: typeof notify_coparent === "boolean" ? notify_coparent : null,
+      allocation,
+      amount: amountNum,
+      payer,
+    });
+    if (!plan.fields) {
       return NextResponse.json(
-        { message: saved.clarification },
+        { message: plan.review, sharing_mode: plan.mode },
         { status: 422 }
       );
     }
-    const notifyCoparent = notify_coparent === true;
+    const notifyCoparent = plan.notifyCoparent;
     const status = expenseWorkflowStatus({
-      otherParentShare: saved.fields.other_parent_share,
+      otherParentShare: plan.fields.other_parent_share,
       notifyCoparent,
     });
     const { data: expense, error } = await admin
@@ -102,12 +117,12 @@ export async function POST(request: NextRequest) {
         amount: amountNum,
         category: category ?? "other",
         child_id: primaryChildId,
-        split_percent: saved.fields.other_parent_percent,
-        amount_owed: saved.fields.amount_owed,
-        allocation_status: allocationStatusForDb(saved.fields.allocation_status),
-        other_parent_percent: saved.fields.other_parent_percent,
-        other_parent_share: saved.fields.other_parent_share,
-        split_label: saved.fields.split_label,
+        split_percent: plan.fields.other_parent_percent,
+        amount_owed: plan.fields.amount_owed,
+        allocation_status: allocationStatusForDb(plan.fields.allocation_status),
+        other_parent_percent: plan.fields.other_parent_percent,
+        other_parent_share: plan.fields.other_parent_share,
+        split_label: plan.fields.split_label,
         receipt_file_id: receipt_file_id ?? null,
         incurred_date: incurred_date || null,
         category_description: category_description || null,

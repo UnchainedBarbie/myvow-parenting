@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
 import type { Proposal } from "@/lib/sage/planner";
-import { coparentShareForExpense } from "@/lib/expenses-tab";
+import { expenseWorkflowStatus } from "@/lib/expenses-share";
+import { coparentShareForExpense, expenseTabNetBalance } from "@/lib/expenses-tab";
 import {
+  detectExpenseLoggingIntent,
   detectExpensePayer,
   expenseSplitReview,
   historicalSharingGap,
   isHealthcareCategory,
+  planExpenseEntry,
   resolveExpenseSharing,
   savedExpenseShare,
   type SharingResult,
@@ -311,5 +314,151 @@ assert.equal(
   ),
   42.5
 );
+
+const dentalRule = share({
+  amount: 120,
+  category: "dental",
+  rules: [
+    { category: "dental", child_scope: null, rule_type: "SPLIT_PERCENT", other_parent_percent: 50 },
+  ],
+});
+const dentalPlan = planExpenseEntry({
+  intent: "unspecified",
+  statedPercent: null,
+  notifyOverride: null,
+  allocation: dentalRule,
+  amount: 120,
+  payer: "self",
+});
+assert.equal(dentalPlan.mode, "shared");
+assert.equal(dentalPlan.notifyCoparent, true);
+assert.equal(dentalPlan.fields?.other_parent_share, 60);
+assert.equal(dentalPlan.fields?.amount_owed, 60);
+assert.equal(dentalPlan.fields?.split_label, "50/50");
+assert.match(dentalPlan.review, /Notify co-parent: on/);
+assert.equal(
+  expenseWorkflowStatus({ otherParentShare: 60, notifyCoparent: dentalPlan.notifyCoparent }),
+  "submitted"
+);
+
+const shoesIntent = detectExpenseLoggingIntent(
+  "I spent $65 on shoes. Just log this for my records."
+);
+assert.equal(shoesIntent.intent, "personal");
+const shoesPlan = planExpenseEntry({
+  intent: shoesIntent.intent,
+  statedPercent: shoesIntent.statedPercent,
+  notifyOverride: shoesIntent.notify,
+  allocation: share({ amount: 65, category: "clothing" }),
+  amount: 65,
+  payer: "self",
+});
+assert.equal(shoesPlan.mode, "personal");
+assert.equal(shoesPlan.notifyCoparent, false);
+assert.equal(shoesPlan.fields?.other_parent_share, 0);
+assert.equal(shoesPlan.fields?.amount_owed, 0);
+assert.equal(shoesPlan.fields?.split_label, "Personal");
+assert.match(shoesPlan.review, /Notify co-parent: off/);
+assert.equal(
+  expenseTabNetBalance(
+    [
+      {
+        amount: 65,
+        amount_owed: shoesPlan.fields?.amount_owed ?? 0,
+        other_parent_share: shoesPlan.fields?.other_parent_share ?? 0,
+        submitted_by: "parent-a",
+        status: "resolved",
+        split_label: "Personal",
+      },
+    ],
+    "parent-a"
+  ).net,
+  0
+);
+
+const tripIntent = detectExpenseLoggingIntent(
+  "I paid $30 for the field trip. Just for my records."
+);
+assert.equal(tripIntent.intent, "personal");
+const tripPlan = planExpenseEntry({
+  intent: tripIntent.intent,
+  statedPercent: null,
+  notifyOverride: null,
+  allocation: share({ amount: 30, category: "school", medical: 50 }),
+  amount: 30,
+  payer: "self",
+});
+assert.equal(tripPlan.mode, "personal");
+assert.equal(tripPlan.fields?.amount_owed, 0);
+assert.equal(tripPlan.notifyCoparent, false);
+
+const askSplit = planExpenseEntry({
+  intent: "shared",
+  statedPercent: null,
+  notifyOverride: null,
+  allocation: share({ amount: 30, category: "school" }),
+  amount: 30,
+  payer: "self",
+});
+assert.equal(askSplit.mode, "ask_percent");
+assert.equal(askSplit.fields, null);
+assert.match(askSplit.review, /percentage/i);
+
+const quietShare = planExpenseEntry({
+  intent: "unspecified",
+  statedPercent: null,
+  notifyOverride: false,
+  allocation: dentalRule,
+  amount: 120,
+  payer: "self",
+});
+assert.equal(quietShare.notifyCoparent, false);
+assert.equal(quietShare.fields?.other_parent_share, 60);
+assert.equal(quietShare.fields?.amount_owed, 60);
+assert.match(quietShare.review, /Notify co-parent: off/);
+assert.equal(
+  expenseWorkflowStatus({ otherParentShare: 60, notifyCoparent: false }),
+  "resolved"
+);
+
+const otherPaid = planExpenseEntry({
+  intent: "unspecified",
+  statedPercent: null,
+  notifyOverride: null,
+  allocation: dentalRule,
+  amount: 120,
+  payer: "coparent",
+  payerName: "Kevin",
+});
+assert.equal(otherPaid.fields?.other_parent_share, 60);
+assert.equal(otherPaid.fields?.amount_owed, -60);
+assert.equal(otherPaid.notifyCoparent, true);
+assert.match(otherPaid.review, /Kevin paid/);
+
+const owesHalf = detectExpenseLoggingIntent("Kevin owes half.");
+assert.equal(owesHalf.intent, "shared");
+assert.equal(owesHalf.statedPercent, 50);
+const halfPlan = planExpenseEntry({
+  intent: owesHalf.intent,
+  statedPercent: owesHalf.statedPercent,
+  notifyOverride: null,
+  allocation: share({ amount: 30, category: "school" }),
+  amount: 30,
+  payer: "self",
+});
+assert.equal(halfPlan.mode, "shared");
+assert.equal(halfPlan.fields?.other_parent_share, 15);
+assert.equal(halfPlan.notifyCoparent, true);
+
+const ambiguousChoice = planExpenseEntry({
+  intent: "unspecified",
+  statedPercent: null,
+  notifyOverride: null,
+  allocation: share({ amount: 65, category: "clothing" }),
+  amount: 65,
+  payer: "self",
+});
+assert.equal(ambiguousChoice.mode, "choose");
+assert.equal(ambiguousChoice.fields, null);
 
 console.log("expense sharing tests passed");

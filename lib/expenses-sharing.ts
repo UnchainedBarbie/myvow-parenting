@@ -56,6 +56,22 @@ export type SavedExpenseShare = {
   amount_owed: number;
 };
 
+export type ExpenseLoggingIntent = "personal" | "shared" | "unspecified";
+
+export type ExpenseEntryMode = "personal" | "shared" | "choose" | "ask_percent";
+
+export type ExpenseEntryPlan = {
+  mode: ExpenseEntryMode;
+  /** Default or the parent's explicit notification choice. */
+  notifyCoparent: boolean;
+  /** Dollar fields when the expense can be saved. Null when the form still needs a choice or a percentage. */
+  fields: SavedExpenseShare | null;
+  review: string;
+  needsPercent: boolean;
+  /** True when a case rule produced the split. A typed percentage is not a case rule. */
+  ruleApplied: boolean;
+};
+
 export type PayerDecision =
   | { kind: "self" }
   | { kind: "coparent"; name: string }
@@ -165,6 +181,162 @@ export function expenseSplitReview(input: {
     return `${name} paid. Split ${split_label}. Your share is $${Math.abs(amount_owed).toFixed(2)}.`;
   }
   return `Split ${split_label}. The other parent's share is $${other_parent_share.toFixed(2)}.`;
+}
+
+export function detectExpenseLoggingIntent(text: string): {
+  intent: ExpenseLoggingIntent;
+  statedPercent: number | null;
+  notify: boolean | null;
+  /** True when the message asks for a personal log and a shared split. */
+  conflict: boolean;
+} {
+  const personal =
+    /\b(just log|for my records|my own records|personal(?:ly)?|don'?t share|do not share|not a shared|no reimbursement|not requesting reimbursement)\b/i.test(
+      text
+    );
+  const shared =
+    /\b(owes|owe|split|shared expense|share this|reimburse|their share|co-?parent owes)\b/i.test(text) ||
+    /\bhalf\b/i.test(text) ||
+    /\d+(?:\.\d+)?\s*%/.test(text);
+  const conflict = personal && shared;
+  let intent: ExpenseLoggingIntent = "unspecified";
+  if (conflict) intent = "unspecified";
+  else if (personal) intent = "personal";
+  else if (shared) intent = "shared";
+
+  let notify: boolean | null = null;
+  if (/\b(don'?t|do not|dont) notify\b/i.test(text) || /\bwithout notifying\b/i.test(text)) {
+    notify = false;
+  } else if (/\bnotify\b/i.test(text)) {
+    notify = true;
+  }
+  return { intent, statedPercent: statedSharePercent(text), notify, conflict };
+}
+
+/**
+ * Decide whether an expense is a personal log, a shared split, a choice, or a request for a percentage.
+ * A missing rule is a choice. It is not a zero share and it is not an error.
+ */
+export function planExpenseEntry(input: {
+  intent: ExpenseLoggingIntent;
+  statedPercent: number | null;
+  notifyOverride: boolean | null;
+  conflict?: boolean;
+  allocation: SharingResult;
+  amount: number;
+  payer: ExpensePayer;
+  payerName?: string | null;
+}): ExpenseEntryPlan {
+  if (input.conflict) {
+    return {
+      mode: "choose",
+      notifyCoparent: false,
+      needsPercent: false,
+      ruleApplied: false,
+      fields: null,
+      review: "Choose Personal log or Shared expense.",
+    };
+  }
+
+  if (input.intent === "personal") {
+    const notifyCoparent = input.notifyOverride === true;
+    return {
+      mode: "personal",
+      notifyCoparent,
+      needsPercent: false,
+      ruleApplied: false,
+      fields: personalFields(),
+      review: withNotify(
+        "Personal log. This does not change the co-parent balance.",
+        notifyCoparent
+      ),
+    };
+  }
+
+  const ruleResolved =
+    input.allocation.allocation_status === "ALLOCATED" || input.allocation.allocation_status === "NONE";
+  if (ruleResolved) {
+    const notifyCoparent = input.notifyOverride ?? true;
+    const saved = savedExpenseShare(input.allocation, input.amount, input.payer);
+    const review = saved.saveable
+      ? expenseSplitReview({
+          result: input.allocation,
+          amount: input.amount,
+          payer: input.payer,
+          payerName: input.payerName,
+        })
+      : input.allocation.clarification ?? "I need a sharing percentage before I can log this expense.";
+    return {
+      mode: "shared",
+      notifyCoparent,
+      needsPercent: false,
+      ruleApplied: true,
+      fields: saved.saveable ? saved.fields : null,
+      review: withNotify(review, notifyCoparent),
+    };
+  }
+
+  if (input.statedPercent != null) {
+    const stated = splitFromPercent(input.amount, input.statedPercent);
+    if (stated.allocation_status === "ALLOCATED" || stated.allocation_status === "NONE") {
+      const notifyCoparent = input.notifyOverride ?? true;
+      const saved = savedExpenseShare(stated, input.amount, input.payer);
+      const review = saved.saveable
+        ? expenseSplitReview({
+            result: stated,
+            amount: input.amount,
+            payer: input.payer,
+            payerName: input.payerName,
+          })
+        : stated.clarification ?? "What percentage should the other parent pay?";
+      return {
+        mode: "shared",
+        notifyCoparent,
+        needsPercent: false,
+        ruleApplied: false,
+        fields: saved.saveable ? saved.fields : null,
+        review: withNotify(review, notifyCoparent),
+      };
+    }
+  }
+
+  const notifyCoparent = input.notifyOverride ?? input.intent === "shared";
+  if (input.intent === "shared" || input.allocation.allocation_status === "MANUAL_REQUIRED") {
+    const question =
+      input.allocation.clarification?.trim() ||
+      "What percentage should the other parent pay?";
+    return {
+      mode: "ask_percent",
+      notifyCoparent,
+      needsPercent: true,
+      ruleApplied: false,
+      fields: null,
+      review: withNotify(question, notifyCoparent),
+    };
+  }
+
+  if (input.allocation.allocation_status === "UNRESOLVED" && /disagree/i.test(input.allocation.clarification ?? "")) {
+    return {
+      mode: "ask_percent",
+      notifyCoparent,
+      needsPercent: true,
+      ruleApplied: false,
+      fields: null,
+      review: withNotify(
+        input.allocation.clarification ?? "Which percentage should the other parent pay?",
+        notifyCoparent
+      ),
+    };
+  }
+
+  return {
+    mode: "choose",
+    notifyCoparent: false,
+    needsPercent: false,
+    ruleApplied: false,
+    fields: null,
+    review: "No sharing rule applies. Choose Personal log or Shared expense.",
+  };
 }
 
 export function detectExpensePayer(
@@ -299,6 +471,39 @@ function splitFromPercent(amount: number, pct: number): SharingResult {
     split_label: `${formatPct(pct)}/${formatPct(100 - pct)}`,
     clarification: null,
   };
+}
+
+function personalFields(): SavedExpenseShare {
+  return {
+    allocation_status: "NONE",
+    other_parent_percent: 0,
+    other_parent_share: 0,
+    split_label: "Personal",
+    amount_owed: 0,
+  };
+}
+
+function withNotify(review: string, notify: boolean): string {
+  const sentence = review.trim().replace(/\.$/, "");
+  return `${sentence}. Notify co-parent: ${notify ? "on" : "off"}.`;
+}
+
+function statedSharePercent(text: string): number | null {
+  if (/\bhalf\b/i.test(text)) return 50;
+  const percent = text.match(/(\d+(?:\.\d+)?)\s*%/);
+  if (percent) {
+    const value = Number(percent[1]);
+    if (Number.isFinite(value) && value >= 0 && value <= 100) return value;
+  }
+  const ratio = text.match(/\b(\d+(?:\.\d+)?)\s*\/\s*(\d+(?:\.\d+)?)\b/);
+  if (ratio) {
+    const left = Number(ratio[1]);
+    const right = Number(ratio[2]);
+    if (Number.isFinite(left) && Number.isFinite(right) && Math.abs(left + right - 100) < 0.01) {
+      return left;
+    }
+  }
+  return null;
 }
 
 function explicitZero(): SharingResult {

@@ -76,6 +76,10 @@ export type ExpenseFormInitialValues = {
   /** Sharing sentence from the case rules, shown before save. */
   splitReview?: string;
   paidBy?: "self" | "coparent";
+  sharingMode?: "personal" | "shared" | "choose" | "ask_percent";
+  sharingIntent?: "personal" | "shared" | "unspecified";
+  statedPercent?: number | null;
+  notifyCoparent?: boolean;
 };
 
 interface ExpenseFormProps {
@@ -132,7 +136,24 @@ export function ExpenseForm({
   const [paidBy, setPaidBy] = useState<"self" | "coparent">(
     () => (initialValues?.paidBy === "coparent" ? "coparent" : "self")
   );
-  const [notifyCoparent, setNotifyCoparent] = useState(false);
+  const [sharingMode, setSharingMode] = useState(initialValues?.sharingMode ?? null);
+  const [sharingChoice, setSharingChoice] = useState<"personal" | "shared" | null>(() => {
+    if (initialValues?.sharingMode === "personal") return "personal";
+    if (initialValues?.sharingMode === "shared" || initialValues?.sharingMode === "ask_percent") {
+      return "shared";
+    }
+    return null;
+  });
+  const [choiceTouched, setChoiceTouched] = useState(false);
+  const [statedPercent, setStatedPercent] = useState(
+    () => (initialValues?.statedPercent != null ? String(initialValues.statedPercent) : "")
+  );
+  const [ruleApplied, setRuleApplied] = useState(
+    () => initialValues?.sharingMode === "shared" && initialValues.statedPercent == null
+  );
+  const [sharingReview, setSharingReview] = useState(() => initialValues?.splitReview ?? "");
+  const [notifyTouched, setNotifyTouched] = useState(() => initialValues?.notifyCoparent != null);
+  const [notifyCoparent, setNotifyCoparent] = useState(() => initialValues?.notifyCoparent === true);
   const [receiptFile, setReceiptFile] = useState<File | null>(null);
   const [storedReceipt, setStoredReceipt] = useState<ExpenseAttachedFile | null>(
     () => initialValues?.attachedFile ?? null
@@ -177,11 +198,90 @@ export function ExpenseForm({
       setVisibility(initialValues.visibility);
     }
     setPaidBy(initialValues.paidBy === "coparent" ? "coparent" : "self");
+    if (initialValues.sharingMode) setSharingMode(initialValues.sharingMode);
+    if (initialValues.sharingMode === "personal") setSharingChoice("personal");
+    else if (initialValues.sharingMode === "shared" || initialValues.sharingMode === "ask_percent") {
+      setSharingChoice("shared");
+    }
+    if (initialValues.statedPercent != null) setStatedPercent(String(initialValues.statedPercent));
+    if (initialValues.splitReview) setSharingReview(initialValues.splitReview);
+    if (initialValues.notifyCoparent != null) {
+      setNotifyCoparent(initialValues.notifyCoparent);
+      setNotifyTouched(true);
+    }
     if (initialValues.attachedFile?.document_id) {
       setStoredReceipt(initialValues.attachedFile);
       setReceiptFile(null);
     }
   }, [initialValues]);
+
+  useEffect(() => {
+    const amt = Number(amount);
+    if (!caseId || !Number.isFinite(amt) || amt <= 0 || !category) return;
+    const matchesInitial =
+      initialValues?.category === category && Number(initialValues?.amount) === amt;
+    const intent =
+      choiceTouched && sharingChoice
+        ? sharingChoice
+        : matchesInitial && initialValues?.sharingIntent
+          ? initialValues.sharingIntent
+          : "unspecified";
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      void fetch("/api/expenses/sharing-preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
+        body: JSON.stringify({
+          case_id: caseId,
+          amount: amt,
+          category,
+          child_id: selectedChildIds[0] ?? null,
+          sharing_intent: intent,
+          stated_percent: statedPercent.trim() ? Number(statedPercent) : null,
+          paid_by: paidBy,
+          notify_coparent: notifyTouched ? notifyCoparent : null,
+        }),
+      })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data: {
+          mode?: "personal" | "shared" | "choose" | "ask_percent";
+          notifyCoparent?: boolean;
+          ruleApplied?: boolean;
+          review?: string;
+        } | null) => {
+          if (!data?.mode) return;
+          setSharingMode(data.mode);
+          setRuleApplied(data.ruleApplied === true);
+          if (data.review) setSharingReview(data.review);
+          if (!choiceTouched) {
+            if (data.mode === "personal") setSharingChoice("personal");
+            else if (data.mode === "shared" || data.mode === "ask_percent") setSharingChoice("shared");
+            else setSharingChoice(null);
+          }
+          if (!notifyTouched) setNotifyCoparent(data.notifyCoparent === true);
+        })
+        .catch(() => undefined);
+    }, 250);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [
+    amount,
+    caseId,
+    category,
+    choiceTouched,
+    initialValues?.amount,
+    initialValues?.category,
+    initialValues?.sharingIntent,
+    notifyCoparent,
+    notifyTouched,
+    paidBy,
+    selectedChildIds,
+    sharingChoice,
+    statedPercent,
+  ]);
 
   function handleDrag(e: React.DragEvent) {
     e.preventDefault();
@@ -277,6 +377,14 @@ export function ExpenseForm({
       setError("Please enter a description and a valid amount.");
       return;
     }
+    if (sharingMode === "choose" && !sharingChoice) {
+      setError("Choose Personal log or Shared expense.");
+      return;
+    }
+    if (sharingMode === "ask_percent" && !statedPercent.trim()) {
+      setError("Enter the percentage the other parent should pay.");
+      return;
+    }
     setLoading(true);
     try {
       let receiptFileId: string | undefined;
@@ -317,8 +425,10 @@ export function ExpenseForm({
           child_id: childId || undefined,
           child_ids: selectedChildIds,
           receipt_file_id: receiptFileId,
-          notify_coparent: notifyCoparent,
+          ...(notifyTouched ? { notify_coparent: notifyCoparent } : {}),
           paid_by: paidBy,
+          sharing_intent: sharingChoice ?? undefined,
+          ...(statedPercent.trim() ? { stated_percent: Number(statedPercent) } : {}),
         }),
       });
       const data = await res.json();
@@ -626,15 +736,6 @@ export function ExpenseForm({
                 </option>
               ))}
             </select>
-            {initialValues?.splitReview &&
-            category === (initialValues.category ?? category) &&
-            Number(amount) === Number(initialValues.amount) ? (
-              <p className="text-xs text-foreground-secondary">{initialValues.splitReview}</p>
-            ) : initialValues?.splitReview ? (
-              <p className="text-xs text-foreground-secondary">
-                Saving recalculates the split from this case&apos;s sharing rules.
-              </p>
-            ) : null}
             {category === "other" && (
               <div className="space-y-2 pt-1">
                 <Label htmlFor="exp-category-desc" className="text-xs font-medium">
@@ -697,18 +798,80 @@ export function ExpenseForm({
               ))}
             </select>
           </div>
+          <fieldset className="space-y-2">
+            <legend className="text-xs font-medium text-foreground">Sharing</legend>
+            {sharingReview ? (
+              <p className="text-xs text-foreground-secondary">{sharingReview}</p>
+            ) : (
+              <p className="text-xs text-foreground-secondary">
+                Choose a personal log, or a shared expense that uses this case&apos;s rules.
+              </p>
+            )}
+            <label className="flex items-start gap-2 text-xs text-foreground">
+              <input
+                type="radio"
+                name="expense-sharing"
+                className="mt-0.5"
+                checked={sharingChoice === "personal"}
+                onChange={() => {
+                  setChoiceTouched(true);
+                  setSharingChoice("personal");
+                  if (!notifyTouched) setNotifyCoparent(false);
+                }}
+              />
+              <span>Personal log</span>
+            </label>
+            <label className="flex items-start gap-2 text-xs text-foreground">
+              <input
+                type="radio"
+                name="expense-sharing"
+                className="mt-0.5"
+                checked={sharingChoice === "shared"}
+                onChange={() => {
+                  setChoiceTouched(true);
+                  setSharingChoice("shared");
+                  if (!notifyTouched) setNotifyCoparent(true);
+                }}
+              />
+              <span>Shared expense</span>
+            </label>
+            {sharingChoice === "shared" && !ruleApplied ? (
+              <div className="space-y-1">
+                <Label htmlFor="exp-share-percent" className="text-xs font-medium">
+                  Other parent&apos;s percentage
+                </Label>
+                <input
+                  id="exp-share-percent"
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="1"
+                  value={statedPercent}
+                  onChange={(e) => setStatedPercent(e.target.value)}
+                  placeholder="50"
+                  className={cn(
+                    "flex h-8 w-full rounded-card border border-input bg-background px-2 py-1 text-xs",
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                  )}
+                />
+              </div>
+            ) : null}
+          </fieldset>
           <label className="flex items-start gap-2 text-xs text-foreground">
             <input
               type="checkbox"
               className="mt-0.5 rounded border-border"
               checked={notifyCoparent}
-              onChange={(e) => setNotifyCoparent(e.target.checked)}
+              onChange={(e) => {
+                setNotifyTouched(true);
+                setNotifyCoparent(e.target.checked);
+              }}
             />
             <span>
               Notify co-parent about this expense
               <span className="block text-[11px] text-foreground-secondary">
-                Optional if their share is $0 — only needed if you want them to
-                acknowledge a personal/documentation record.
+                Checked for a shared expense. A personal log leaves this off.
+                Saving asks them to respond in the ledger. No email is sent.
               </span>
             </span>
           </label>

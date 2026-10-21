@@ -75,6 +75,12 @@ export type SageProposal = {
   amount_owed?: number | null;
   /** Sharing sentence shown on the approval card before the expense is saved. */
   split_review?: string | null;
+  sharing_intent?: "personal" | "shared" | "unspecified" | null;
+  sharing_mode?: "personal" | "shared" | "choose" | "ask_percent" | null;
+  sharing_conflict?: boolean | null;
+  stated_percent?: number | null;
+  /** Null until the parent or the message chooses. True asks the co-parent to respond after save. */
+  notify_coparent?: boolean | null;
 };
 
 export type SagePlan = {

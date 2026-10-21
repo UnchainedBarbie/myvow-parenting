@@ -37,6 +37,7 @@ export function CommunicationRecordConfig({ caseId }: { caseId: string }) {
   const [attachmentsOnly, setAttachmentsOnly] = useState(false);
   const [layout, setLayout] = useState<ReportLayout>("table");
   const [includeFiles, setIncludeFiles] = useState(true);
+  const [exportFormat, setExportFormat] = useState<"pdf" | "csv">("pdf");
   const [busy, setBusy] = useState<"pdf" | "csv" | null>(null);
   const [downloadError, setDownloadError] = useState("");
   const [conversations, setConversations] = useState<ConversationOption[]>([]);
@@ -70,6 +71,28 @@ export function CommunicationRecordConfig({ caseId }: { caseId: string }) {
   }, []);
 
   const customReady = preset !== "custom" || (from !== "" && to !== "");
+
+  function localRange(days: number) {
+    const end = new Date();
+    const start = new Date();
+    start.setDate(start.getDate() - days);
+    const iso = (date: Date) => date.toISOString().slice(0, 10);
+    return { start: iso(start), end: iso(end) };
+  }
+
+  function choosePreset(next: DatePreset) {
+    setPreset(next);
+    if (next === "all") {
+      setFrom("");
+      setTo("");
+      return;
+    }
+    if (next === "custom") return;
+    const days = next === "30" ? 30 : next === "90" ? 90 : 180;
+    const range = localRange(days);
+    setFrom(range.start);
+    setTo(range.end);
+  }
 
   const filterParams = useMemo(() => {
     const params = new URLSearchParams();
@@ -189,40 +212,44 @@ export function CommunicationRecordConfig({ caseId }: { caseId: string }) {
                   ? "border-[#7C8B6E] bg-[#F2F5EF] text-[#5B7A52]"
                   : "border-[#E8E4DC] bg-white text-foreground hover:bg-[#F7F3EA]"
               )}
-              onClick={() => setPreset(option.id)}
+                onClick={() => choosePreset(option.id)}
             >
               {option.label}
             </button>
           ))}
         </div>
-        {preset === "custom" ? (
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            <div className="space-y-1">
-              <Label htmlFor="record-from" className="text-[11px] text-foreground-secondary">
-                From
-              </Label>
-              <input
-                id="record-from"
-                type="date"
-                value={from}
-                onChange={(event) => setFrom(event.target.value)}
-                className={fieldClass}
-              />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="record-to" className="text-[11px] text-foreground-secondary">
-                To
-              </Label>
-              <input
-                id="record-to"
-                type="date"
-                value={to}
-                onChange={(event) => setTo(event.target.value)}
-                className={fieldClass}
-              />
-            </div>
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          <div className="space-y-1">
+            <Label htmlFor="record-from" className="text-[11px] text-foreground-secondary">
+              From
+            </Label>
+            <input
+              id="record-from"
+              type="date"
+              value={from}
+              onChange={(event) => {
+                setPreset("custom");
+                setFrom(event.target.value);
+              }}
+              className={fieldClass}
+            />
           </div>
-        ) : null}
+          <div className="space-y-1">
+            <Label htmlFor="record-to" className="text-[11px] text-foreground-secondary">
+              To
+            </Label>
+            <input
+              id="record-to"
+              type="date"
+              value={to}
+              onChange={(event) => {
+                setPreset("custom");
+                setTo(event.target.value);
+              }}
+              className={fieldClass}
+            />
+          </div>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -317,41 +344,48 @@ export function CommunicationRecordConfig({ caseId }: { caseId: string }) {
         Include attachment files in the PDF
       </label>
 
+      <div className="space-y-1">
+        <Label htmlFor="record-format" className="text-xs font-medium text-[#3D3D3D]">
+          Export format
+        </Label>
+        <select
+          id="record-format"
+          value={exportFormat}
+          onChange={(event) => setExportFormat(event.target.value === "csv" ? "csv" : "pdf")}
+          className="h-9 rounded-md border border-[#E8E4DC] bg-white px-2 text-sm text-[#3D3D3D]"
+        >
+          <option value="pdf">PDF</option>
+          <option value="csv">CSV</option>
+        </select>
+      </div>
+
       <div className="flex flex-wrap gap-2">
-      {customReady ? (
-        <a
-          href={href}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex h-9 items-center justify-center rounded-full bg-[#5B7A52] px-5 text-sm text-white hover:bg-[#476242] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#5B7A52]"
-        >
-          View Record
-        </a>
-      ) : (
-        <button
-          type="button"
-          disabled
-          className="inline-flex h-9 items-center justify-center rounded-full bg-[#5B7A52] px-5 text-sm text-white opacity-50"
-        >
-          View Record
-        </button>
-      )}
         <button
           type="button"
           disabled={!customReady || busy !== null}
-          onClick={() => void download("pdf")}
-          className="inline-flex h-9 items-center justify-center rounded-full border border-[#5B7A52] bg-white px-5 text-sm text-[#5B7A52] hover:bg-[#F2F5EF] disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#5B7A52]"
+          onClick={() => void download(exportFormat)}
+          className="inline-flex h-9 items-center justify-center rounded-full bg-[#5B7A52] px-5 text-sm text-white hover:bg-[#476242] disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#5B7A52]"
         >
-          {busy === "pdf" ? "Preparing preview…" : "Generate report"}
+          {busy !== null ? "Generating report…" : "Generate Report"}
         </button>
-        <button
-          type="button"
-          disabled={!customReady || busy !== null}
-          onClick={() => void download("csv")}
-          className="inline-flex h-9 items-center justify-center rounded-full border border-[#5B7A52] bg-white px-5 text-sm text-[#5B7A52] hover:bg-[#F2F5EF] disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#5B7A52]"
-        >
-          {busy === "csv" ? "Preparing CSV…" : "Download CSV"}
-        </button>
+        {customReady ? (
+          <a
+            href={href}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex h-9 items-center justify-center rounded-full border border-[#5B7A52] bg-white px-5 text-sm text-[#5B7A52] hover:bg-[#F2F5EF] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#5B7A52]"
+          >
+            View Record
+          </a>
+        ) : (
+          <button
+            type="button"
+            disabled
+            className="inline-flex h-9 items-center justify-center rounded-full border border-[#5B7A52] bg-white px-5 text-sm text-[#5B7A52] opacity-50"
+          >
+            View Record
+          </button>
+        )}
       </div>
       {downloadError ? <p className="text-sm text-[#8C3A3A]">{downloadError}</p> : null}
     </div>

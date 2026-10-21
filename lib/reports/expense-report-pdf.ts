@@ -201,11 +201,11 @@ export function buildExpenseReportPdf(
   cursor.y += 6;
 
   for (const fact of report.facts) {
-    const labelWidth = 28;
+    const labelWidth = 36;
     doc.setFont("times", "normal");
     doc.setFontSize(10);
     const valueLines = wrap(doc, fact.value, CONTENT_W - labelWidth);
-    const height = Math.max(valueLines.length, 1) * 4.2 + 1.5;
+    const height = Math.max(valueLines.length, 1) * 4.2 + 3.2;
     ensure(cursor, height, caseLabel);
     doc.setFont("times", "bold");
     doc.setFontSize(8);
@@ -218,10 +218,12 @@ export function buildExpenseReportPdf(
       doc.text(line, MARGIN + labelWidth, cursor.y + index * 4.2);
     });
     cursor.y += height;
-    doc.setDrawColor(213, 213, 213);
-    doc.setLineWidth(0.15);
-    doc.line(MARGIN, cursor.y - 1.2, PAGE_W - MARGIN, cursor.y - 1.2);
   }
+  cursor.y += 1;
+  doc.setDrawColor(34, 34, 34);
+  doc.setLineWidth(0.3);
+  doc.line(MARGIN, cursor.y, PAGE_W - MARGIN, cursor.y);
+  cursor.y += 6;
 
   for (const block of report.blocks) {
     if (block.kind === "lines") {

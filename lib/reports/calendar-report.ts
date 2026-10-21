@@ -36,6 +36,7 @@ export type CalendarReportOptions = {
   scheduleChanges: boolean;
   missedPickups: boolean;
   eventsByChild: boolean;
+  monthlyCalendar: boolean;
   includeFiles: boolean;
 };
 
@@ -124,6 +125,7 @@ export function calendarReportOptions(options: Record<string, boolean> | undefin
     scheduleChanges: on("schedule_changes"),
     missedPickups: on("missed_pickups"),
     eventsByChild: on("events_by_child"),
+    monthlyCalendar: options?.monthly_calendar === true,
     includeFiles: options?.include_event_files === true,
   };
 }
@@ -559,7 +561,8 @@ export function prepareCalendarReport(input: {
         ? `On or after ${formatDateSpan(from, from)}`
         : `On or before ${formatDateSpan(to as string, to as string)}`;
 
-  const sectionNames: string[] = ["Monthly calendars"];
+  const sectionNames: string[] = [];
+  if (input.options.monthlyCalendar) sectionNames.push("Monthly calendars");
   if (input.options.custodySchedule) sectionNames.push("Custody schedule");
   if (input.options.scheduleChanges) sectionNames.push("Schedule changes");
   if (input.options.eventsByChild) sectionNames.push("Events");
@@ -567,39 +570,41 @@ export function prepareCalendarReport(input: {
   if (input.options.includeFiles) sectionNames.push("Event attachments");
 
   const blocks: CalendarBlock[] = [];
-  const monthSource = from && to ? monthsBetween(from, to) : monthsFromEvents(included, input.timeZone);
-  const shownMonths = monthSource.slice(0, MAX_MONTHS);
-  if (monthSource.length > MAX_MONTHS) {
-    blocks.push({
-      kind: "lines",
-      title: "Monthly calendars",
-      lines: [
-        `This range covers ${monthSource.length} months. The first ${MAX_MONTHS} months are shown as calendars. Every included event is still listed in the table.`,
-      ],
-    });
-  }
-  for (const month of shownMonths) {
-    blocks.push(
-      buildMonthGrid({
-        year: month.year,
-        month: month.month,
-        events: included,
-        timeZone: input.timeZone,
-        schedule: input.schedule,
-        overrides: input.overrides,
-        holidays: input.holidays,
-        viewerId: input.viewerId,
-        userSide,
-        otherSide,
-      })
-    );
-  }
-  if (shownMonths.length === 0) {
-    blocks.push({
-      kind: "lines",
-      title: "Monthly calendars",
-      lines: ["No dates were selected and no events are available, so there is no month to print."],
-    });
+  if (input.options.monthlyCalendar) {
+    const monthSource = from && to ? monthsBetween(from, to) : monthsFromEvents(included, input.timeZone);
+    const shownMonths = monthSource.slice(0, MAX_MONTHS);
+    if (monthSource.length > MAX_MONTHS) {
+      blocks.push({
+        kind: "lines",
+        title: "Monthly calendars",
+        lines: [
+          `This range covers ${monthSource.length} months. The first ${MAX_MONTHS} months are shown as calendars. Every included event is still listed in the table.`,
+        ],
+      });
+    }
+    for (const month of shownMonths) {
+      blocks.push(
+        buildMonthGrid({
+          year: month.year,
+          month: month.month,
+          events: included,
+          timeZone: input.timeZone,
+          schedule: input.schedule,
+          overrides: input.overrides,
+          holidays: input.holidays,
+          viewerId: input.viewerId,
+          userSide,
+          otherSide,
+        })
+      );
+    }
+    if (shownMonths.length === 0) {
+      blocks.push({
+        kind: "lines",
+        title: "Monthly calendars",
+        lines: ["No dates were selected and no events are available, so there is no month to print."],
+      });
+    }
   }
 
   if (input.options.custodySchedule) {

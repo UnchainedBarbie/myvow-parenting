@@ -181,6 +181,7 @@ const prepared = prepareCalendarReport({
     scheduleChanges: true,
     missedPickups: true,
     eventsByChild: true,
+    monthlyCalendar: true,
     includeFiles: false,
   },
   schedule,
@@ -220,6 +221,41 @@ assert.equal(exchanges.rows[0][5], "Not recorded");
 const month = prepared.document.blocks.find((block) => block.kind === "month");
 assert.ok(month && month.kind === "month");
 assert.equal(month.title, "March 2026");
+
+const withoutGrid = prepareCalendarReport({
+  events: [event({ id: "a", eventNumber: 4, startTime: "2026-03-02T18:00:00.000Z", title: "Soccer" })],
+  parents: [
+    { userId: "alex", name: "Alex Rivera" },
+    { userId: "jordan", name: "Jordan Lee" },
+  ],
+  caseLabel: "FAM-100",
+  timeZone: "America/Denver",
+  dateStart: "2026-03-01",
+  dateEnd: "2026-03-31",
+  generatedAt: new Date("2026-04-01T15:00:00.000Z"),
+  viewerId: "alex",
+  viewerName: "Alex Rivera",
+  viewerIsParent: true,
+  options: {
+    custodySchedule: false,
+    scheduleChanges: false,
+    missedPickups: false,
+    eventsByChild: true,
+    monthlyCalendar: false,
+    includeFiles: false,
+  },
+  schedule,
+  overrides: [],
+  holidays: [],
+  withheldCount: 0,
+  fieldWarning: null,
+  fileLines: [],
+});
+assert.equal(withoutGrid.document.blocks.some((block) => block.kind === "month"), false);
+const tableOnly = withoutGrid.document.blocks.find((block) => block.kind === "table" && block.title === "Events");
+assert.ok(tableOnly && tableOnly.kind === "table");
+assert.equal(tableOnly.rows[0]?.[0], "EVT-004");
+assert.doesNotMatch(withoutGrid.document.facts.map((fact) => fact.value).join(" "), /Monthly calendars/);
 
 assert.match(prepared.document.completeness, /1 event is omitted/);
 assert.match(prepared.verificationPayload, /EVT|a~4/);

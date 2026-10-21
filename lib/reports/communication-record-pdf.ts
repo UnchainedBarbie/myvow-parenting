@@ -133,7 +133,7 @@ function drawFacts(cursor: Cursor, facts: { label: string; value: string }[]) {
     cursor.doc.setFont("times", "normal");
     cursor.doc.setFontSize(10);
     const valueLines = wrapExact(cursor.doc, fact.value, cursor.geom.contentW - labelWidth);
-    const height = Math.max(valueLines.length, 1) * 4.2 + 1.5;
+    const height = Math.max(valueLines.length, 1) * 4.2 + 3.2;
     ensure(cursor, height);
     cursor.doc.setFont("times", "bold");
     cursor.doc.setFontSize(8);
@@ -146,10 +146,12 @@ function drawFacts(cursor: Cursor, facts: { label: string; value: string }[]) {
       cursor.doc.text(line, cursor.geom.margin + labelWidth, cursor.y + index * 4.2);
     });
     cursor.y += height;
-    cursor.doc.setDrawColor(213, 213, 213);
-    cursor.doc.setLineWidth(0.15);
-    cursor.doc.line(cursor.geom.margin, cursor.y - 1.2, cursor.geom.pageW - cursor.geom.margin, cursor.y - 1.2);
   }
+  cursor.y += 1;
+  cursor.doc.setDrawColor(34, 34, 34);
+  cursor.doc.setLineWidth(0.3);
+  cursor.doc.line(cursor.geom.margin, cursor.y, cursor.geom.pageW - cursor.geom.margin, cursor.y);
+  cursor.y += 6;
 }
 
 function openDocument(

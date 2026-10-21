@@ -18,7 +18,7 @@ import { showErrorToast, showSuccessToast } from "@/components/ui/toaster";
 import { CoParentBehaviorAnalysis } from "@/components/reports/coparent-behavior-analysis";
 import { CommunicationRecordConfig } from "@/components/reports/communication-record-config";
 
-type Preset = "30" | "90" | "180" | "custom";
+type Preset = "all" | "30" | "90" | "180" | "custom";
 
 type DateConfig = {
   preset: Preset;
@@ -64,10 +64,11 @@ const GENERATED_REPORTS: GeneratedReport[] = [
     group: "filing",
     hasDateRange: true,
     options: [
+      { id: "events_by_child", label: "Calendar events — chronological table", default: true },
+      { id: "monthly_calendar", label: "Monthly calendar overview — visual calendar grid", default: false },
       { id: "custody_schedule", label: "Custody schedule", default: true },
-      { id: "schedule_changes", label: "Schedule changes/swaps", default: true },
-      { id: "missed_pickups", label: "Missed pickups/dropoffs (if logged)", default: true },
-      { id: "events_by_child", label: "Calendar events by child", default: true },
+      { id: "schedule_changes", label: "Custody changes/swaps", default: true },
+      { id: "missed_pickups", label: "Missed pickups/dropoffs (if explicitly logged)", default: true },
       { id: "include_event_files", label: "Include event attachments in the PDF", default: false },
     ],
     formats: ["pdf"],
@@ -126,7 +127,7 @@ function isoDay(date: Date) {
   return date.toISOString().slice(0, 10);
 }
 
-function rangeFor(preset: Exclude<Preset, "custom">): { start: string; end: string } {
+function rangeFor(preset: "30" | "90" | "180"): { start: string; end: string } {
   const end = new Date();
   const start = new Date();
   const days = preset === "30" ? 30 : preset === "90" ? 90 : 180;
@@ -145,6 +146,7 @@ function initialDates(): Record<string, DateConfig> {
 }
 
 const PRESETS: { id: Preset; label: string }[] = [
+  { id: "all", label: "All time" },
   { id: "30", label: "Last 30 days" },
   { id: "90", label: "Last 90 days" },
   { id: "180", label: "Last 180 days" },
@@ -171,6 +173,7 @@ export function ReportLibrary({ caseId }: { caseId: string }) {
   function setPreset(reportId: string, preset: Preset) {
     setDates((prev) => {
       const current = prev[reportId] ?? { preset: "90", ...rangeFor("90") };
+      if (preset === "all") return { ...prev, [reportId]: { preset, start: "", end: "" } };
       if (preset === "custom") return { ...prev, [reportId]: { ...current, preset } };
       return { ...prev, [reportId]: { preset, ...rangeFor(preset) } };
     });
@@ -203,6 +206,7 @@ export function ReportLibrary({ caseId }: { caseId: string }) {
     setGenerating(report.id);
     try {
       const range = report.hasDateRange ? datesFor(report.id) : null;
+      const bounded = Boolean(range && range.preset !== "all" && range.start && range.end);
       const res = await fetch("/api/reports/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -210,8 +214,8 @@ export function ReportLibrary({ caseId }: { caseId: string }) {
           case_id: caseId,
           report_type: report.id,
           format: getFormat(report.id, report.formats),
-          date_range_start: range?.start,
-          date_range_end: range?.end,
+          date_range_start: bounded ? range?.start : undefined,
+          date_range_end: bounded ? range?.end : undefined,
           options: report.options.reduce(
             (acc, opt) => {
               acc[opt.id] = isOptionChecked(report.id, opt.id, opt.default);
@@ -525,7 +529,7 @@ function GeneratedConfig({
 
       <div className="space-y-1">
         <Label htmlFor={`${report.id}-format`} className="text-xs font-medium text-[#3D3D3D]">
-          Export
+          Export format
         </Label>
         <select
           id={`${report.id}-format`}

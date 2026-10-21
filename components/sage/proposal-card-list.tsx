@@ -282,6 +282,11 @@ export function ProposalCardList({
                 >
                   {historical ? (p.draft ?? "").trim() : displayDraft(p, showDate)}
                 </p>
+                {p.type === "log_expense" && p.split_review?.trim() ? (
+                  <p className="text-[11px] leading-snug text-foreground-secondary">
+                    {p.split_review.trim()}
+                  </p>
+                ) : null}
                 {!suppressActions && showDate && (
                   <input
                     type="date"

@@ -34,6 +34,8 @@ export type PlanContext = {
   expense_allocation?: {
     other_parent_share: number | null;
     allocation_status?: string;
+    split_label?: string | null;
+    clarification?: string | null;
     notify_coparent?: boolean;
   };
   /**
@@ -90,6 +92,16 @@ export type Proposal = {
   event_status?: string | null;
   /** Dollar amount for an expense proposal. Absent when the user did not state one. */
   amount?: number | null;
+  /** self = the logged-in parent paid. coparent = the other parent paid. */
+  paid_by?: "self" | "coparent" | null;
+  payer_name?: string | null;
+  split_label?: string | null;
+  other_parent_percent?: number | null;
+  other_parent_share?: number | null;
+  /** Signed debt to the logger. Negative when the other parent paid. */
+  amount_owed?: number | null;
+  /** Sharing sentence shown on the approval card before the expense is saved. */
+  split_review?: string | null;
 };
 
 export type Plan = {
@@ -209,14 +221,28 @@ function templateCalendar(ctx: PlanContext): string {
   return `Propose calendar update${when} based on: ${ctx.summary.trim() || "schedule change from Co-Parent"}.`;
 }
 
+function unresolvedExpensePlan(ctx: PlanContext): Plan | null {
+  const status = ctx.expense_allocation?.allocation_status;
+  if (status !== "UNRESOLVED" && status !== "MANUAL_REQUIRED") return null;
+  const ask =
+    ctx.expense_allocation?.clarification?.trim() ||
+    "What percentage should the other parent pay for this expense?";
+  return {
+    status: "awaiting_clarification",
+    proposals: [proposal("ask_clarification", ask, null, { audience: "parent" })],
+    reasoning: "The sharing rule has to be resolved before this expense is logged.",
+  };
+}
+
 function templateExpense(ctx: PlanContext): string {
   const summary = ctx.summary.trim().replace(/\.$/, "");
   const share = ctx.expense_allocation?.other_parent_share;
   const involved = coparentShareInvolves(share);
   const notify = ctx.expense_allocation?.notify_coparent === true;
+  const split = ctx.expense_allocation?.split_label;
   const shareLabel =
     involved && share != null
-      ? `$${share.toFixed(2)} will be Co-Parent's share per your plan`
+      ? `Split ${split ?? "per your plan"}. $${share.toFixed(2)} is the other parent's share`
       : null;
 
   if (userCommand(ctx)) {
@@ -228,6 +254,9 @@ function templateExpense(ctx: PlanContext): string {
     }
     if (shareLabel) {
       return `${base}. ${shareLabel}.`;
+    }
+    if (split && share === 0) {
+      return `${base}. Split ${split}. The other parent's share is $0.00.`;
     }
     if (notify) {
       return `${base} for your records. You'll notify Co-Parent even though their share is $0.`;
@@ -634,8 +663,10 @@ export async function plan(ctx: PlanContext): Promise<Plan> {
     };
   }
 
-  // 6. Expense → ready
+  // 6. Expense → ready, unless the sharing rule still has to be chosen.
   if (ctx.item_type === "expense") {
+    const unresolved = unresolvedExpensePlan(ctx);
+    if (unresolved) return unresolved;
     if (userCommand(ctx)) {
       const share = ctx.expense_allocation?.other_parent_share;
       const involved = coparentShareInvolves(share);

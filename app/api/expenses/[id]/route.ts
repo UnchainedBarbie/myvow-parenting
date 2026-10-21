@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
 import { computeAllocationFromParentingPlan, allocationStatusForDb } from "@/lib/expenses-allocation";
+import { savedExpenseShare, type ExpensePayer } from "@/lib/expenses-sharing";
 import { expenseWorkflowStatus } from "@/lib/expenses-share";
 
 function parseChildIds(childIdsRaw: unknown, childId?: string | null): string[] {
@@ -169,6 +170,7 @@ export async function PATCH(
       payment_method?: string | null;
       payment_reference?: string | null;
       payment_notes?: string | null;
+      paid_by?: ExpensePayer | null;
     };
 
     const isOwner = expense.submitted_by === user.id;
@@ -219,14 +221,23 @@ export async function PATCH(
             ? primaryChildId
             : ((expense as { child_id?: string | null }).child_id ?? null),
       });
-      updates.split_percent = allocation.other_parent_percent;
-      updates.amount_owed = allocation.other_parent_share;
-      updates.other_parent_percent = allocation.other_parent_percent;
-      updates.other_parent_share = allocation.other_parent_share;
-      updates.split_label = allocation.split_label;
-      updates.allocation_status = allocationStatusForDb(
-        allocation.allocation_status
-      );
+      const previousOwed = Number(expense.amount_owed);
+      const payer: ExpensePayer =
+        body.paid_by === "coparent" || body.paid_by === "self"
+          ? body.paid_by
+          : previousOwed < 0
+            ? "coparent"
+            : "self";
+      const saved = savedExpenseShare(allocation, amountNum, payer);
+      if (!saved.saveable) {
+        return NextResponse.json({ message: saved.clarification }, { status: 422 });
+      }
+      updates.split_percent = saved.fields.other_parent_percent;
+      updates.amount_owed = saved.fields.amount_owed;
+      updates.other_parent_percent = saved.fields.other_parent_percent;
+      updates.other_parent_share = saved.fields.other_parent_share;
+      updates.split_label = saved.fields.split_label;
+      updates.allocation_status = allocationStatusForDb(saved.fields.allocation_status);
       const currentStatus = String(
         (updates.status as string | undefined) ??
           (expense as { status?: string }).status ??
@@ -234,7 +245,7 @@ export async function PATCH(
       );
       if (currentStatus === "submitted" || currentStatus === "resolved") {
         updates.status = expenseWorkflowStatus({
-          otherParentShare: allocation.other_parent_share,
+          otherParentShare: saved.fields.other_parent_share,
         });
       }
     }

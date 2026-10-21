@@ -73,6 +73,9 @@ export type ExpenseFormInitialValues = {
   visibility?: string;
   /** Already-stored vault file — shown as attached; not re-uploaded on submit. */
   attachedFile?: ExpenseAttachedFile | null;
+  /** Sharing sentence from the case rules, shown before save. */
+  splitReview?: string;
+  paidBy?: "self" | "coparent";
 };
 
 interface ExpenseFormProps {
@@ -126,6 +129,9 @@ export function ExpenseForm({
   const [visibility, setVisibility] = useState<string>(
     () => initialValues?.visibility ?? "parents_only"
   );
+  const [paidBy, setPaidBy] = useState<"self" | "coparent">(
+    () => (initialValues?.paidBy === "coparent" ? "coparent" : "self")
+  );
   const [notifyCoparent, setNotifyCoparent] = useState(false);
   const [receiptFile, setReceiptFile] = useState<File | null>(null);
   const [storedReceipt, setStoredReceipt] = useState<ExpenseAttachedFile | null>(
@@ -170,6 +176,7 @@ export function ExpenseForm({
     if (initialValues.visibility != null) {
       setVisibility(initialValues.visibility);
     }
+    setPaidBy(initialValues.paidBy === "coparent" ? "coparent" : "self");
     if (initialValues.attachedFile?.document_id) {
       setStoredReceipt(initialValues.attachedFile);
       setReceiptFile(null);
@@ -311,6 +318,7 @@ export function ExpenseForm({
           child_ids: selectedChildIds,
           receipt_file_id: receiptFileId,
           notify_coparent: notifyCoparent,
+          paid_by: paidBy,
         }),
       });
       const data = await res.json();
@@ -618,6 +626,15 @@ export function ExpenseForm({
                 </option>
               ))}
             </select>
+            {initialValues?.splitReview &&
+            category === (initialValues.category ?? category) &&
+            Number(amount) === Number(initialValues.amount) ? (
+              <p className="text-xs text-foreground-secondary">{initialValues.splitReview}</p>
+            ) : initialValues?.splitReview ? (
+              <p className="text-xs text-foreground-secondary">
+                Saving recalculates the split from this case&apos;s sharing rules.
+              </p>
+            ) : null}
             {category === "other" && (
               <div className="space-y-2 pt-1">
                 <Label htmlFor="exp-category-desc" className="text-xs font-medium">

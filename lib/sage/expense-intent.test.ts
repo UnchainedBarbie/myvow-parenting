@@ -55,6 +55,7 @@ assert.deepEqual(paid.result.child_ids, [ashley.id]);
 assert.equal(paid.result.unresolved_children.length, 0);
 assert.equal(paidCard.amount, 85);
 assert.equal(paidCard.category, "therapy");
+assert.equal(paidCard.paid_by, "self");
 assert.equal(paidCard.date, "2026-10-21");
 assert.equal(paidCard.requires_approval, true);
 assert.equal("executed" in paidCard, false);
@@ -99,6 +100,8 @@ assert.equal(kevinPaid.result.plan.proposals.some((p) => p.type === "calendar_up
 assert.deepEqual(kevinPaid.result.child_ids, [ashley.id]);
 assert.equal(kevinCard.amount, 120);
 assert.equal(kevinCard.category, "therapy");
+assert.equal(kevinCard.paid_by, "coparent");
+assert.equal(kevinCard.payer_name, "Kevin");
 assert.match(kevinCard.description ?? "", /Kevin paid/i);
 assert.doesNotMatch(kevinCard.description ?? "", /split|reimburse|visa/i);
 

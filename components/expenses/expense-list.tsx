@@ -17,6 +17,8 @@ import {
   EXPENSE_CATEGORY_LABELS as CATEGORY_LABELS,
   coparentShareForExpense as coparentShareForRow,
   displayExpenseStatus,
+  expenseTabSplitText,
+  expenseTabTheirShareText,
   formatStoredExpenseNumber,
 } from "@/lib/expenses-tab";
 import { Label } from "@/components/ui/label";
@@ -39,6 +41,7 @@ export type ExpenseRow = {
   child_name: string | null;
   child_ids: string[];
   amount_owed: string | null;
+  other_parent_share?: string | null;
   status: string;
   created_at: string;
   incurred_date: string | null;
@@ -541,13 +544,8 @@ export function ExpenseList({
     ];
     const rows = filtered.map((exp) => {
       const amountNum = Number(exp.amount);
-      const owedNum = exp.amount_owed != null ? Number(exp.amount_owed) : null;
-      const isMine = exp.submitted_by === currentUserId;
-      const theirShare =
-        owedNum != null ? (isMine ? owedNum : amountNum - owedNum) : null;
-      const involved = coparentShareInvolves(
-        coparentShareForRow(exp, currentUserId)
-      );
+      const theirShare = coparentShareForRow(exp, currentUserId);
+      const involved = coparentShareInvolves(theirShare);
       const statusLabel = displayExpenseStatus(exp, involved);
       return [
         csvStoredExpenseNumber(exp.expense_number),
@@ -557,8 +555,8 @@ export function ExpenseList({
         csvIncurredDate(exp),
         csvEnteredDate(exp.created_at),
         Number.isNaN(amountNum) ? "" : amountNum.toFixed(2),
-        exp.split_label ?? "",
-        theirShare != null ? theirShare.toFixed(2) : "",
+        expenseTabSplitText(exp),
+        theirShare.toFixed(2),
         statusLabel,
       ]
         .map(csvEscape)
@@ -596,20 +594,14 @@ export function ExpenseList({
       ];
       const rows = selected.map((exp) => {
         const amountNum = Number(exp.amount);
-        const owedNum = exp.amount_owed != null ? Number(exp.amount_owed) : null;
-        const isMine = exp.submitted_by === currentUserId;
-        const theirShare =
-          owedNum != null ? (isMine ? owedNum : amountNum - owedNum) : null;
-        const involved = coparentShareInvolves(
-          coparentShareForRow(exp, currentUserId)
-        );
+        const theirShare = coparentShareForRow(exp, currentUserId);
+        const involved = coparentShareInvolves(theirShare);
         const statusLabel = displayExpenseStatus(exp, involved);
         const paymentMethod = (exp as any).payment_method ?? "";
         const paidAt = (exp as any).paid_at
           ? formatDate((exp as any).paid_at as string)
           : "";
         const paymentRef = (exp as any).payment_reference ?? "";
-        const splitLabel = (exp as any).split_label ?? "";
         return [
           csvStoredExpenseNumber(exp.expense_number),
           exp.description ?? "",
@@ -618,8 +610,8 @@ export function ExpenseList({
           csvIncurredDate(exp),
           csvEnteredDate(exp.created_at),
           Number.isNaN(amountNum) ? "" : amountNum.toFixed(2),
-          splitLabel,
-          theirShare != null ? theirShare.toFixed(2) : "",
+          expenseTabSplitText(exp),
+          theirShare.toFixed(2),
           statusLabel,
           paymentMethod,
           paidAt,
@@ -1277,16 +1269,10 @@ const dateFilterValue: DateFilterValue = {
                         {Number.isNaN(amountNum) ? "—" : `$${amountNum.toFixed(2)}`}
                       </td>
                       <td className="px-2 py-1.5 align-middle text-foreground-secondary whitespace-nowrap">
-                        {exp.allocation_status === "NONE"
-                          ? "—"
-                          : exp.split_label || ""}
+                        {expenseTabSplitText(exp)}
                       </td>
                       <td className="px-2 py-1.5 align-middle whitespace-nowrap">
-                        {exp.allocation_status === "NONE"
-                          ? "$0.00"
-                          : theirShare != null && !Number.isNaN(theirShare)
-                          ? `$${theirShare.toFixed(2)}`
-                          : "—"}
+                        {expenseTabTheirShareText(exp, currentUserId)}
                       </td>
                       <td className="px-3 py-1.5 align-middle whitespace-nowrap">
                         <div className="flex flex-col items-start gap-1">

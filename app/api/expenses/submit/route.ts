@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
 import { computeAllocationFromParentingPlan, allocationStatusForDb } from "@/lib/expenses-allocation";
+import { savedExpenseShare, type ExpensePayer } from "@/lib/expenses-sharing";
 import { expenseWorkflowStatus } from "@/lib/expenses-share";
 
 function parseChildIds(childIdsRaw: unknown, childId?: string | null): string[] {
@@ -41,6 +42,7 @@ export async function POST(request: NextRequest) {
       notify_coparent,
       incurred_date,
       category_description,
+      paid_by,
     } = body as {
       case_id?: string;
       description?: string;
@@ -52,6 +54,7 @@ export async function POST(request: NextRequest) {
       notify_coparent?: boolean;
       incurred_date?: string | null;
       category_description?: string | null;
+      paid_by?: ExpensePayer | null;
     };
     const descTrimmed = (description ?? "").trim();
     if (!case_id || !descTrimmed || amount == null) {
@@ -77,9 +80,17 @@ export async function POST(request: NextRequest) {
       category: category ?? "other",
       childId: primaryChildId,
     });
+    const payer: ExpensePayer = paid_by === "coparent" ? "coparent" : "self";
+    const saved = savedExpenseShare(allocation, amountNum, payer);
+    if (!saved.saveable) {
+      return NextResponse.json(
+        { message: saved.clarification },
+        { status: 422 }
+      );
+    }
     const notifyCoparent = notify_coparent === true;
     const status = expenseWorkflowStatus({
-      otherParentShare: allocation.other_parent_share,
+      otherParentShare: saved.fields.other_parent_share,
       notifyCoparent,
     });
     const { data: expense, error } = await admin
@@ -91,12 +102,12 @@ export async function POST(request: NextRequest) {
         amount: amountNum,
         category: category ?? "other",
         child_id: primaryChildId,
-        split_percent: allocation.other_parent_percent,
-        amount_owed: allocation.other_parent_share,
-        allocation_status: allocationStatusForDb(allocation.allocation_status),
-        other_parent_percent: allocation.other_parent_percent,
-        other_parent_share: allocation.other_parent_share,
-        split_label: allocation.split_label,
+        split_percent: saved.fields.other_parent_percent,
+        amount_owed: saved.fields.amount_owed,
+        allocation_status: allocationStatusForDb(saved.fields.allocation_status),
+        other_parent_percent: saved.fields.other_parent_percent,
+        other_parent_share: saved.fields.other_parent_share,
+        split_label: saved.fields.split_label,
         receipt_file_id: receipt_file_id ?? null,
         incurred_date: incurred_date || null,
         category_description: category_description || null,

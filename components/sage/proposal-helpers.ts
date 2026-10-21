@@ -708,6 +708,8 @@ export function buildExpenseInitialValues(
     ...(amount != null ? { amount } : {}),
     incurredDate: date,
     category: inferExpenseCategory(item, proposal),
+    ...(proposal.split_review?.trim() ? { splitReview: proposal.split_review.trim() } : {}),
+    ...(proposal.paid_by === "coparent" ? { paidBy: "coparent" as const } : {}),
     ...(childId ? { childId } : {}),
     ...(childIds.length > 0 ? { childIds } : {}),
     ...(attachedFile ? { attachedFile } : {}),

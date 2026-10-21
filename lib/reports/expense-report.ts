@@ -1,5 +1,6 @@
 import {
   EXPENSE_CATEGORY_LABELS,
+  coparentPortion,
   expenseTabMoney,
   expenseTabNetBalance,
   expenseTabSplitText,
@@ -220,7 +221,11 @@ type ShareInfo = {
 
 function shareInfo(expense: ExpenseReportSource): ShareInfo {
   const amount = money(expense.amount);
-  const share = money(expense.otherParentShare) ?? money(expense.amountOwed);
+  const share = coparentPortion({
+    other_parent_share: expense.otherParentShare,
+    amount_owed: expense.amountOwed,
+    split_label: expense.splitLabel,
+  });
   if (amount == null || share == null) {
     return { amount, share, remainder: null, inconsistent: false };
   }
@@ -307,6 +312,7 @@ function toTabRow(expense: ExpenseReportSource): ExpenseTabRow {
   return {
     amount: expense.amount,
     amount_owed: expense.amountOwed,
+    other_parent_share: expense.otherParentShare,
     submitted_by: expense.submittedBy,
     allocation_status: expense.allocationStatus,
     status: expense.status,

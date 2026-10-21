@@ -65,6 +65,16 @@ export type SageProposal = {
   event_status?: string | null;
   /** Dollar amount for an expense proposal. Absent when the user did not state one. */
   amount?: number | null;
+  /** self = the logged-in parent paid. coparent = the other parent paid. */
+  paid_by?: "self" | "coparent" | null;
+  payer_name?: string | null;
+  split_label?: string | null;
+  other_parent_percent?: number | null;
+  other_parent_share?: number | null;
+  /** Signed debt to the logger. Negative when the other parent paid. */
+  amount_owed?: number | null;
+  /** Sharing sentence shown on the approval card before the expense is saved. */
+  split_review?: string | null;
 };
 
 export type SagePlan = {

@@ -16,6 +16,7 @@ import {
   processObservation,
   type ProcessObservationResult,
 } from "@/lib/sage/process-observation";
+import { attachExpenseSharing } from "@/lib/sage/attach-expense-sharing";
 import { isCalendarUpdateProposal, isLogExpenseProposal } from "@/lib/sage/proposal-kind";
 import type { Proposal } from "@/lib/sage/planner";
 
@@ -88,9 +89,10 @@ export async function processChatMessage(
     today: input.today,
   });
   if (routed.handled) {
+    const shared = await shareExpenseTurn(input.case_id, routed.reply, routed.result);
     return {
-      reply: routed.reply,
-      actions: routed.result.plan.proposals.map((p) => ({ ...p, status: "proposed" as const })),
+      reply: shared.reply,
+      actions: shared.proposals.map((p) => ({ ...p, status: "proposed" as const })),
       result: routed.result,
       control: routed.control,
       revision: routed.revision,
@@ -110,16 +112,38 @@ export async function processChatMessage(
     conversation: input.conversation ?? null,
   });
 
-  const actions: ChatAction[] = result.plan.proposals.map((p) => ({
+  const shared = await shareExpenseTurn(input.case_id, buildReply(result), result);
+  const actions: ChatAction[] = shared.proposals.map((p) => ({
     ...p,
     status: "proposed" as const,
   }));
 
   return {
-    reply: buildReply(result),
+    reply: shared.reply,
     actions,
     result,
     control: "none",
     revision: null,
   };
+}
+
+async function shareExpenseTurn(
+  caseId: string,
+  reply: string,
+  result: ProcessObservationResult
+): Promise<{ reply: string; proposals: Proposal[] }> {
+  const fallbackAmount = result.interpretation.entities.amounts.find(
+    (amount) => typeof amount.value === "number" && amount.value > 0
+  )?.value;
+  const shared = await attachExpenseSharing({
+    caseId,
+    proposals: result.plan.proposals,
+    childId: result.child_ids[0] ?? null,
+    reply,
+    fallbackAmount: typeof fallbackAmount === "number" ? fallbackAmount : null,
+    fallbackCategory: result.expense_category ?? null,
+  });
+  result.plan.proposals = shared.proposals;
+  if (shared.status) result.plan.status = shared.status;
+  return { reply: shared.reply, proposals: shared.proposals };
 }

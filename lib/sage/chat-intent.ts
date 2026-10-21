@@ -27,6 +27,7 @@ import {
 } from "@/lib/sage/calendar-chat";
 import { appointmentTitle, calendarCategory } from "@/lib/sage/calendar-labels";
 import { inferExpenseCategoryFromText, parseExpenseAmountFromText } from "@/lib/expenses-share";
+import { detectExpensePayer } from "@/lib/expenses-sharing";
 import { formatClockLabel, preferEventSubject } from "@/lib/sage/event-subject";
 import { resolveDate } from "@/lib/sage/resolver";
 import type { SageInterpretation } from "@/lib/sage/understanding";
@@ -812,14 +813,25 @@ export function routeChatIntent(input: RouteChatIntentInput): RoutedTurn {
   const expenseCategory = expense ? inferExpenseCategoryFromText(message) : null;
   if (expense) {
     const description = expenseDescription(message);
-    proposals.push(
-      proposal("log_expense", description, {
-        description,
-        ...(expenseCategory ? { category: expenseCategory } : {}),
-        ...(statedDay?.iso ? { date: statedDay.iso } : {}),
-        ...(expenseAmount != null ? { amount: expenseAmount } : {}),
-      })
+    const payer = detectExpensePayer(
+      message,
+      coparents,
+      children.map((child) => ({ name: child.name }))
     );
+    if (payer.kind === "ask") {
+      proposals.push(proposal("ask_clarification", payer.question, { audience: "parent" }));
+    } else {
+      proposals.push(
+        proposal("log_expense", description, {
+          description,
+          ...(expenseCategory ? { category: expenseCategory } : {}),
+          ...(statedDay?.iso ? { date: statedDay.iso } : {}),
+          ...(expenseAmount != null ? { amount: expenseAmount } : {}),
+          paid_by: payer.kind === "coparent" ? "coparent" : "self",
+          ...(payer.kind === "coparent" ? { payer_name: payer.name } : {}),
+        })
+      );
+    }
   }
   if (notify.kind === "one") {
     const email = notify.coparent.email?.trim() || "";

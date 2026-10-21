@@ -252,6 +252,8 @@ export async function processObservation(
   let expense_allocation: {
     other_parent_share: number | null;
     allocation_status?: string;
+    split_label?: string | null;
+    clarification?: string | null;
     notify_coparent?: boolean;
   } | undefined;
   if (intent.item_type === "expense") {
@@ -266,12 +268,15 @@ export async function processObservation(
       expense_allocation = {
         other_parent_share: allocation.other_parent_share,
         allocation_status: allocation.allocation_status,
+        split_label: allocation.split_label,
+        clarification: allocation.clarification,
         notify_coparent,
       };
     } else {
       expense_allocation = {
-        other_parent_share: 0,
-        allocation_status: "NONE",
+        other_parent_share: null,
+        allocation_status: "UNRESOLVED",
+        clarification: "What was the amount of this expense?",
         notify_coparent,
       };
     }

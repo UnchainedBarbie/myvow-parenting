@@ -19,6 +19,12 @@ export type SageProposal = {
   executed_at?: string;
   result_event_id?: string;
   result_expense_id?: string;
+  result_document_id?: string;
+  /**
+   * Set when a destination save or the follow-up "mark done" write failed.
+   * Stored on the same proposal so a retry can reuse result_* ids and not insert again.
+   */
+  save_error?: string | null;
   /** Documents-vault id stored at chat attach — form links this, does not re-upload. */
   attached_document_id?: string | null;
   attached_file_name?: string | null;

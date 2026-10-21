@@ -49,6 +49,8 @@ export type ProposalCardListProps = {
   onUndo: (index: number) => void;
   onRevise?: (index: number, proposal: SageProposal) => void;
   missingRequiredDates?: (indexes: number[]) => boolean;
+  /** Proposal index to scroll to and emphasize. Live cards only. */
+  emphasisIndex?: number | null;
   className?: string;
 };
 
@@ -72,6 +74,7 @@ export function ProposalCardList({
   onUndo,
   onRevise,
   missingRequiredDates,
+  emphasisIndex = null,
   className,
 }: ProposalCardListProps) {
   if (proposals.length === 0) return null;
@@ -129,9 +132,11 @@ export function ProposalCardList({
           return (
             <li
               key={`${itemId}-p-${idx}`}
+              id={historical ? undefined : `sage-proposal-${itemId}-${idx}`}
               className={cn(
                 "flex items-start gap-2 rounded-md px-2 py-1.5",
-                blocked && "bg-[#F7F5F0] opacity-80"
+                blocked && "bg-[#F7F5F0] opacity-80",
+                !historical && emphasisIndex === idx && "ring-2 ring-[#7C8B6E]"
               )}
             >
               {/* Left controls — hidden in item bulk-select mode */}

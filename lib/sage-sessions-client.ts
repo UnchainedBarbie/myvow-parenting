@@ -33,11 +33,6 @@ export function isSageChatsPath(pathname: string | null) {
   return pathname === "/sage" || pathname.startsWith("/sage/");
 }
 
-export function isSageInboxPath(pathname: string | null) {
-  if (!pathname) return false;
-  return pathname === "/sage-inbox" || pathname.startsWith("/sage-inbox/");
-}
-
 export async function createSageSession(
   sessionType: "private" | "incident" = "private"
 ): Promise<SageSessionRow> {

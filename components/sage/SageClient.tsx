@@ -109,6 +109,52 @@ type DocumentAgreeTarget = {
   caseId: string;
 };
 
+async function executeStoredProposal(
+  item: SageItem,
+  proposalIndex: number,
+  ids: { event_id?: string; expense_id?: string; document_id?: string; filed_title?: string }
+): Promise<SagePlan | null> {
+  const res = await fetch("/api/sage-inbox", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      id: item.id,
+      action: "execute",
+      proposal_index: proposalIndex,
+      ...ids,
+    }),
+  });
+  const data = (await res.json().catch(() => ({}))) as { plan?: SagePlan; error?: string };
+  if (!res.ok || !data.plan) {
+    if (!String(data.error ?? "").toLowerCase().includes("already executed")) {
+      await recordSaveFailure(item.id, proposalIndex, {
+        ...ids,
+        save_error: data.error || "Save didn't finish.",
+      });
+      showErrorToast(data.error || "Couldn't finish that save. Use Retry save.");
+    }
+    return null;
+  }
+  return data.plan;
+}
+
+async function recordSaveFailure(
+  id: string,
+  proposalIndex: number,
+  body: { event_id?: string; expense_id?: string; document_id?: string; save_error: string }
+) {
+  await fetch("/api/sage-inbox", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      id,
+      action: "save_failed",
+      proposal_index: proposalIndex,
+      ...body,
+    }),
+  }).catch(() => undefined);
+}
+
 interface SageClientProps {
   sessionId: string | null;
   sessionTitle?: string | null;
@@ -164,6 +210,19 @@ export function SageClient({
   const [attachedDoc, setAttachedDoc] = useState<ChatAttachedDoc | null>(null);
   const [attachUploading, setAttachUploading] = useState(false);
   const [composerDrag, setComposerDrag] = useState(false);
+  const [focusTarget, setFocusTarget] = useState<{ itemId: string; proposal: string | null } | null>(
+    null
+  );
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const itemId = params.get("item");
+    if (!itemId) {
+      setFocusTarget(null);
+      return;
+    }
+    setFocusTarget({ itemId, proposal: params.get("proposal") });
+  }, [sessionId]);
 
   useEffect(() => {
     if (initialDraft != null && initialDraft.trim()) {
@@ -215,10 +274,19 @@ export function SageClient({
   }, [sessionId]);
 
   useEffect(() => {
-    if (bottomRef.current) {
-      bottomRef.current.scrollIntoView({ behavior: "smooth", block: "end" });
+    if (loading) return;
+    if (focusTarget) {
+      const selector = focusTarget.proposal
+        ? `sage-proposal-${focusTarget.itemId}-${focusTarget.proposal}`
+        : `sage-item-${focusTarget.itemId}`;
+      const el = document.getElementById(selector);
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+        return;
+      }
     }
-  }, [messages.length]);
+    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [messages, loading, focusTarget]);
 
   function patchItemPlan(itemId: string, plan: SagePlan) {
     setMessages((prev) =>
@@ -401,6 +469,30 @@ export function SageClient({
     formCaseId: string
   ) {
     const p = item.plan?.proposals?.[proposalIndex];
+    const storedEventId =
+      typeof p?.result_event_id === "string" ? p.result_event_id.trim() : "";
+    const storedExpenseId =
+      typeof p?.result_expense_id === "string" ? p.result_expense_id.trim() : "";
+    const storedDocumentId =
+      typeof p?.result_document_id === "string" ? p.result_document_id.trim() : "";
+    if (
+      p &&
+      ((isCalendarUpdateProposal(p.type) && storedEventId) ||
+        (isLogExpenseProposal(p.type) && storedExpenseId) ||
+        (isLogDocumentProposal(p.type) && storedDocumentId))
+    ) {
+      void executeStoredProposal(item, proposalIndex, {
+        ...(storedEventId ? { event_id: storedEventId } : {}),
+        ...(storedExpenseId ? { expense_id: storedExpenseId } : {}),
+        ...(storedDocumentId ? { document_id: storedDocumentId, filed_title: p.title ?? "" } : {}),
+      }).then((plan) => {
+        if (plan) patchItemPlan(item.id, plan);
+        if (!plan || queue.length === 0) return;
+        const [nextIdx, ...rest] = queue;
+        openFormAgree({ ...item, plan }, nextIdx, rest, formCaseId);
+      });
+      return;
+    }
     if (isCalendarUpdateProposal(p?.type)) {
       openCalendarAgree(item, proposalIndex, queue, formCaseId);
     } else if (isLogExpenseProposal(p?.type)) {
@@ -551,7 +643,15 @@ export function SageClient({
       success?: boolean;
       plan?: SagePlan;
     };
-    if (!res.ok) return;
+    if (!res.ok) {
+      await recordSaveFailure(item.id, proposalIndex, {
+        event_id: eventId,
+        save_error: "Calendar save didn't finish.",
+      });
+      showErrorToast("The event was saved, but Sage couldn't mark it done. Use Retry save.");
+      setCalendarAgree(null);
+      return;
+    }
     const updatedItem = data.plan ? { ...item, plan: data.plan } : item;
     if (data.plan) patchItemPlan(item.id, data.plan);
 
@@ -582,7 +682,11 @@ export function SageClient({
       plan?: SagePlan;
     };
     if (!res.ok) {
-      showErrorToast("Expense was saved, but Sage couldn't mark the proposal done.");
+      await recordSaveFailure(item.id, proposalIndex, {
+        expense_id: expenseId,
+        save_error: "Expense save didn't finish.",
+      });
+      showErrorToast("Expense was saved, but Sage couldn't mark the proposal done. Use Retry save.");
       setExpenseAgree(null);
       return;
     }
@@ -620,8 +724,12 @@ export function SageClient({
       sage_messages?: SageMessage[];
     };
     if (!res.ok) {
+      await recordSaveFailure(item.id, proposalIndex, {
+        document_id: row.id,
+        save_error: "Document save didn't finish.",
+      });
       showErrorToast(
-        "Document was filed, but Sage couldn't mark the proposal done."
+        "Document was filed, but Sage couldn't mark the proposal done. Use Retry save."
       );
       setDocumentAgree(null);
       return;
@@ -932,7 +1040,11 @@ export function SageClient({
                     ? busyKey?.startsWith(`${item.id}:`) ?? false
                     : false;
                   return (
-                    <div key={msg.id} className="space-y-2">
+                    <div
+                      key={msg.id}
+                      id={!historical && item ? `sage-item-${item.id}` : undefined}
+                      className="space-y-2"
+                    >
                       <div
                         className={cn(
                           "flex",
@@ -974,6 +1086,11 @@ export function SageClient({
                             proposals={proposals}
                             historical={historical}
                             indent={false}
+                            emphasisIndex={
+                              !historical && focusTarget?.itemId === item.id && focusTarget.proposal
+                                ? Number(focusTarget.proposal)
+                                : null
+                            }
                             multiSelect={isMulti}
                             onToggleMultiSelect={() =>
                               setMultiSelect((prev) => ({

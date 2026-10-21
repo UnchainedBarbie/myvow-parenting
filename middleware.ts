@@ -37,6 +37,7 @@ export async function middleware(request: NextRequest) {
   // Prevent kid sessions from accessing parent dashboard routes.
   const parentPrefixes = [
     "/dashboard",
+    "/sage-inbox",
     "/messages",
     "/sage",
     "/expenses",
@@ -93,6 +94,8 @@ export const config = {
     "/kids-login",
     "/kids-invite",
     "/dashboard/:path*",
+    "/sage-inbox",
+    "/sage-inbox/:path*",
     "/messages/:path*",
     "/sage/:path*",
     "/expenses/:path*",

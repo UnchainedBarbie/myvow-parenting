@@ -8,6 +8,7 @@ import { DashboardStatusCards } from "@/components/dashboard/dashboard-status-ca
 import { ReviewCard } from "@/components/dashboard/review-card";
 import { DashboardOnboardingGate } from "@/components/dashboard/dashboard-onboarding-gate";
 import { EventRequestsCard } from "@/components/dashboard/event-requests-card";
+import { OpenItemsSection } from "@/components/dashboard/open-items-section";
 type TodayEvent = {
   id: string;
   title: string;
@@ -529,6 +530,8 @@ export default async function DashboardPage() {
               Here&apos;s where things stand.
             </p>
           </div>
+
+          <OpenItemsSection />
 
           <DashboardOnboardingGate
             contentAboveChecklist={

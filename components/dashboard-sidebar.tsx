@@ -6,7 +6,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import {
   LayoutDashboard,
-  Inbox,
   MessageSquare,
   Receipt,
   FileText,
@@ -37,7 +36,6 @@ import {
   deleteSageSession,
   fetchSageSessions,
   isSageChatsPath,
-  isSageInboxPath,
   patchSageSession,
   sageChatHref,
   truncateSageSessionTitle,
@@ -50,7 +48,6 @@ const SIDEBAR_CHAT_LIMIT = 10;
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/sage-inbox", label: "Sage Inbox", icon: Inbox },
   { href: "/my-vow", label: "My Vow", icon: Feather },
   { href: "/messages", label: "Messages", icon: MessageSquare },
   { href: "/expenses", label: "Expenses", icon: Receipt },
@@ -61,7 +58,6 @@ const navItems = [
 
 function isNavActive(href: string, pathname: string) {
   if (href === "/dashboard") return pathname === "/dashboard";
-  if (href === "/sage-inbox") return isSageInboxPath(pathname);
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 

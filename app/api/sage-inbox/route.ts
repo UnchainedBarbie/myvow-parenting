@@ -31,6 +31,8 @@ type PlanProposal = {
   executed_at?: string;
   result_event_id?: string;
   result_expense_id?: string;
+  result_document_id?: string;
+  save_error?: string;
   attached_document_id?: string;
   attached_file_name?: string;
   attached_file_url?: string;
@@ -218,6 +220,7 @@ export async function GET(req: NextRequest) {
  *  - { id, action: "agree"|"dismiss"|"undo", proposal_indexes, dates? }
  *  - { id, action: "revise", proposal_index, revised_text }
  *  - { id, action: "execute", proposal_index, event_id? | expense_id? }
+ *  - { id, action: "save_failed", proposal_index, save_error?, event_id?, expense_id?, document_id? }
  * Records approval/waiver/undo/revise/execute on plan.proposals — does NOT execute calendar/email/expense itself
  * (calendar create happens client-side via AddEventForm; expense create via ExpenseForm;
  *  execute only marks the proposal done).
@@ -234,6 +237,7 @@ export async function POST(req: NextRequest) {
       expense_id?: unknown;
       document_id?: unknown;
       filed_title?: unknown;
+      save_error?: unknown;
       dates?: Record<string, string> | null;
     } | null;
 
@@ -243,7 +247,8 @@ export async function POST(req: NextRequest) {
       body?.action === "dismiss" ||
       body?.action === "undo" ||
       body?.action === "revise" ||
-      body?.action === "execute"
+      body?.action === "execute" ||
+      body?.action === "save_failed"
         ? body.action
         : null;
 
@@ -331,6 +336,65 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: true, plan: updatedPlan });
     }
 
+    if (action === "save_failed") {
+      const idx =
+        typeof body?.proposal_index === "number" && Number.isInteger(body.proposal_index)
+          ? body.proposal_index
+          : -1;
+      if (idx < 0 || idx >= proposals.length) {
+        return NextResponse.json(
+          { success: false, error: "Invalid proposal_index" },
+          { status: 400 }
+        );
+      }
+      const p = proposals[idx];
+      if (!p || p.type === "note_only") {
+        return NextResponse.json(
+          { success: false, error: "Proposal cannot be retried" },
+          { status: 400 }
+        );
+      }
+      if (p.executed === true) {
+        return NextResponse.json({ success: true, plan });
+      }
+      const eventId =
+        typeof body?.event_id === "string" && body.event_id.trim() ? body.event_id.trim() : "";
+      const expenseId =
+        typeof body?.expense_id === "string" && body.expense_id.trim()
+          ? body.expense_id.trim()
+          : "";
+      const documentId =
+        typeof body?.document_id === "string" && body.document_id.trim()
+          ? body.document_id.trim()
+          : "";
+      const saveError =
+        typeof body?.save_error === "string" && body.save_error.trim()
+          ? body.save_error.trim().slice(0, 300)
+          : "Save didn't finish.";
+      proposals[idx] = {
+        ...p,
+        status: "save_failed",
+        save_error: saveError,
+        ...(eventId ? { result_event_id: eventId } : {}),
+        ...(expenseId ? { result_expense_id: expenseId } : {}),
+        ...(documentId ? { result_document_id: documentId } : {}),
+      };
+      const updatedPlan: SagePlan = { ...plan, proposals };
+      const { error: updateError } = await admin
+        .from("sage_items")
+        .update({ plan: updatedPlan, status: "in_progress" })
+        .eq("id", id)
+        .eq("visible_to", user.id);
+      if (updateError) {
+        console.error("[sage-inbox/POST] Failed to save failure:", updateError);
+        return NextResponse.json(
+          { success: false, error: updateError.message ?? "Failed to record save failure" },
+          { status: 500 }
+        );
+      }
+      return NextResponse.json({ success: true, plan: updatedPlan });
+    }
+
     if (action === "execute") {
       const idx =
         typeof body?.proposal_index === "number" && Number.isInteger(body.proposal_index)
@@ -412,7 +476,7 @@ export async function POST(req: NextRequest) {
       const nowIso = new Date().toISOString();
       const resultDocumentId =
         documentId || documentAttachment?.document_id || "";
-      proposals[idx] = {
+      const nextProposal: PlanProposal = {
         ...p,
         approved: true,
         approved_at: p.approved_at ?? nowIso,
@@ -424,6 +488,9 @@ export async function POST(req: NextRequest) {
           ? { result_document_id: resultDocumentId, title: filedTitleFromBody || p.title }
           : {}),
       };
+      delete nextProposal.save_error;
+      if (nextProposal.status === "save_failed") delete nextProposal.status;
+      proposals[idx] = nextProposal;
       const updatedPlan: SagePlan = { ...plan, proposals };
       const { error: updateError } = await admin
         .from("sage_items")

@@ -7,6 +7,7 @@ import {
   proposalTypeLabel,
 } from "@/components/sage/proposal-helpers";
 import type { SageItem, SageProposal } from "@/components/sage/proposal-types";
+import { isParentClarification } from "@/lib/sage/proposal-kind";
 import { isResolvedProposal } from "@/lib/sage/proposal-resolution";
 
 /**
@@ -289,7 +290,7 @@ export function deriveOpenItems(items: OpenItemSource[]): OpenItemDraft[] {
 
     proposals.forEach((raw, index) => {
       const proposal = asProposal(raw);
-      if (!proposal || proposal.type === "note_only") return;
+      if (!proposal || proposal.type === "note_only" || isParentClarification(proposal)) return;
       substantive += 1;
       if (isClosedOpenItemProposal(proposal)) return;
       const type = openItemType(proposal);

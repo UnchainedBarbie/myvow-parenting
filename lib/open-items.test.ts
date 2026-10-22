@@ -202,6 +202,37 @@ assert.equal(emailReview.length, 1);
 assert.equal(emailReview[0]?.key, "inbox-1:item");
 assert.equal(emailReview[0]?.proposalIndex, null);
 
+const questionOnly = deriveOpenItems([
+  item("ask-1", [
+    proposal({
+      type: "ask_clarification",
+      audience: "parent",
+      draft: "What time is the appointment?",
+    }),
+  ]),
+]);
+assert.equal(questionOnly.length, 0);
+
+const questionBesideExpense = deriveOpenItems([
+  item("ask-2", [
+    proposal({ type: "ask_clarification", audience: "parent", draft: "What time?" }),
+    pendingExpense,
+  ]),
+]);
+assert.equal(questionBesideExpense.length, 1);
+assert.equal(questionBesideExpense[0]?.type, "expense");
+
+const coparentQuestion = deriveOpenItems([
+  item("ask-3", [
+    proposal({
+      type: "ask_clarification",
+      audience: "coparent",
+      draft: "Can you confirm the pickup time?",
+    }),
+  ]),
+]);
+assert.equal(coparentQuestion.length, 1);
+
 const chatNoise = deriveOpenItems([
   item("chat-1", [proposal({ type: "note_only", draft: "hello" })], {
     source_type: "chat",

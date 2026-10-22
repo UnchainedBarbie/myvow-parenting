@@ -12,7 +12,7 @@ import {
   type ShadowTurnInput,
   type ValidatedAction,
 } from "@/lib/sage/shadow-contract";
-import { runShadowInterpreter, scheduleShadowComparison } from "@/lib/sage/shadow-interpreter";
+import { classifyShadowError, runShadowInterpreter, scheduleShadowComparison } from "@/lib/sage/shadow-interpreter";
 import { deriveWorkingMemory } from "@/lib/sage/working-memory";
 
 const today = new Date("2026-10-21T18:00:00Z");
@@ -620,6 +620,18 @@ const httpFailure = await runShadowInterpreter(baseInput, {
 });
 assert.equal(httpFailure.outcome, "api_error");
 assert.equal(httpFailure.httpStatus, 500);
+assert.equal(httpFailure.errorCategory, "server");
+
+const schemaFailure = classifyShadowError(400, {
+  type: "error",
+  error: {
+    type: "invalid_request_error",
+    message: "tools.0.custom: For 'array' type, property 'maxItems' is not supported",
+  },
+});
+assert.equal(schemaFailure.errorCategory, "invalid_request");
+assert.equal(schemaFailure.diagnostic, "unsupported_maxitems");
+assert.equal(JSON.stringify(schemaFailure).includes("parent"), false);
 
 const started = Date.now();
 scheduleShadowComparison(baseInput, {

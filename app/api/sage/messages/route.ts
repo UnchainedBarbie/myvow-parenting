@@ -1329,7 +1329,15 @@ export async function POST(request: NextRequest) {
             : result.event_subject ?? conversation?.event.subject ?? null;
           if (!preserveOpenWork && sessionId && (noteOnly || turnHasCalendar)) {
             const openReply = await latestRevisableDraft(admin, sessionId, user.id);
-            if (openReply?.proposalType === "ask_clarification" && turnHasCalendar) {
+            const answeredClarification =
+              openReply?.proposalType === "ask_clarification" &&
+              result.plan.proposals.some((proposal) =>
+                proposal.type === "calendar_update" ||
+                proposal.type === "log_expense" ||
+                proposal.type === "log_document" ||
+                proposal.type === "reply_coparent"
+              );
+            if (answeredClarification && openReply) {
               await closeAnsweredClarification(admin, user.id, openReply);
             } else if (openReply && openReply.proposalType !== "calendar_update") {
               establishedReply = openReply.currentDraft;

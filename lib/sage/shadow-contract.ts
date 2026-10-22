@@ -100,8 +100,6 @@ export const SHADOW_TOOL = {
     properties: {
       actions: {
         type: "array",
-        minItems: 1,
-        maxItems: 4,
         items: {
           type: "object",
           additionalProperties: false,
@@ -115,7 +113,6 @@ export const SHADOW_TOOL = {
             attachment_handle: { type: "string" },
             fields: {
               type: "array",
-              maxItems: 12,
               items: {
                 type: "object",
                 additionalProperties: false,
@@ -128,7 +125,6 @@ export const SHADOW_TOOL = {
             },
             missing: {
               type: "array",
-              maxItems: 8,
               items: { type: "string", enum: [...SHADOW_MISSING] },
             },
             needs_clarification: { type: "boolean" },
@@ -249,6 +245,10 @@ export type ShadowComparisonRecord = {
   discardedFields: number;
   latencyMs: number;
   httpStatus: number | null;
+  /** Stable class such as invalid_request. No response text. */
+  errorCategory: string | null;
+  /** Stable code such as unsupported_maxitems. No response text. */
+  diagnostic: string | null;
 };
 
 type Minted = { kind: HandleKind; domain: ShadowDomain; localId: string };
@@ -511,6 +511,8 @@ export function comparisonRecord(input: {
   agreement?: ShadowAgreement | null;
   latencyMs: number;
   httpStatus?: number | null;
+  errorCategory?: string | null;
+  diagnostic?: string | null;
 }): ShadowComparisonRecord {
   const primaryRouter = input.router.actions[0] ?? null;
   const primaryShadow = input.shadow?.actions[0] ?? null;
@@ -534,6 +536,8 @@ export function comparisonRecord(input: {
     discardedFields: input.shadow?.discardedFields ?? 0,
     latencyMs: input.latencyMs,
     httpStatus: input.httpStatus ?? null,
+    errorCategory: input.errorCategory ?? null,
+    diagnostic: input.diagnostic ?? null,
   };
 }
 

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { buildCalendarInitialValues } from "@/components/sage/proposal-helpers";
+import { buildCalendarInitialValues, hasVisibleProposalCards } from "@/components/sage/proposal-helpers";
+import { deriveOpenItems } from "@/lib/open-items";
 import type { SageItem, SageProposal } from "@/components/sage/proposal-types";
 import {
   answerCalendarQuestion,
@@ -142,6 +143,20 @@ assert.equal(missing.result.plan.proposals.some((p) => p.event_start === "09:00"
 assert.deepEqual(missing.result.child_ids, [ashley.id]);
 assert.equal(missing.result.event_subject, "Therapy Appointment");
 assert.equal(missing.result.resolved_dates[0]?.iso, "2026-10-22");
+assert.equal(hasVisibleProposalCards(missing.result.plan.proposals), false);
+assert.equal(
+  deriveOpenItems([
+    {
+      id: "item-time",
+      created_at: "2026-10-21T18:00:00Z",
+      source_type: "chat",
+      item_type: "calendar_event",
+      action_required: false,
+      plan: missing.result.plan,
+    },
+  ]).length,
+  0
+);
 
 const bare = routeChatIntent({
   message: "Ashley needs to be at school at 6 tomorrow.",
@@ -176,6 +191,22 @@ assert.equal(completedCard.title, "Ashley — Therapy Appointment");
 assert.equal(completedCard.category, "therapy");
 assert.deepEqual(completed.result.child_ids, [ashley.id]);
 assert.equal(completedCard.calendar_event_id, undefined);
+assert.equal(completed.result.plan.proposals.filter((p) => p.type === "calendar_update").length, 1);
+assert.equal(completedCard.requires_approval, true);
+assert.equal("executed" in completedCard, false);
+assert.equal(hasVisibleProposalCards(completed.result.plan.proposals), true);
+assert.equal(
+  deriveOpenItems([
+    {
+      id: "item-ready",
+      created_at: "2026-10-21T18:05:00Z",
+      source_type: "chat",
+      action_required: true,
+      plan: completed.result.plan,
+    },
+  ]).length,
+  1
+);
 const therapyForm = buildCalendarInitialValues(item([ashley.id]), completedCard as SageProposal);
 assert.equal(therapyForm.visibility, "parents_only");
 assert.equal(therapyForm.kidTitle, undefined);

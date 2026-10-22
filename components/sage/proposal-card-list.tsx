@@ -7,6 +7,7 @@ import {
   isFormExecuteProposal,
   isLogDocumentProposal,
   isLogExpenseProposal,
+  isParentClarification,
 } from "@/lib/sage/proposal-kind";
 import type { SageItem, SageProposal } from "./proposal-types";
 import { isSupersededProposal } from "@/lib/sage/proposal-lifecycle";
@@ -82,7 +83,7 @@ export function ProposalCardList({
 
   const visible = proposals
     .map((p, idx) => ({ p, idx }))
-    .filter(({ p }) => !(isLogDocumentProposal(p.type) && p.executed === true));
+    .filter(({ p }) => !isParentClarification(p) && !(isLogDocumentProposal(p.type) && p.executed === true));
   if (visible.length === 0) return null;
 
   const suppressActions = hideActions || historical;

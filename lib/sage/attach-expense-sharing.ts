@@ -39,9 +39,18 @@ export async function attachExpenseSharing(input: {
       next.push({
         type: "ask_clarification",
         draft: question,
-        depends_on: null,
+        depends_on: amount == null ? "amount" : "category",
         requires_approval: true,
         audience: "parent",
+        clarifies: "expense",
+        ...(proposal.description ? { description: proposal.description } : {}),
+        ...(proposal.title ? { title: proposal.title } : {}),
+        ...(proposal.category ? { category: proposal.category } : {}),
+        ...(proposal.paid_by ? { paid_by: proposal.paid_by } : {}),
+        ...(proposal.payer_name ? { payer_name: proposal.payer_name } : {}),
+        ...(proposal.sharing_intent ? { sharing_intent: proposal.sharing_intent } : {}),
+        ...(proposal.stated_percent != null ? { stated_percent: proposal.stated_percent } : {}),
+        ...(proposal.notify_coparent != null ? { notify_coparent: proposal.notify_coparent } : {}),
       });
       continue;
     }

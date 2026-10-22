@@ -15,6 +15,7 @@ import {
   isFormExecuteProposal,
   isLogDocumentProposal,
   isLogExpenseProposal,
+  isParentClarification,
 } from "@/lib/sage/proposal-kind";
 import { isSupersededProposal } from "@/lib/sage/proposal-lifecycle";
 import type { SageItem, SageProposal } from "./proposal-types";
@@ -879,9 +880,9 @@ export function buildDocumentReviewRow(
   };
 }
 
-/** Hide executed File-document cards - the chat confirmation is the resolved UI. */
+/** Hide executed document cards and questions Sage is asking in the chat. */
 export function hasVisibleProposalCards(proposals: SageProposal[]): boolean {
   return proposals.some(
-    (p) => !(isLogDocumentProposal(p.type) && p.executed === true)
+    (p) => !isParentClarification(p) && !(isLogDocumentProposal(p.type) && p.executed === true)
   );
 }

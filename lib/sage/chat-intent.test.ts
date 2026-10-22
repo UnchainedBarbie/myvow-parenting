@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { hasVisibleProposalCards } from "@/components/sage/proposal-helpers";
+import { deriveOpenItems } from "@/lib/open-items";
+import { deriveWorkingMemory } from "@/lib/sage/working-memory";
 import {
   cancelPendingMessages,
   revisePendingCalendar,
@@ -440,5 +443,57 @@ const missingNotice = routeChatIntent({
 });
 assert.ok(missingNotice.result.plan.proposals.every((p) => p.type !== "reply_coparent"));
 assert.match(missingNotice.reply, /delivery email/i);
+assert.equal(hasVisibleProposalCards(missingNotice.result.plan.proposals), false);
+assert.equal(
+  deriveOpenItems([
+    {
+      id: "item-message",
+      created_at: "2026-10-21T18:00:00Z",
+      source_type: "chat",
+      action_required: false,
+      plan: missingNotice.result.plan,
+    },
+  ]).length,
+  0
+);
+
+const messageMemory = deriveWorkingMemory([
+  {
+    itemId: "item-msg",
+    itemType: "message",
+    proposals: [
+      {
+        id: "ask-msg",
+        type: "ask_clarification",
+        draft: "What should I tell Kevin? I won't invent the details.",
+        audience: "parent",
+        clarifies: "message",
+        recipient_name: "Kevin",
+        recipient_email: "kevin@example.com",
+        requires_approval: true,
+      },
+    ],
+  },
+]);
+const suppliedMessage = routeChatIntent({
+  message: "I can take Friday.",
+  coparents: [kevin],
+  timezone: "America/Denver",
+  today,
+  conversation: {
+    thread_subject: null,
+    event: { subject: null, child: null, date: null, time: null, eventId: null },
+    open_proposals: [],
+    memory: messageMemory,
+  },
+});
+const suppliedDraft = suppliedMessage.result.plan.proposals.find((proposal) => proposal.type === "reply_coparent");
+assert.ok(suppliedDraft);
+assert.equal(suppliedMessage.result.plan.proposals.filter((proposal) => proposal.type === "reply_coparent").length, 1);
+assert.equal(suppliedDraft.draft, "I can take Friday.");
+assert.equal(suppliedDraft.recipient_email, "kevin@example.com");
+assert.equal(suppliedDraft.requires_approval, true);
+assert.equal("executed" in suppliedDraft, false);
+assert.equal(hasVisibleProposalCards(suppliedMessage.result.plan.proposals), true);
 
 console.log("chat-intent tests passed");

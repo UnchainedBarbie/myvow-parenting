@@ -4,7 +4,7 @@
  * Proposes only. Nothing here sends, files, or writes.
  */
 
-import type { ConversationContext } from "@/lib/sage/conversation-context";
+import { bareCorrection, type ConversationContext } from "@/lib/sage/conversation-context";
 import type { Observation } from "@/lib/sage/observation-builder";
 import type { Plan, Proposal } from "@/lib/sage/planner";
 import { isInactiveProposal, reviseProposal } from "@/lib/sage/proposal-lifecycle";
@@ -50,6 +50,7 @@ import type { SageInterpretation } from "@/lib/sage/understanding";
 import {
   interruptsClarification,
   isExplicitNoteRequest,
+  type CollectedFields,
   type FocusKind,
   type WorkingMemory,
 } from "@/lib/sage/working-memory";
@@ -609,6 +610,102 @@ function openMessage(conversation: ConversationContext | null): boolean {
   return (conversation?.open_proposals ?? []).some((p) => p.type === "reply_coparent");
 }
 
+function expenseAnswer(
+  message: string,
+  description: string,
+  amount: number,
+  category: string | null,
+  fields: CollectedFields
+): RoutedTurn {
+  const sharing = fieldText(fields, "sharing_intent");
+  const payer = fieldText(fields, "payer_name");
+  return turn({
+    handled: true,
+    reply: "I can log that expense once you approve it.",
+    message,
+    summary: description,
+    itemType: "expense",
+    amount,
+    expenseCategory: category,
+    proposals: [
+      proposal("log_expense", description, {
+        description,
+        amount,
+        ...(category ? { category } : {}),
+        paid_by: fields.paid_by === "coparent" ? "coparent" : "self",
+        ...(payer ? { payer_name: payer } : {}),
+        ...(sharing === "personal" || sharing === "shared" || sharing === "unspecified"
+          ? { sharing_intent: sharing }
+          : {}),
+        ...(typeof fields.stated_percent === "number" ? { stated_percent: fields.stated_percent } : {}),
+      }),
+    ],
+    reasoning: "The parent supplied the missing expense detail. The expense still needs approval.",
+  });
+}
+
+function fieldText(fields: CollectedFields, key: string): string | null {
+  const value = fields[key];
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+/** A short answer to an open question becomes one proposal. A new request does not. */
+function completeOpenDetail(
+  message: string,
+  memory: WorkingMemory | null | undefined
+): RoutedTurn | null {
+  const clarification = memory?.clarification;
+  if (!clarification || isExplicitNoteRequest(message)) return null;
+  const fields = clarification.collected;
+  if (clarification.kind === "expense") {
+    if (wantsCalendar(message) || isDocumentQuestion(message) || isDocumentFilingRequest(message)) return null;
+    const storedAmount = typeof fields.amount === "number" ? fields.amount : null;
+    const needsAmount = clarification.missing.includes("amount") || storedAmount == null;
+    if (!needsAmount && clarification.missing.includes("category") && !fieldText(fields, "category")) {
+      const category = inferExpenseCategoryFromText(message);
+      const description = fieldText(fields, "description") ?? fieldText(fields, "title") ?? "Expense";
+      if (!category || storedAmount == null || message.trim().split(/\s+/).length > 3) return null;
+      return expenseAnswer(message, description, storedAmount, category, fields);
+    }
+    if (!needsAmount) return null;
+    const amount = parseExpenseAmountFromText(message);
+    if (amount == null || bareCorrection(message)?.kind !== "amount") return null;
+    const description = fieldText(fields, "description") ?? fieldText(fields, "title") ?? "Expense";
+    const category = fieldText(fields, "category") ?? inferExpenseCategoryFromText(description);
+    return expenseAnswer(message, description, amount, category, fields);
+  }
+  if (clarification.kind === "message") {
+    if (
+      wantsExpense(message) ||
+      wantsCalendar(message) ||
+      isDocumentQuestion(message) ||
+      isDocumentFilingRequest(message) ||
+      explicitSchedule(message)
+    ) {
+      return null;
+    }
+    const name = fieldText(fields, "recipient_name");
+    const email = fieldText(fields, "recipient_email");
+    const body = message.trim();
+    if (!name || !email || body.length < 2) return null;
+    return turn({
+      handled: true,
+      reply: `Here is a message to ${name}. Nothing is sent until you choose Send.`,
+      message,
+      summary: `Message to ${name}`,
+      itemType: "message",
+      proposals: [
+        proposal("reply_coparent", body, {
+          recipient_name: name,
+          recipient_email: email,
+        }),
+      ],
+      reasoning: "The parent supplied the message. It still needs approval before anything is sent.",
+    });
+  }
+  return null;
+}
+
 export function routeChatIntent(input: RouteChatIntentInput): RoutedTurn {
   const message = input.message ?? "";
   const conversation = input.conversation ?? null;
@@ -681,6 +778,9 @@ export function routeChatIntent(input: RouteChatIntentInput): RoutedTurn {
       reasoning: "The parent asked for a note. No other action was taken.",
     });
   }
+
+  const answered = completeOpenDetail(message, conversation?.memory);
+  if (answered) return answered;
 
   if (named.length > 1 && (isCalendarQuestion(message) || wantsCalendar(message) || isEventDetailUpdate(message))) {
     const label = named.map((child) => child.name).join(" and ");
@@ -875,7 +975,7 @@ export function routeChatIntent(input: RouteChatIntentInput): RoutedTurn {
         message,
         summary: "Which document should I update?",
         itemType: "note",
-        proposals: [proposal("ask_clarification", picked.question, { audience: "parent" })],
+        proposals: [proposal("ask_clarification", picked.question, { audience: "parent", clarifies: "document" })],
         status: "awaiting_clarification",
         dateIso: null,
         eventSubject: null,
@@ -901,7 +1001,7 @@ export function routeChatIntent(input: RouteChatIntentInput): RoutedTurn {
       summary: "Which document should I update?",
       itemType: "note",
       proposals: [
-        proposal("ask_clarification", documentTurn.message, { audience: "parent" }),
+        proposal("ask_clarification", documentTurn.message, { audience: "parent", clarifies: "document" }),
       ],
       status: "awaiting_clarification",
       dateIso: null,
@@ -1055,7 +1155,7 @@ export function routeChatIntent(input: RouteChatIntentInput): RoutedTurn {
     );
     const logging = detectExpenseLoggingIntent(message);
     if (payer.kind === "ask") {
-      proposals.push(proposal("ask_clarification", payer.question, { audience: "parent" }));
+      proposals.push(proposal("ask_clarification", payer.question, { audience: "parent", clarifies: "expense" }));
     } else {
       proposals.push(
         proposal("log_expense", description, {
@@ -1079,7 +1179,7 @@ export function routeChatIntent(input: RouteChatIntentInput): RoutedTurn {
         proposal(
           "ask_clarification",
           `I don't have a delivery email for ${notify.coparent.name}. Add one and I can prepare the message.`,
-          { audience: "parent" }
+          { audience: "parent", clarifies: "message", recipient_name: notify.coparent.name }
         )
       );
     } else {
@@ -1094,7 +1194,12 @@ export function routeChatIntent(input: RouteChatIntentInput): RoutedTurn {
           proposal(
             "ask_clarification",
             `What should I tell ${notify.coparent.name}? I won't invent the details.`,
-            { audience: "parent" }
+            {
+              audience: "parent",
+              clarifies: "message",
+              recipient_name: notify.coparent.name,
+              ...(email ? { recipient_email: email } : {}),
+            }
           )
         );
       } else {
@@ -1108,7 +1213,7 @@ export function routeChatIntent(input: RouteChatIntentInput): RoutedTurn {
       }
     }
   } else if (notify.kind === "clarify") {
-    proposals.push(proposal("ask_clarification", notify.reply, { audience: "parent" }));
+    proposals.push(proposal("ask_clarification", notify.reply, { audience: "parent", clarifies: "message" }));
   }
 
   const prepared = finalizeExpenseProposals([...proposals], message, today, timezone);

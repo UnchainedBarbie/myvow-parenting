@@ -23,7 +23,8 @@ import {
 } from "@/lib/sage/shadow-contract";
 
 const SAGE_MODEL = "claude-sonnet-4-6";
-const DEFAULT_TIMEOUT_MS = 2500;
+const DEFAULT_TIMEOUT_MS = 8000;
+const MAX_TIMEOUT_MS = 12000;
 
 const SYSTEM_PROMPT = `You classify one parent message in a co-parenting app.
 Choose the parent's intention. A message may contain more than one intention.
@@ -142,7 +143,7 @@ export async function runShadowInterpreter(
 
   const timeoutMs =
     deps.timeoutMs != null
-      ? Math.min(4000, Math.max(20, Math.round(deps.timeoutMs)))
+      ? Math.min(MAX_TIMEOUT_MS, Math.max(20, Math.round(deps.timeoutMs)))
       : clampTimeout(readTimeout(deps.env));
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -173,7 +174,8 @@ export async function runShadowInterpreter(
       }),
     });
     if (!response.ok) {
-      return finish(router, "api_error", started, deps, null, response.status);
+      const failure = await readShadowError(response);
+      return finish(router, "api_error", started, deps, null, response.status, failure);
     }
     const body: unknown = await response.json();
     const toolInput = extractToolInput(body);
@@ -196,7 +198,8 @@ function finish(
   started: number,
   deps: ShadowDeps,
   shadow: ReturnType<typeof validateShadowOutput>,
-  httpStatus: number | null
+  httpStatus: number | null,
+  failure?: { errorCategory: string; diagnostic: string } | null
 ): ShadowComparisonRecord {
   const latencyMs = Math.max(0, (deps.now ?? Date.now)() - started);
   return comparisonRecord({
@@ -206,7 +209,56 @@ function finish(
     agreement: shadow ? compareSnapshots(router, shadow) : null,
     latencyMs,
     httpStatus,
+    errorCategory: failure?.errorCategory ?? null,
+    diagnostic: failure?.diagnostic ?? null,
   });
+}
+
+const SCHEMA_CONSTRAINTS = new Set([
+  "maxitems",
+  "minitems",
+  "additionalproperties",
+  "unevaluatedproperties",
+  "minimum",
+  "maximum",
+  "minlength",
+  "maxlength",
+  "pattern",
+  "format",
+]);
+
+/** Maps an Anthropic error to a category and code. The response text is not returned. */
+export function classifyShadowError(
+  status: number,
+  body: unknown
+): { errorCategory: string; diagnostic: string } {
+  const error =
+    body && typeof body === "object" ? (body as { error?: { type?: unknown; message?: unknown } }).error : null;
+  const type = typeof error?.type === "string" ? error.type : "";
+  const message = typeof error?.message === "string" ? error.message : "";
+  const unsupported = message.match(/property '([A-Za-z0-9_]+)' is not supported/i);
+  const constraint = unsupported?.[1]?.toLowerCase() ?? "";
+  const errorCategory =
+    status === 401 || status === 403 || type === "authentication_error"
+      ? "authentication"
+      : status === 429 || type === "rate_limit_error"
+        ? "rate_limit"
+        : status >= 500 || type === "api_error" || type === "overloaded_error"
+          ? "server"
+          : "invalid_request";
+  const diagnostic =
+    constraint && SCHEMA_CONSTRAINTS.has(constraint) ? `unsupported_${constraint}` : errorCategory;
+  return { errorCategory, diagnostic };
+}
+
+async function readShadowError(response: Response): Promise<{ errorCategory: string; diagnostic: string }> {
+  let body: unknown = null;
+  try {
+    body = await response.json();
+  } catch {
+    body = null;
+  }
+  return classifyShadowError(response.status, body);
 }
 
 function extractToolInput(data: unknown): unknown | null {
@@ -233,7 +285,7 @@ function readTimeout(env: NodeJS.ProcessEnv | undefined): number {
 
 function clampTimeout(value: number): number {
   if (!Number.isFinite(value)) return DEFAULT_TIMEOUT_MS;
-  return Math.min(4000, Math.max(200, Math.round(value)));
+  return Math.min(MAX_TIMEOUT_MS, Math.max(200, Math.round(value)));
 }
 
 function isAbort(error: unknown): boolean {

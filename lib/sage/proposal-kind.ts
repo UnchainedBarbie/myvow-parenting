@@ -18,6 +18,14 @@ export function isLogDocumentProposal(type?: string | null): boolean {
   return t === "log_document" || t === "file_document";
 }
 
+/** Sage is asking the parent for a missing detail. That is chat, not an approval. */
+export function isParentClarification(proposal: {
+  type?: string | null;
+  audience?: string | null;
+}): boolean {
+  return normalizeProposalType(proposal.type) === "ask_clarification" && proposal.audience === "parent";
+}
+
 /** Types that must open a real form and execute — never record-only "approved". */
 export function isFormExecuteProposal(type?: string | null): boolean {
   return (

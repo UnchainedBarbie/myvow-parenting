@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import { buildExpenseInitialValues, needsDateField } from "@/components/sage/proposal-helpers";
+import { buildExpenseInitialValues, hasVisibleProposalCards, needsDateField } from "@/components/sage/proposal-helpers";
 import type { SageItem, SageProposal } from "@/components/sage/proposal-types";
 import { routeChatIntent } from "@/lib/sage/chat-intent";
 import type { ConversationContext } from "@/lib/sage/conversation-context";
 import { resolveExpenseIncurredDate } from "@/lib/sage/expense-date";
 import { deriveOpenItems } from "@/lib/open-items";
+import { deriveWorkingMemory } from "@/lib/sage/working-memory";
 import { plan } from "@/lib/sage/planner";
 import { stampExpenseProposal } from "@/lib/sage/expense-proposal-sharing";
 import type { ProcessObservationResult } from "@/lib/sage/process-observation";
@@ -346,5 +347,69 @@ function formItem(routed: ReturnType<typeof routeChatIntent>): SageItem {
     created_at: "2026-10-21T18:00:00.000Z",
   };
 }
+
+const expenseQuestion = deriveWorkingMemory([
+  {
+    itemId: "item-exp",
+    itemType: "expense",
+    proposals: [
+      {
+        id: "ask-exp",
+        type: "ask_clarification",
+        draft: "What was the amount of this expense?",
+        depends_on: "amount",
+        audience: "parent",
+        clarifies: "expense",
+        description: "Avery therapy",
+        category: "therapy",
+        paid_by: "self",
+        requires_approval: true,
+      },
+    ],
+  },
+]);
+assert.equal(
+  deriveOpenItems([
+    {
+      id: "item-exp",
+      created_at: "2026-10-21T18:00:00Z",
+      source_type: "chat",
+      item_type: "expense",
+      action_required: false,
+      plan: {
+        proposals: [
+          {
+            type: "ask_clarification",
+            draft: "What was the amount of this expense?",
+            depends_on: "amount",
+            audience: "parent",
+            requires_approval: true,
+          },
+        ],
+      },
+    },
+  ]).length,
+  0
+);
+const suppliedAmount = routeChatIntent({
+  message: "$40",
+  children,
+  timezone,
+  today,
+  conversation: {
+    thread_subject: null,
+    event: { subject: null, child: null, date: null, time: null, eventId: null },
+    open_proposals: [],
+    memory: expenseQuestion,
+  },
+});
+const suppliedCard = suppliedAmount.result.plan.proposals.find((proposal) => proposal.type === "log_expense");
+assert.ok(suppliedCard);
+assert.equal(suppliedAmount.result.plan.proposals.filter((proposal) => proposal.type === "log_expense").length, 1);
+assert.equal(suppliedCard.amount, 40);
+assert.equal(suppliedCard.description, "Avery therapy");
+assert.equal(suppliedCard.requires_approval, true);
+assert.equal("executed" in suppliedCard, false);
+assert.equal(hasVisibleProposalCards(suppliedAmount.result.plan.proposals), true);
 
 void plannerDates();

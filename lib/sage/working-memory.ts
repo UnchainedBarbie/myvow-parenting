@@ -84,6 +84,8 @@ const FIELD_KEYS = [
   "sharing_intent",
   "calendar_event_id",
   "attached_document_id",
+  "recipient_name",
+  "recipient_email",
 ] as const;
 
 const EXPLICIT_NOTE =

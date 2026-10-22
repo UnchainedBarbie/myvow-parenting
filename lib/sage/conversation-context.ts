@@ -307,7 +307,15 @@ export async function loadConversationContext(
       }
     }
     const texts: string[] = [row.summary ?? "", row.evidence_excerpt ?? ""];
-    if (!date && row.tool_input && Array.isArray(row.tool_input.resolved_dates)) {
+    const proposalTypes = proposals.map((raw) =>
+      raw && typeof raw === "object" && typeof (raw as { type?: unknown }).type === "string"
+        ? (raw as { type: string }).type
+        : ""
+    );
+    const expenseOnly =
+      proposalTypes.includes("log_expense") &&
+      !proposalTypes.some((type) => type === "calendar_update" || type === "calendar");
+    if (!expenseOnly && !date && row.tool_input && Array.isArray(row.tool_input.resolved_dates)) {
       for (const entry of row.tool_input.resolved_dates) {
         if (!entry || typeof entry !== "object") continue;
         const rec = entry as { status?: unknown; iso?: unknown };
@@ -340,7 +348,7 @@ export async function loadConversationContext(
           : "proposal";
       open.push({ type, text });
       texts.push(text);
-      if (!date) {
+      if (!expenseOnly && !date) {
         const stamped = isoDate((raw as { date?: unknown }).date);
         if (stamped) date = stamped;
       }
@@ -354,7 +362,7 @@ export async function loadConversationContext(
       subject,
       eventSubjectFromTexts([storedSubject, ...texts])
     );
-    if (!date) {
+    if (!expenseOnly && !date) {
       const blob = texts.filter(Boolean).join(" ");
       if (/\b(?:mon|tue|wed|thu|fri|sat|sun)(?:day|sday|nesday|rsday|urday)?\b/i.test(blob)) {
         const resolved = resolveDate(blob, today, timezone, blob);

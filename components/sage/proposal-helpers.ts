@@ -9,7 +9,12 @@ import {
 import { appointmentTitle, calendarCategory, visibilityForCategory } from "@/lib/sage/calendar-labels";
 import { eventSubjectFromTexts, formatClockLabel } from "@/lib/sage/event-subject";
 import { splitSchedule } from "@/lib/sage/outbound-facts";
-import { isCalendarUpdateProposal, isFormExecuteProposal, isLogDocumentProposal } from "@/lib/sage/proposal-kind";
+import {
+  isCalendarUpdateProposal,
+  isFormExecuteProposal,
+  isLogDocumentProposal,
+  isLogExpenseProposal,
+} from "@/lib/sage/proposal-kind";
 import { isSupersededProposal } from "@/lib/sage/proposal-lifecycle";
 import type { SageItem, SageProposal } from "./proposal-types";
 
@@ -193,14 +198,15 @@ export function resolvedCalendarIso(
 }
 
 /**
- * Show the manual date field only when a calendar_update has no chosen_date
- * AND the engine did not already resolve a real date.
- * date_supplied is set only by the chat-fold path when it clears a gate.
+ * The card date picker is for a calendar change whose date is still missing.
+ * A completed expense carries its incurred date on the proposal. The parent
+ * reviews that date in the expense form, so the card does not ask again.
  */
 export function needsDateField(
   p: SageProposal,
   item?: SageItem | null
 ): boolean {
+  if (isLogExpenseProposal(p.type)) return false;
   const forceType = (p as SageProposal & { force_type?: unknown }).force_type;
   if (
     forceType === "expense" ||
@@ -606,6 +612,13 @@ function amountFromToolInput(item: SageItem): number | undefined {
   return undefined;
 }
 
+function localTodayIso(): string {
+  const now = new Date();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${now.getFullYear()}-${month}-${day}`;
+}
+
 /** First engine-resolved date (YYYY-MM-DD) as stored - no roll-forward. */
 function resolvedExpenseIso(item: SageItem | null | undefined): string | undefined {
   const input = toolInputRecord(item);
@@ -699,9 +712,10 @@ export function buildExpenseInitialValues(
   const proposalDate = isIsoDate(typeof proposal.date === "string" ? proposal.date : null)
     ? proposal.date?.trim()
     : "";
+  const expense = isLogExpenseProposal(proposal.type);
   const date =
-    (chosenDate ?? proposal.chosen_date ?? proposalDate ?? resolvedExpenseIso(item) ?? "").trim() ||
-    undefined;
+    (chosenDate ?? proposal.chosen_date ?? proposalDate ?? (expense ? "" : resolvedExpenseIso(item)) ?? "").trim() ||
+    (expense ? localTodayIso() : undefined);
   const attachedFile = attachedFileFrom(item, proposal);
   return {
     description: toTitleCase(description).slice(0, 80),

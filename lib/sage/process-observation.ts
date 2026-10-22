@@ -33,6 +33,7 @@ import {
   interpret,
   type SageInterpretation,
 } from "@/lib/sage/understanding";
+import { finalizeExpenseProposals } from "@/lib/sage/expense-date";
 import { computeAllocationFromParentingPlan } from "@/lib/expenses-allocation";
 import {
   inferExpenseCategoryFromText,
@@ -208,8 +209,17 @@ export async function processObservation(
   resolved_dates.length = 0;
   resolved_dates.push(...fromMessage);
 
+  const completedExpense =
+    intent.item_type === "expense" || looksLikeExpenseCommand(messageBodies);
+  if (completedExpense) {
+    for (let i = resolved_dates.length - 1; i >= 0; i -= 1) {
+      if (resolved_dates[i].status === "needs_clarification") resolved_dates.splice(i, 1);
+    }
+  }
+
   const contextDate = context.conversation?.event.date ?? null;
   if (
+    !completedExpense &&
     !resolved_dates.some((d) => d.status === "resolved" && d.iso) &&
     contextDate &&
     /^\d{4}-\d{2}-\d{2}$/.test(contextDate)
@@ -405,7 +415,7 @@ export async function processObservation(
       reasoning: `${draftedPlan.reasoning} Date and time confirmed for ${event_subject} — calendar check runs alongside any reply revision.`.trim(),
     };
   }
-  const itemPlan = await reconcileCalendarPlan(draftedPlan, {
+  const reconciled = await reconcileCalendarPlan(draftedPlan, {
     caseId: context.case_id,
     timezone: context.timezone,
     iso: resolvedIso,
@@ -415,6 +425,23 @@ export async function processObservation(
     subject: event_subject ?? null,
     childName,
   });
+  const proposals = finalizeExpenseProposals(
+    reconciled.proposals,
+    messageBodies,
+    today,
+    context.timezone
+  );
+  const waiting = proposals.some((proposal) => proposal.type === "ask_clarification");
+  const itemPlan = {
+    ...reconciled,
+    proposals,
+    status:
+      !waiting &&
+      reconciled.status === "awaiting_clarification" &&
+      proposals.some((proposal) => proposal.type === "log_expense")
+        ? "ready"
+        : reconciled.status,
+  };
 
   return {
     observation,

@@ -28,6 +28,7 @@ import {
 import { appointmentTitle, calendarCategory } from "@/lib/sage/calendar-labels";
 import { inferExpenseCategoryFromText, parseExpenseAmountFromText } from "@/lib/expenses-share";
 import { detectExpenseLoggingIntent, detectExpensePayer } from "@/lib/expenses-sharing";
+import { finalizeExpenseProposals } from "@/lib/sage/expense-date";
 import { formatClockLabel, preferEventSubject } from "@/lib/sage/event-subject";
 import { resolveDate } from "@/lib/sage/resolver";
 import type { SageInterpretation } from "@/lib/sage/understanding";
@@ -826,7 +827,6 @@ export function routeChatIntent(input: RouteChatIntentInput): RoutedTurn {
         proposal("log_expense", description, {
           description,
           ...(expenseCategory ? { category: expenseCategory } : {}),
-          ...(statedDay?.iso ? { date: statedDay.iso } : {}),
           ...(expenseAmount != null ? { amount: expenseAmount } : {}),
           paid_by: payer.kind === "coparent" ? "coparent" : "self",
           ...(payer.kind === "coparent" ? { payer_name: payer.name } : {}),
@@ -876,6 +876,10 @@ export function routeChatIntent(input: RouteChatIntentInput): RoutedTurn {
   } else if (notify.kind === "clarify") {
     proposals.push(proposal("ask_clarification", notify.reply, { audience: "parent" }));
   }
+
+  const prepared = finalizeExpenseProposals([...proposals], message, today, timezone);
+  proposals.length = 0;
+  proposals.push(...prepared);
 
   if (proposals.length === 0) {
     return turn({
@@ -936,7 +940,7 @@ export function routeChatIntent(input: RouteChatIntentInput): RoutedTurn {
     proposals,
     child,
     childIds,
-    dateIso: expense && !calendar && !completingTime ? statedDay?.iso ?? null : dateIso,
+    dateIso: expense && !calendar && !completingTime ? null : dateIso,
     eventSubject: calendar || completingTime ? specific?.subject ?? subject : null,
     amount: expenseAmount,
     expenseCategory,

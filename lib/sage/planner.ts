@@ -260,7 +260,10 @@ function templateExpense(ctx: PlanContext): string {
 }
 
 function fallbackAsk(ctx: PlanContext): string {
-  const unclear = ctx.resolved_dates.find((d) => d.status === "needs_clarification");
+  const unclear =
+    ctx.item_type === "expense"
+      ? undefined
+      : ctx.resolved_dates.find((d) => d.status === "needs_clarification");
   if (unclear) {
     return `Could you confirm which exact date you mean by "${unclear.raw}"?`;
   }
@@ -527,9 +530,11 @@ export async function plan(ctx: PlanContext): Promise<Plan> {
     };
   }
 
-  const blocked =
-    ctx.resolved_dates.some((d) => d.status === "needs_clarification") ||
-    ctx.unresolved_children.length > 0;
+  const dateBlocked = ctx.resolved_dates.some((d) => d.status === "needs_clarification");
+  const childBlocked = ctx.unresolved_children.length > 0;
+  const blocked = dateBlocked || childBlocked;
+  // A completed expense does not wait on the date of a field trip or appointment.
+  const expenseWithoutDateGate = ctx.item_type === "expense" && !childBlocked;
 
   // Inbound item Understanding could not classify confidently.
   if (ctx.item_type === "needs_review" && !userCommand(ctx)) {
@@ -572,13 +577,20 @@ export async function plan(ctx: PlanContext): Promise<Plan> {
     };
   }
 
-  // 4. Blocked → awaiting_clarification
-  if (blocked) {
-    const depends = describeBlockers(ctx);
+  // 4. Blocked → awaiting_clarification. An expense with only an unclear activity date is not blocked.
+  if (blocked && !expenseWithoutDateGate) {
+    const askCtx =
+      ctx.item_type === "expense"
+        ? {
+            ...ctx,
+            resolved_dates: ctx.resolved_dates.filter((d) => d.status !== "needs_clarification"),
+          }
+        : ctx;
+    const depends = describeBlockers(askCtx);
     const askDraft = await draftWithLlm(
       "ask_clarification",
-      ctx,
-      fallbackAsk(ctx)
+      askCtx,
+      fallbackAsk(askCtx)
     );
     const proposals: Proposal[] = [
       proposal("ask_clarification", askDraft, null),
@@ -598,7 +610,10 @@ export async function plan(ctx: PlanContext): Promise<Plan> {
         proposal("calendar_update", templateCalendar(ctx), depends)
       );
     } else if (ctx.item_type === "expense" && userCommand(ctx)) {
-      proposals.push(proposal("log_expense", templateExpense(ctx), depends));
+      const childNeed = childBlocked
+        ? `clarification of child (${ctx.unresolved_children.join(", ")})`
+        : null;
+      proposals.push(proposal("log_expense", templateExpense(ctx), childNeed));
     }
 
     return {

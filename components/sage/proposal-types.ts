@@ -47,6 +47,11 @@ export type SageProposal = {
   title?: string | null;
   description?: string | null;
   category?: string | null;
+  visibility?: "private" | "parents_only" | "family" | null;
+  key?: string;
+  document_child_id?: string | null;
+  document_child_name?: string | null;
+  updatesExisting?: boolean;
   date?: string | null;
   /** parent = Sage is asking the user. coparent = the text is for the other parent. */
   audience?: "parent" | "coparent";

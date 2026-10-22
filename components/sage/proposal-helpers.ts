@@ -7,6 +7,7 @@ import {
   parseExpenseAmountFromText,
 } from "@/lib/expenses-share";
 import { appointmentTitle, calendarCategory, visibilityForCategory } from "@/lib/sage/calendar-labels";
+import { completeDocumentReview } from "@/lib/sage/document-intent";
 import { eventSubjectFromTexts, formatClockLabel } from "@/lib/sage/event-subject";
 import { splitSchedule } from "@/lib/sage/outbound-facts";
 import {
@@ -802,10 +803,11 @@ function mapDocumentCategory(raw?: string | null): string {
   return "other";
 }
 
-/** Prefill the document review modal from classify + the already-uploaded file. */
+/** Prefill the document review modal from the proposal, then from the filing rules. */
 export function buildDocumentReviewRow(
   item: SageItem,
-  proposal: SageProposal
+  proposal: SageProposal,
+  children: { id: string; name: string }[] = []
 ): DocumentRow | null {
   const attached = attachedFileFrom(item, proposal);
   if (!attached) return null;
@@ -827,28 +829,52 @@ export function buildDocumentReviewRow(
       (typeof classify?.category === "string" && classify.category) ||
       null
   );
-  const visibilityRaw =
+  const proposalVisibility =
+    typeof proposal.visibility === "string" ? proposal.visibility.trim() : "";
+  const inputVisibility =
     typeof input?.visibility === "string" ? input.visibility.trim() : "";
+  const visibilityRaw = proposalVisibility || inputVisibility;
   const visibility =
-    visibilityRaw === "private" || visibilityRaw === "family"
+    visibilityRaw === "private" || visibilityRaw === "family" || visibilityRaw === "parents_only"
       ? visibilityRaw
       : "parents_only";
-  const childIds = Array.isArray(item.child_ids)
+  const proposalChildId =
+    typeof proposal.document_child_id === "string" && proposal.document_child_id.trim()
+      ? proposal.document_child_id.trim()
+      : null;
+  const itemChildIds = Array.isArray(item.child_ids)
     ? item.child_ids.filter((id): id is string => typeof id === "string" && !!id)
     : [];
+  const childIds = proposalChildId ? [proposalChildId] : itemChildIds;
+  const proposalChildName =
+    typeof proposal.document_child_name === "string" && proposal.document_child_name.trim()
+      ? proposal.document_child_name.trim()
+      : null;
+  const completed = completeDocumentReview({
+    title,
+    description,
+    category,
+    visibility,
+    childId: childIds[0] ?? null,
+    childName: proposalChildName ?? childNamesFromItem(item)[0] ?? null,
+    fileName: attached.file_name,
+    draft: typeof proposal.draft === "string" ? proposal.draft : "",
+    children,
+  });
+  const completedChildIds = completed.childId ? [completed.childId] : childIds;
   return {
     id: attached.document_id,
-    title,
+    title: completed.title,
     file_name: attached.file_name,
     file_size_bytes: null,
     mime_type: null,
-    category,
-    child_id: childIds[0] ?? null,
-    child_ids: childIds,
-    child_name: childNamesFromItem(item)[0] ?? null,
-    description,
+    category: completed.category,
+    child_id: completedChildIds[0] ?? null,
+    child_ids: completedChildIds,
+    child_name: completed.childName,
+    description: completed.description,
     created_at: item.created_at,
-    visibility,
+    visibility: completed.visibility,
     related_comm_id: null,
   };
 }

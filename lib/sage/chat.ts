@@ -10,6 +10,7 @@ import {
   type PendingRevision,
 } from "@/lib/sage/chat-intent";
 import type { CaseEvent, KnownChild } from "@/lib/sage/calendar-chat";
+import type { SearchableDocument } from "@/lib/sage/document-search";
 import type { ConversationContext } from "@/lib/sage/conversation-context";
 import { buildObservationFromChat } from "@/lib/sage/observation-builder";
 import {
@@ -19,6 +20,8 @@ import {
 import { attachExpenseSharing } from "@/lib/sage/attach-expense-sharing";
 import { isCalendarUpdateProposal, isLogExpenseProposal } from "@/lib/sage/proposal-kind";
 import type { Proposal } from "@/lib/sage/planner";
+import { settleParentChatPlan } from "@/lib/sage/working-memory";
+import { scheduleShadowComparison } from "@/lib/sage/shadow-interpreter";
 
 export type { ChatControl, PendingRevision };
 
@@ -44,10 +47,17 @@ export type ProcessChatMessageInput = {
   coparents?: KnownCoparent[];
   children?: KnownChild[];
   events?: CaseEvent[];
+  documents?: SearchableDocument[];
   viewerId?: string;
+  viewerRole?: string | null;
   /** self_forward holds the email privately and does not propose an action. */
   intake?: "chat" | "self_forward";
   today?: Date;
+  /** File name and id only. The shadow interpreter never receives the file URL. */
+  attachments?: { id: string; fileName: string }[];
+  recentTurns?: { role: "parent" | "sage"; text: string }[];
+  /** Attachment processing schedules its own shadow call for the same journal row. */
+  shadow?: boolean;
 };
 
 function buildReply(result: ProcessObservationResult): string {
@@ -83,11 +93,37 @@ export async function processChatMessage(
     coparents: input.coparents ?? [],
     children: input.children ?? [],
     events: input.events ?? [],
+    documents: input.documents ?? [],
     viewerId: input.viewerId,
+    viewerRole: input.viewerRole,
     intake: input.intake ?? "chat",
     timezone: input.timezone,
     today: input.today,
   });
+  if ((input.intake ?? "chat") === "chat" && input.shadow !== false) {
+    const coparentName = input.coparents?.length === 1 ? input.coparents[0].name.trim().split(/\s+/)[0] : "";
+    const coparent = coparentName && !coparentName.includes("@") ? coparentName : null;
+    scheduleShadowComparison({
+      message: input.message,
+      recentTurns: input.recentTurns,
+      memory: input.conversation?.memory ?? null,
+      children: input.children ?? [],
+      events: input.events ?? [],
+      documents: input.documents ?? [],
+      attachments: input.attachments,
+      viewerId: input.viewerId,
+      viewerRole: input.viewerRole,
+      coparentName: coparent,
+      turnKey: input.source_id,
+      router: {
+        handled: routed.handled,
+        control: routed.control,
+        reply: routed.reply,
+        reasoning: routed.result.plan.reasoning,
+        proposals: routed.result.plan.proposals,
+      },
+    });
+  }
   if (routed.handled) {
     const shared = await shareExpenseTurn(input.case_id, routed.reply, routed.result);
     return {
@@ -111,6 +147,20 @@ export async function processChatMessage(
     plan_sender: "You",
     conversation: input.conversation ?? null,
   });
+
+  if ((input.intake ?? "chat") === "chat") {
+    const settled = settleParentChatPlan(result.plan, input.conversation?.memory ?? null);
+    if (settled) {
+      result.plan = settled.plan;
+      return {
+        reply: settled.reply,
+        actions: [],
+        result,
+        control: "none",
+        revision: null,
+      };
+    }
+  }
 
   const shared = await shareExpenseTurn(input.case_id, buildReply(result), result);
   const actions: ChatAction[] = shared.proposals.map((p) => ({

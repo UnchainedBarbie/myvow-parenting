@@ -182,7 +182,11 @@ export function OpenItemReview({
       return;
     }
     if (isLogDocumentProposal(proposal.type)) {
-      const row = buildDocumentReviewRow(item, proposal);
+      const row = buildDocumentReviewRow(
+        item,
+        proposal,
+        children.map((child) => ({ id: child.id, name: child.first_name }))
+      );
       if (!row) {
         showErrorToast("Couldn't open the document — no file is attached.");
         return;

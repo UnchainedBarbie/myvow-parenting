@@ -9,6 +9,13 @@ import { mapExpenseCategoryFromClassify } from "@/lib/expenses-share";
 import { processChatMessage } from "@/lib/sage/chat";
 import { buildObservationFromChat } from "@/lib/sage/observation-builder";
 import type { ProcessObservationResult } from "@/lib/sage/process-observation";
+import {
+  attachmentFilingText,
+  attachmentRouteKind,
+  interpretDocumentTurn,
+  type DocumentProposalState,
+  type KnownDocumentChild,
+} from "@/lib/sage/document-intent";
 import { isLogExpenseProposal } from "@/lib/sage/proposal-kind";
 import type { Proposal } from "@/lib/sage/planner";
 import type { getServiceRoleClient } from "@/lib/supabase/server";
@@ -42,6 +49,8 @@ export type ChatAttachmentProcessResult =
       attachment: ChatAttachmentMeta;
       reply: string;
       result: ProcessObservationResult;
+      /** Update the open document proposal instead of inserting another. */
+      revisesExisting?: boolean;
     }
   | {
       kind: "disambiguate";
@@ -137,6 +146,8 @@ export async function loadAndClassifyDocument(opts: {
   userId: string;
   caseId: string;
   documentId: string;
+  /** Keep the title and description the parent already supplied. */
+  preserveMetadata?: boolean;
 }): Promise<
   | { classify: ClassifyPayload; attachment: ChatAttachmentMeta }
   | { error: string; status: number }
@@ -170,7 +181,7 @@ export async function loadAndClassifyDocument(opts: {
   const classify = await runClassify(buf, mimeType, fileName);
   console.log("[chat-attach] type:", classify.type, "confidence:", classify.confidence);
 
-  if (classify.confidence > 0) {
+  if (classify.confidence > 0 && !opts.preserveMetadata) {
     const updates: Record<string, unknown> = {};
     const title = classify.title?.trim();
     if (title) updates.title = title;
@@ -318,35 +329,42 @@ export function buildAlternateTypeResult(
   });
 }
 
-function buildDocumentProposalResult(
-  classify: ClassifyPayload,
-  attachment: ChatAttachmentMeta,
-  caption: string,
-  sourceId?: string
-): ProcessObservationResult {
+function buildDocumentProposalResult(input: {
+  classify: ClassifyPayload;
+  attachment: ChatAttachmentMeta;
+  caption: string;
+  sourceId?: string;
+  filing?: DocumentProposalState | null;
+}): ProcessObservationResult {
+  const filing = input.filing;
   const title =
-    (classify.title && classify.title.trim()) || attachment.file_name || "Untitled document";
-  const description = classify.description?.trim() || "";
-  const category = classify.category?.trim() || "";
-  const date =
-    classify.date && /^\d{4}-\d{2}-\d{2}$/.test(classify.date.trim())
-      ? classify.date.trim()
-      : null;
-  const draft = `File “${title}” in your documents.`;
-  const summary = caption.trim() || draft;
-  const observation = buildObservationFromChat(summary, { id: sourceId });
+    filing?.title?.trim() ||
+    (input.classify.title && input.classify.title.trim()) ||
+    input.attachment.file_name ||
+    "Untitled document";
+  const description = filing?.description?.trim() || input.classify.description?.trim() || "";
+  const category = filing?.category?.trim() || input.classify.category?.trim() || "other";
+  const draft = description
+    ? `File “${title}”. ${description}`
+    : `File “${title}” in your documents.`;
+  const summary = input.caption.trim() || draft;
+  const observation = buildObservationFromChat(summary, { id: input.sourceId });
   const proposal: Proposal = {
     type: "log_document",
     draft,
     depends_on: null,
     requires_approval: true,
-    attached_document_id: attachment.document_id,
-    attached_file_name: attachment.file_name,
-    attached_file_url: attachment.url,
+    attached_document_id: input.attachment.document_id,
+    attached_file_name: filing?.fileName || input.attachment.file_name,
+    attached_file_url: input.attachment.url,
     title,
     description,
     category,
-    date,
+    visibility: filing?.visibility ?? "parents_only",
+    key: filing?.key ?? "pending-document",
+    document_child_id: filing?.childId ?? null,
+    document_child_name: filing?.childName ?? null,
+    updatesExisting: filing?.updatesExisting === true,
   };
   return {
     observation,
@@ -355,32 +373,30 @@ function buildDocumentProposalResult(
         item_type: "document_summary",
         domain: "general",
         summary: draft,
-        evidence_excerpt: attachment.file_name || title,
+        evidence_excerpt: input.attachment.file_name || title,
         tool_name: "document",
         action_required: true,
         action_type: "review",
         urgency: "normal",
-        confidence: classify.confidence,
+        confidence: input.classify.confidence,
       },
       entities: {
-        children: [],
+        children: filing?.childName ? [{ name: filing.childName, confidence: 0.9 }] : [],
         people: [],
-        dates: date ? [{ value: date, raw: date }] : [],
+        dates: [],
         amounts: [],
         merchants: [],
         providers: [],
-        documents: [{ name: attachment.file_name || title }],
+        documents: [{ name: input.attachment.file_name || title }],
       },
-      reasoning: { signals: ["classify.type === document"] },
+      reasoning: { signals: ["document filing"] },
     },
-    child_ids: [],
+    child_ids: filing?.childId ? [filing.childId] : [],
     unresolved_children: [],
-    resolved_dates: date
-      ? [{ raw: date, status: "resolved", iso: date, reason: "extracted from document" }]
-      : [],
+    resolved_dates: [],
     plan: {
       status: "ready",
-      reasoning: "chat attachment classified as document — propose filing",
+      reasoning: "A document filing stays a document. It is not a calendar event.",
       proposals: [proposal],
     },
   };
@@ -391,13 +407,26 @@ export async function processChatAttachment(opts: {
   timezone: string;
   sourceId?: string;
   caption: string;
+  /** Filing sentence from an earlier turn, used when this message is only the file. */
+  priorText?: string | null;
   classify: ClassifyPayload;
   attachment: ChatAttachmentMeta;
   /** When set, skip the confidence === 0 ask and follow this type's existing path. */
   forcedType?: ForcedAttachType;
+  children?: KnownDocumentChild[];
+  pendingDocument?: DocumentProposalState | null;
+  filedDocument?: DocumentProposalState | null;
+  today?: Date;
 }): Promise<ChatAttachmentProcessResult> {
-  const type = opts.forcedType ?? opts.classify.type;
-  if (opts.forcedType == null && opts.classify.confidence === 0) {
+  const routed =
+    opts.forcedType ??
+    attachmentRouteKind({
+      caption: opts.caption,
+      fileName: opts.attachment.file_name,
+      classifyType: opts.classify.type,
+      pendingDocument: Boolean(opts.pendingDocument),
+    });
+  if (opts.forcedType == null && opts.classify.confidence === 0 && routed !== "document") {
     return {
       kind: "disambiguate",
       classify: opts.classify,
@@ -406,7 +435,7 @@ export async function processChatAttachment(opts: {
       result: buildDisambiguateResult(opts.attachment, opts.sourceId),
     };
   }
-  if (type === "event") {
+  if (routed === "event") {
     return {
       kind: "event",
       classify: opts.classify,
@@ -415,19 +444,37 @@ export async function processChatAttachment(opts: {
       result: null,
     };
   }
-  if (type === "document") {
-    const result = buildDocumentProposalResult(
-      opts.classify,
-      opts.attachment,
-      opts.caption,
-      opts.sourceId
-    );
+  if (routed === "document") {
+    const text = attachmentFilingText(opts.caption, opts.priorText, Boolean(opts.pendingDocument));
+    const interpreted = interpretDocumentTurn({
+      text,
+      fileName: opts.attachment.file_name,
+      children: opts.children ?? [],
+      pending: opts.pendingDocument ?? null,
+      filed: opts.filedDocument ?? null,
+      today: opts.today ?? new Date(),
+      timezone: opts.timezone,
+      incomingDocumentId: opts.attachment.document_id,
+    });
+    const filing =
+      interpreted.action === "create" || interpreted.action === "revise" ? interpreted.proposal : null;
+    const result = buildDocumentProposalResult({
+      classify: opts.classify,
+      attachment: opts.attachment,
+      caption: opts.caption,
+      sourceId: opts.sourceId,
+      filing,
+    });
     return {
       kind: "document",
       classify: opts.classify,
       attachment: opts.attachment,
-      reply: buildDocumentCommandFromClassify(opts.classify, opts.caption),
+      reply:
+        interpreted.action === "create" || interpreted.action === "revise"
+          ? interpreted.reply
+          : buildDocumentCommandFromClassify(opts.classify, opts.caption),
       result,
+      revisesExisting: interpreted.action === "revise",
     };
   }
 
@@ -437,6 +484,7 @@ export async function processChatAttachment(opts: {
     case_id: opts.caseId,
     timezone: opts.timezone,
     source_id: opts.sourceId,
+    shadow: false,
   });
   const stampedPlan = stampAttachedDocumentOnPlan(result.plan, opts.attachment);
   const mappedCategory = mapExpenseCategoryFromClassify(opts.classify.category);

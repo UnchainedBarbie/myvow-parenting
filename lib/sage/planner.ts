@@ -68,6 +68,8 @@ export type Proposal = {
   attached_file_url?: string;
   /** ask_clarification aimed at the parent, not the co-parent. */
   audience?: "parent" | "coparent";
+  /** Record kind this question is about, when the proposal itself is only a question. */
+  clarifies?: "calendar" | "expense" | "document" | "message";
   /** Classify fields carried on a log_document proposal. */
   title?: string;
   description?: string;
@@ -108,6 +110,14 @@ export type Proposal = {
   stated_percent?: number | null;
   /** Null until the parent or the message chooses. True asks the co-parent to respond after save. */
   notify_coparent?: boolean | null;
+  /** Document vault visibility. Medical and therapy stay parents_only unless the parent asks otherwise. */
+  visibility?: "private" | "parents_only" | "family" | null;
+  /** Stable id for a pending document so a follow-up updates this proposal. */
+  key?: string;
+  document_child_id?: string | null;
+  document_child_name?: string | null;
+  /** True when approval updates a document that is already filed. */
+  updatesExisting?: boolean;
 };
 
 export type Plan = {

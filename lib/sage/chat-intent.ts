@@ -28,22 +28,55 @@ import {
 import { appointmentTitle, calendarCategory } from "@/lib/sage/calendar-labels";
 import { inferExpenseCategoryFromText, parseExpenseAmountFromText } from "@/lib/expenses-share";
 import { detectExpenseLoggingIntent, detectExpensePayer } from "@/lib/expenses-sharing";
+import {
+  filedDocumentState,
+  interpretDocumentTurn,
+  isDocumentEdit,
+  isDocumentFilingRequest,
+  openDocumentStates,
+  revisionFromProposal,
+  type DocumentProposalState,
+} from "@/lib/sage/document-intent";
+import {
+  answerDocumentQuestion,
+  isDocumentQuestion,
+  pickSavedForEdit,
+  type SearchableDocument,
+} from "@/lib/sage/document-search";
 import { finalizeExpenseProposals } from "@/lib/sage/expense-date";
 import { formatClockLabel, preferEventSubject } from "@/lib/sage/event-subject";
 import { resolveDate } from "@/lib/sage/resolver";
 import type { SageInterpretation } from "@/lib/sage/understanding";
+import {
+  interruptsClarification,
+  isExplicitNoteRequest,
+  type FocusKind,
+  type WorkingMemory,
+} from "@/lib/sage/working-memory";
 
 export type KnownCoparent = {
   name: string;
   email: string | null;
 };
 
-export type ChatControl = "none" | "cancel_message" | "revise_pending";
+export type ChatControl = "none" | "cancel_message" | "revise_pending" | "revise_document";
 
 export type PendingRevision = {
   date: string;
   label: string;
   time: string | null;
+  document?: {
+    key: string;
+    title: string;
+    description: string;
+    category: string;
+    visibility: "private" | "parents_only" | "family";
+    childId: string | null;
+    childName: string | null;
+    fileName: string | null;
+    documentId: string | null;
+    updatesExisting: boolean;
+  } | null;
 };
 
 export type RoutedTurn = {
@@ -62,6 +95,9 @@ export type RouteChatIntentInput = {
   /** Saved events the signed-in parent is allowed to see. */
   events?: CaseEvent[];
   viewerId?: string;
+  viewerRole?: string | null;
+  /** Saved documents this viewer is allowed to see. */
+  documents?: SearchableDocument[];
   /** A forwarded email is private intake until the user asks for an action. */
   intake?: "chat" | "self_forward";
   timezone?: string;
@@ -302,6 +338,7 @@ function isPaymentReport(text: string): boolean {
 }
 
 function wantsCalendar(text: string): boolean {
+  if (isDocumentFilingRequest(text)) return false;
   if (isPaymentReport(text) && !explicitSchedule(text)) return false;
   const lower = text.toLowerCase();
   const hasWhen =
@@ -315,6 +352,10 @@ function wantsCalendar(text: string): boolean {
   return (hasWhen && hasEvent) || (asksAdd && (hasEvent || hasWhen));
 }
 
+export function pendingDocument(conversation: ConversationContext | null): DocumentProposalState | null {
+  return openDocumentStates(conversation?.open_proposals)[0] ?? null;
+}
+
 function wantsDocument(text: string): boolean {
   return /\b(save|file|store)\b[^.?]{0,40}\b(document|documents)\b/i.test(text) ||
     /\bfile (this|that|it)\b/i.test(text);
@@ -324,6 +365,34 @@ function wantsExpense(text: string): boolean {
   if (isPaymentReport(text)) return true;
   return /\blog (this |that |the )?(expense|receipt)\b/i.test(text) ||
     /\b(add|enter|record) (this |that |an |the )?expense\b/i.test(text);
+}
+
+/**
+ * A self-contained request that can stand apart from an open question.
+ * A short follow-up such as "let him know" is not a new request.
+ */
+export function explicitRequestKind(message: string): FocusKind | null {
+  if (isExplicitNoteRequest(message)) return null;
+  if (isPaymentReport(message) || wantsExpense(message)) return "expense";
+  if (isDocumentFilingRequest(message) || wantsDocument(message) || isDocumentQuestion(message)) {
+    return "document";
+  }
+  if (wantsCalendar(message)) return "calendar";
+  return null;
+}
+
+/**
+ * Leave an open clarification in place when this turn is a note, a retrieval
+ * or unrecognized reply, or an explicit request of a different kind.
+ */
+export function shouldPreserveOpenWork(
+  message: string,
+  memory: WorkingMemory | null | undefined,
+  proposals: { type?: string }[]
+): boolean {
+  if (isExplicitNoteRequest(message)) return true;
+  if (proposals.length === 0) return true;
+  return interruptsClarification(explicitRequestKind(message), memory);
 }
 
 function expenseDescription(text: string): string {
@@ -548,10 +617,12 @@ export function routeChatIntent(input: RouteChatIntentInput): RoutedTurn {
   const events = input.events ?? [];
   const timezone = input.timezone ?? "America/Denver";
   const today = input.today ?? new Date();
+  const interrupt = interruptsClarification(explicitRequestKind(message), conversation?.memory);
   const named = matchChildren(message, children);
-  const contextChild = conversation?.event.child
-    ? matchChildren(conversation.event.child, children)
-    : [];
+  const contextChild =
+    !interrupt && conversation?.event.child
+      ? matchChildren(conversation.event.child, children)
+      : [];
   const childRecord = named.length === 1 ? named[0] : contextChild.length === 1 ? contextChild[0] : null;
 
   if (input.intake === "self_forward") {
@@ -595,7 +666,19 @@ export function routeChatIntent(input: RouteChatIntentInput): RoutedTurn {
       summary: "Payment is still open. No message prepared.",
       itemType: "note",
       proposals: [proposal("note_only", "No message. Offer to log an expense or draft a reminder.")],
-      reasoning: "An unpaid balance is not a request to message the co-parent.",
+    reasoning: "An unpaid balance is not a request to message the co-parent.",
+  });
+  }
+
+  if (isExplicitNoteRequest(message)) {
+    return turn({
+      handled: true,
+      reply: "I saved that as a note. Nothing else was filed, logged, or sent.",
+      message,
+      summary: "Note",
+      itemType: "note",
+      proposals: [proposal("note_only", message.trim())],
+      reasoning: "The parent asked for a note. No other action was taken.",
     });
   }
 
@@ -753,30 +836,181 @@ export function routeChatIntent(input: RouteChatIntentInput): RoutedTurn {
     }
   }
 
+  const knownChildren = children.map((child) => ({ id: child.id, name: child.name }));
+  if (isDocumentQuestion(message)) {
+    const answer = answerDocumentQuestion({
+      message,
+      documents: input.documents ?? [],
+      children: knownChildren,
+      today,
+      timezone,
+      viewer: input.viewerId
+        ? { userId: input.viewerId, role: input.viewerRole ?? "parent" }
+        : undefined,
+    });
+    if (answer) {
+      return turn({
+        handled: true,
+        reply: answer,
+        message,
+        summary: "Document search",
+        itemType: "note",
+        proposals: [],
+        status: "no_action",
+        dateIso: null,
+        eventSubject: null,
+        reasoning: "A document question is answered from saved documents and does not create a record.",
+      });
+    }
+  }
+
+  const openDocuments = openDocumentStates(conversation?.open_proposals);
+  let filedDocument = conversation?.recent_document ?? null;
+  if (isDocumentEdit(message) && openDocuments.length === 0 && !filedDocument) {
+    const picked = pickSavedForEdit(message, input.documents ?? [], knownChildren);
+    if (picked.kind === "ask") {
+      return turn({
+        handled: true,
+        reply: picked.question,
+        message,
+        summary: "Which document should I update?",
+        itemType: "note",
+        proposals: [proposal("ask_clarification", picked.question, { audience: "parent" })],
+        status: "awaiting_clarification",
+        dateIso: null,
+        eventSubject: null,
+        reasoning: "More than one saved document could match that follow-up.",
+      });
+    }
+    if (picked.kind === "one") filedDocument = filedDocumentState(picked.document, knownChildren);
+  }
+  const documentTurn = interpretDocumentTurn({
+    text: message,
+    children: knownChildren,
+    pending: openDocuments[0] ?? null,
+    pendingDocuments: openDocuments,
+    filed: filedDocument,
+    today,
+    timezone,
+  });
+  if (documentTurn.action === "ask") {
+    return turn({
+      handled: true,
+      reply: documentTurn.message,
+      message,
+      summary: "Which document should I update?",
+      itemType: "note",
+      proposals: [
+        proposal("ask_clarification", documentTurn.message, { audience: "parent" }),
+      ],
+      status: "awaiting_clarification",
+      dateIso: null,
+      eventSubject: null,
+      reasoning: "More than one document could match that follow-up.",
+    });
+  }
+  if (documentTurn.action === "create" || documentTurn.action === "revise") {
+    const doc = documentTurn.proposal;
+    const fields = {
+      title: doc.title,
+      description: doc.description,
+      category: doc.category,
+      visibility: doc.visibility,
+      document_child_id: doc.childId,
+      document_child_name: doc.childName,
+      updatesExisting: doc.updatesExisting,
+      ...(doc.fileName ? { attached_file_name: doc.fileName } : {}),
+      ...(doc.documentId ? { attached_document_id: doc.documentId } : {}),
+    };
+    if (documentTurn.action === "revise") {
+      return turn({
+        handled: true,
+        control: "revise_document",
+        revision: {
+          date: "",
+          label: doc.title,
+          time: null,
+          document: revisionFromProposal(doc),
+        },
+        reply: documentTurn.reply,
+        message,
+        summary: documentTurn.reply,
+        itemType: "document",
+        proposals: [],
+        child: doc.childName,
+        childIds: doc.childId ? [doc.childId] : [],
+        dateIso: null,
+        eventSubject: null,
+        reasoning: "A follow-up updates the pending document instead of filing another.",
+      });
+    }
+    return turn({
+      handled: true,
+      reply: documentTurn.reply,
+      message,
+      summary: doc.title,
+      itemType: "document",
+      proposals: [
+        proposal("log_document", `File “${doc.title}”. ${doc.description}`, {
+          ...fields,
+          key: doc.key,
+        } as Partial<Proposal>),
+      ],
+      child: doc.childName,
+      childIds: doc.childId ? [doc.childId] : [],
+      dateIso: null,
+      eventSubject: null,
+      reasoning: "A document filing stays a document. It is not a calendar event.",
+    });
+  }
+  if (
+    documentTurn.action === "none" &&
+    isDocumentEdit(message) &&
+    /\b(evaluation|document|record|report|file)\b/i.test(message)
+  ) {
+    return turn({
+      handled: true,
+      reply: "I don't have a document that matches that.",
+      message,
+      summary: "No matching document",
+      itemType: "note",
+      proposals: [],
+      status: "no_action",
+      dateIso: null,
+      eventSubject: null,
+      reasoning: "A document follow-up does not become a note when nothing matches.",
+    });
+  }
+
   const calendar = wantsCalendar(message);
   const document = wantsDocument(message);
   const expense = wantsExpense(message);
   const notify = resolveNotify(message, coparents, conversation);
-  const child = childRecord?.name ?? childName(message, coparents) ?? conversation?.event.child ?? null;
+  const inheritedEvent = interrupt
+    ? { subject: null, child: null, date: null, time: null, eventId: null as string | null }
+    : conversation?.event ?? { subject: null, child: null, date: null, time: null, eventId: null };
+  const child = childRecord?.name ?? childName(message, coparents) ?? inheritedEvent.child ?? null;
   const childIds = childRecord ? [childRecord.id] : [];
+  const subjectConversation =
+    interrupt && conversation ? { ...conversation, event: inheritedEvent } : conversation;
   const subject =
-    eventSubject(message, conversation) ??
+    eventSubject(message, subjectConversation) ??
     (calendar ? "event" : null);
   const statedDay = resolvedDay(message, today, timezone);
   const dateIso =
-    statedDay?.iso ?? ((calendar || !expense) ? conversation?.event.date ?? null : null);
+    statedDay?.iso ?? ((calendar || !expense) ? inheritedEvent.date ?? null : null);
   const dateLabel = dateIso ? prettyDate(dateIso) : null;
   const clock = clockFromText(message);
   const messageTime = clockWithMeridiem(message);
-  const statedTime = messageTime ?? (clock ? null : clockWithMeridiem(conversation?.event.time ?? ""));
+  const statedTime = messageTime ?? (clock ? null : clockWithMeridiem(inheritedEvent.time ?? ""));
   const timeLabel = statedTime ? formatClockLabel(statedTime) : clock?.label ?? null;
   const allDay = wantsAllDay(message);
   const completingTime =
     !calendar &&
     !isPaymentReport(message) &&
     Boolean(messageTime) &&
-    Boolean(conversation?.event.subject) &&
-    Boolean(conversation?.event.date) &&
+    Boolean(inheritedEvent.subject) &&
+    Boolean(inheritedEvent.date) &&
     !isEventDetailUpdate(message);
 
   const proposals: Proposal[] = [];
@@ -786,7 +1020,7 @@ export function routeChatIntent(input: RouteChatIntentInput): RoutedTurn {
   if ((calendar || completingTime) && !statedTime && !allDay) {
     const what = (specific?.subject ?? subject ?? "appointment").toLowerCase();
     const ask = child ? `What time is ${child}'s ${what}?` : `What time is that ${what}?`;
-    proposals.push(proposal("ask_clarification", ask, { audience: "parent" }));
+    proposals.push(proposal("ask_clarification", ask, { audience: "parent", clarifies: "calendar" }));
   } else if (calendar || completingTime) {
     const bits = [title, dateLabel, statedTime ? `at ${formatClockLabel(statedTime)}` : allDay ? "all day" : null]
       .filter(Boolean)
@@ -888,7 +1122,8 @@ export function routeChatIntent(input: RouteChatIntentInput): RoutedTurn {
       message,
       summary: message,
       itemType: "note",
-      proposals: [proposal("note_only", message)],
+      proposals: [],
+      status: "no_action",
       reasoning: "No structured action. The conversational engine can answer.",
     });
   }
@@ -921,6 +1156,9 @@ export function routeChatIntent(input: RouteChatIntentInput): RoutedTurn {
     reply = proposals.find((p) => p.type === "ask_clarification")?.draft ?? reply;
   }
 
+  const calendarClarification = proposals.some(
+    (item) => item.type === "ask_clarification" && item.clarifies === "calendar"
+  );
   const itemType = hasCalendar
     ? "calendar_event"
     : hasMessage
@@ -929,7 +1167,9 @@ export function routeChatIntent(input: RouteChatIntentInput): RoutedTurn {
         ? "document"
         : expense
           ? "expense"
-          : "note";
+          : calendarClarification
+            ? "calendar_event"
+            : "note";
 
   return turn({
     handled: true,

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { documentContentType, documentFileProblem } from "@/lib/documents-files";
 import { createClient } from "@/lib/supabase/server";
 import { getServiceRoleClient } from "@/lib/supabase/server";
 
@@ -30,6 +31,11 @@ export async function POST(request: NextRequest) {
     if (!file || !case_id) {
       return NextResponse.json({ message: "Missing file or case_id" }, { status: 400 });
     }
+    const fileProblem = documentFileProblem(file.name, file.type, file.size);
+    if (fileProblem) {
+      return NextResponse.json({ message: fileProblem }, { status: 400 });
+    }
+    const contentType = documentContentType(file.name, file.type);
 
     const titleTrimmed = title?.trim() ?? "";
     if (!titleTrimmed) {
@@ -68,7 +74,7 @@ export async function POST(request: NextRequest) {
     const buf = Buffer.from(await file.arrayBuffer());
     const { error: uploadError } = await admin.storage
       .from("documents")
-      .upload(path, buf, { contentType: file.type, upsert: false });
+      .upload(path, buf, { contentType, upsert: false });
     if (uploadError) {
       return NextResponse.json({ message: uploadError.message }, { status: 500 });
     }
@@ -79,7 +85,7 @@ export async function POST(request: NextRequest) {
       title: titleTrimmed,
       file_name: file.name,
       file_size_bytes: file.size,
-      mime_type: file.type,
+      mime_type: contentType,
       storage_path: path,
       category: category ?? "other",
       child_id: null,

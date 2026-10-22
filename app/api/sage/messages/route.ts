@@ -4,7 +4,17 @@ import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
 import { loadCalendarContext } from "@/lib/sage/calendar-chat";
 import { reconcileCalendarPlan } from "@/lib/sage/calendar-match";
 import { processChatMessage } from "@/lib/sage/chat";
+import { scheduleShadowComparison } from "@/lib/sage/shadow-interpreter";
+import { pendingDocument, shouldPreserveOpenWork } from "@/lib/sage/chat-intent";
 import { applySessionControl } from "@/lib/sage/chat-control";
+import { isDocumentFilingRequest, openDocumentStates } from "@/lib/sage/document-intent";
+import {
+  loadLatestOpenDocument,
+  loadVisibleDocuments,
+  reviseLatestOpenDocument,
+  syncPendingDocumentMetadata,
+} from "@/lib/sage/document-records";
+import type { DocumentProposalState } from "@/lib/sage/document-intent";
 import { loadKnownCoparents } from "@/lib/sage/known-coparents";
 import {
   formatConversationContext,
@@ -177,13 +187,134 @@ type RevisableDraft = {
   proposals: Record<string, unknown>[];
 };
 
+function observeAttachmentTurn(input: {
+  message: string;
+  reply: string;
+  reasoning?: string;
+  proposals: {
+    type?: string;
+    calendar_intent?: "offer" | "update" | string;
+    updatesExisting?: boolean;
+    clarifies?: "calendar" | "expense" | "document" | "message" | string;
+  }[];
+  revisesDocument: boolean;
+  documents: {
+    id: string;
+    title: string;
+    description: string;
+    category: string;
+    fileName: string;
+    childIds: string[];
+    createdAt: string;
+    visibility: string;
+    uploadedBy: string;
+  }[];
+  children: { id: string; name: string }[];
+  memory: ShadowMemory;
+  viewerId: string;
+  viewerRole: string | null;
+  attachmentId: string;
+  fileName: string;
+  turnKey?: string | null;
+}): void {
+  scheduleShadowComparison({
+    message: input.message,
+    memory: input.memory,
+    documents: input.documents,
+    children: input.children,
+    attachments: [{ id: input.attachmentId, fileName: input.fileName }],
+    viewerId: input.viewerId,
+    viewerRole: input.viewerRole,
+    turnKey: input.turnKey,
+    router: {
+      handled: true,
+      control: input.revisesDocument ? "revise_document" : "none",
+      reply: input.reply,
+      reasoning: input.reasoning,
+      proposals: input.proposals,
+    },
+  });
+}
+
+type ShadowMemory = NonNullable<ConversationContext["memory"]> | null;
+
 function isNoteOnlyPlan(plan: {
   status?: string;
   proposals?: { type?: string }[];
 }): boolean {
-  if (plan.status === "no_action") return true;
   const proposals = plan.proposals ?? [];
   return proposals.length > 0 && proposals.every((p) => p.type === "note_only");
+}
+
+function withOpenDocument(
+  conversation: ConversationContext | null,
+  pending: DocumentProposalState | null
+): ConversationContext | null {
+  if (!pending) return conversation;
+  const base: ConversationContext = conversation ?? {
+    thread_subject: null,
+    event: { subject: null, child: null, date: null, time: null, eventId: null },
+    open_proposals: [],
+  };
+  const already = openDocumentStates(base.open_proposals).some(
+    (doc) => doc.key === pending.key || (pending.documentId != null && doc.documentId === pending.documentId)
+  );
+  if (already) return base;
+  return {
+    ...base,
+    open_proposals: [
+      { type: "log_document", text: pending.description || pending.title, document: pending },
+      ...base.open_proposals,
+    ],
+  };
+}
+
+async function previousFilingText(
+  admin: AdminClient,
+  sessionId: string,
+  userId: string,
+  currentContent: string
+): Promise<string> {
+  const { data } = await admin
+    .from("sage_journal_messages")
+    .select("content")
+    .eq("session_id", sessionId)
+    .eq("user_id", userId)
+    .eq("role", "user")
+    .order("created_at", { ascending: false })
+    .limit(6);
+  const texts = ((data ?? []) as { content?: string | null }[])
+    .map((row) => (row.content ?? "").trim())
+    .filter(Boolean);
+  const earlier = texts[0] === currentContent.trim() ? texts.slice(1) : texts;
+  return earlier.find((text) => isDocumentFilingRequest(text.replace(/\n+Attached:[\s\S]*$/, ""))) ?? "";
+}
+
+async function rememberPendingDocument(
+  admin: AdminClient,
+  proposal: {
+    attached_document_id?: string | null;
+    title?: string | null;
+    description?: string | null;
+    category?: string | null;
+    visibility?: string | null;
+    document_child_id?: string | null;
+    updatesExisting?: boolean | null;
+  }
+): Promise<void> {
+  const visibility =
+    proposal.visibility === "private" || proposal.visibility === "family" || proposal.visibility === "parents_only"
+      ? proposal.visibility
+      : "parents_only";
+  await syncPendingDocumentMetadata(admin, {
+    documentId: proposal.attached_document_id ?? null,
+    title: proposal.title ?? "",
+    description: proposal.description ?? "",
+    category: proposal.category ?? "other",
+    visibility,
+    childId: proposal.document_child_id ?? null,
+    updatesExisting: proposal.updatesExisting === true,
+  });
 }
 
 function revisionReply(
@@ -782,7 +913,7 @@ export async function POST(request: NextRequest) {
 
     const { data: membership, error: membershipError } = await admin
       .from("case_members")
-      .select("case_id")
+      .select("case_id, role")
       .eq("user_id", user.id)
       .limit(1)
       .maybeSingle();
@@ -817,6 +948,18 @@ export async function POST(request: NextRequest) {
           caption: string;
         }
       | null = null;
+    const attachmentConversation =
+      sessionId && attachmentDocumentId
+        ? await loadConversationContext(admin, sessionId, user.id, timezone)
+        : null;
+    const viewerRole = (membership as { role?: string | null } | null)?.role ?? "parent";
+    const savedDocuments = caseId
+      ? await loadVisibleDocuments(admin, caseId, { userId: user.id, role: viewerRole })
+      : [];
+    const latestOpenDocument = caseId
+      ? await loadLatestOpenDocument(admin, caseId, user.id)
+      : null;
+    const attachmentContext = withOpenDocument(attachmentConversation, latestOpenDocument);
 
     if (isReentry) {
       if (!caseId) {
@@ -896,11 +1039,18 @@ export async function POST(request: NextRequest) {
           { status: 403 }
         );
       }
+      const fileSuggestsDocument = /\b(eval(?:uation)?|report|record|therapy|medical|document)\b/i.test(
+        attachmentFileName || ""
+      );
       classifiedAttachment = await loadAndClassifyDocument({
         admin,
         userId: user.id,
         caseId,
         documentId: attachmentDocumentId,
+        preserveMetadata:
+          isDocumentFilingRequest(trimmed) ||
+          Boolean(pendingDocument(attachmentConversation)) ||
+          fileSuggestsDocument,
       });
       if ("error" in classifiedAttachment) {
         return NextResponse.json(
@@ -962,6 +1112,21 @@ export async function POST(request: NextRequest) {
             forcedType: reentry.forcedType,
           });
           if (processed.reply.trim()) sageContent = processed.reply;
+          observeAttachmentTurn({
+            message: reentry.caption,
+            reply: processed.reply,
+            reasoning: processed.result?.plan.reasoning,
+            proposals: processed.result?.plan.proposals ?? [],
+            revisesDocument: processed.kind === "document" && processed.revisesExisting === true,
+            documents: savedDocuments,
+            children: [],
+            memory: attachmentContext?.memory ?? null,
+            viewerId: user.id,
+            viewerRole,
+            attachmentId: reentry.attachment.document_id,
+            fileName: reentry.attachment.file_name,
+            turnKey: (userRow as { id: string }).id,
+          });
           sageItem = await persistProcessedPlan({
             admin,
             caseId,
@@ -975,27 +1140,110 @@ export async function POST(request: NextRequest) {
             file_name:
               attachmentFileName || classifiedAttachment.attachment.file_name,
           };
+          const calendarContext = await loadCalendarContext(admin, caseId, user.id);
+          const priorText = sessionId
+            ? await previousFilingText(admin, sessionId, user.id, userContent)
+            : "";
           const processed = await processChatAttachment({
             caseId,
             timezone,
             sourceId: (userRow as { id: string }).id,
             caption: trimmed,
+            priorText,
             classify: classifiedAttachment.classify,
             attachment,
+            children: calendarContext.children,
+            pendingDocument: pendingDocument(attachmentContext) ?? latestOpenDocument,
+            filedDocument: attachmentContext?.recent_document ?? null,
+            today: new Date(),
           });
           if (processed.reply.trim()) sageContent = processed.reply;
-
-          sageItem = await persistProcessedPlan({
-            admin,
-            caseId,
-            userId: user.id,
-            sourceId: (userRow as { id: string }).id,
-            processed,
+          observeAttachmentTurn({
+            message: trimmed,
+            reply: processed.reply,
+            reasoning: processed.result?.plan.reasoning,
+            proposals: processed.result?.plan.proposals ?? [],
+            revisesDocument: processed.kind === "document" && processed.revisesExisting === true,
+            documents: savedDocuments,
+            children: calendarContext.children,
+            memory: attachmentContext?.memory ?? null,
+            viewerId: user.id,
+            viewerRole,
+            attachmentId: attachment.document_id,
+            fileName: attachment.file_name,
+            turnKey: (userRow as { id: string }).id,
           });
+
+          const openDocument = processed.kind === "document" && processed.revisesExisting;
+          if (openDocument && sessionId) {
+            const proposal = processed.result.plan.proposals[0];
+            const applied = await applySessionControl(
+              admin,
+              sessionId,
+              user.id,
+              "revise_document",
+              {
+                date: "",
+                label: proposal?.title ?? "Document",
+                time: null,
+                document: {
+                  key: proposal?.key ?? "pending-document",
+                  title: proposal?.title ?? "Document",
+                  description: proposal?.description ?? "",
+                  category: proposal?.category ?? "other",
+                  visibility:
+                    proposal?.visibility === "private" || proposal?.visibility === "family"
+                      ? proposal.visibility
+                      : "parents_only",
+                  childId: proposal?.document_child_id ?? null,
+                  childName: proposal?.document_child_name ?? null,
+                  fileName: proposal?.attached_file_name ?? attachment.file_name,
+                  documentId: proposal?.attached_document_id ?? attachment.document_id,
+                  updatesExisting: proposal?.updatesExisting === true,
+                },
+              }
+            );
+            if (applied) revisedItem = applied;
+          }
+          if (!revisedItem && processed.kind === "document" && processed.revisesExisting) {
+            const proposal = processed.result.plan.proposals[0];
+            const applied = await reviseLatestOpenDocument(admin, caseId, user.id, {
+              key: proposal?.key ?? "pending-document",
+              title: proposal?.title ?? "Document",
+              description: proposal?.description ?? "",
+              category: proposal?.category ?? "other",
+              visibility:
+                proposal?.visibility === "private" || proposal?.visibility === "family"
+                  ? proposal.visibility
+                  : "parents_only",
+              childId: proposal?.document_child_id ?? null,
+              childName: proposal?.document_child_name ?? null,
+              fileName: proposal?.attached_file_name ?? attachment.file_name,
+              documentId: proposal?.attached_document_id ?? attachment.document_id,
+              updatesExisting: proposal?.updatesExisting === true,
+            });
+            if (applied) revisedItem = applied;
+          }
+          const filingProposal = processed.result?.plan.proposals.find(
+            (proposal) => proposal.type === "log_document"
+          );
+          if (filingProposal) await rememberPendingDocument(admin, filingProposal);
+          if (!revisedItem && !(processed.kind === "document" && processed.revisesExisting)) {
+            sageItem = await persistProcessedPlan({
+              admin,
+              caseId,
+              userId: user.id,
+              sourceId: (userRow as { id: string }).id,
+              processed,
+            });
+          }
         } else {
-          const conversation = sessionId
-            ? await loadConversationContext(admin, sessionId, user.id, timezone)
-            : null;
+          const conversation = withOpenDocument(
+            sessionId
+              ? await loadConversationContext(admin, sessionId, user.id, timezone)
+              : null,
+            latestOpenDocument
+          );
           const coparents = await loadKnownCoparents(admin, caseId, user.id);
           const calendarContext = await loadCalendarContext(admin, caseId, user.id);
           const { reply, result, control, revision } = await processChatMessage({
@@ -1007,14 +1255,29 @@ export async function POST(request: NextRequest) {
             coparents,
             children: calendarContext.children,
             events: calendarContext.events,
+            documents: savedDocuments,
             viewerId: user.id,
+            viewerRole,
           });
           if (reply.trim()) sageContent = reply;
+          const createdDocument = result.plan.proposals.find((proposal) => proposal.type === "log_document");
+          if (createdDocument) await rememberPendingDocument(admin, createdDocument);
+          if (revision?.document) {
+            await syncPendingDocumentMetadata(admin, {
+              documentId: revision.document.documentId,
+              title: revision.document.title,
+              description: revision.document.description,
+              category: revision.document.category,
+              visibility: revision.document.visibility,
+              childId: revision.document.childId,
+              updatesExisting: revision.document.updatesExisting,
+            });
+          }
 
           let handledControl = false;
           if (
             sessionId &&
-            (control === "cancel_message" || control === "revise_pending")
+            (control === "cancel_message" || control === "revise_pending" || control === "revise_document")
           ) {
             const applied = await applySessionControl(
               admin,
@@ -1039,23 +1302,32 @@ export async function POST(request: NextRequest) {
           const turnHasCalendar = result.plan.proposals.some(
             (p) => p.type === "calendar_update"
           );
+          const preserveOpenWork = shouldPreserveOpenWork(
+            trimmed,
+            conversation?.memory,
+            result.plan.proposals
+          );
           const childName =
             result.interpretation.entities.children.find((c) => c.name?.trim())?.name?.trim() ??
-            conversation?.event.child ??
+            (preserveOpenWork ? null : conversation?.event.child) ??
             null;
           const resolvedIso =
             result.resolved_dates.find((d) => d.status === "resolved" && d.iso)?.iso ?? null;
-          const outboundSources = await sourcesForOutboundRedraft({
-            caseId,
-            timezone,
-            iso: conversation?.event.date ?? resolvedIso,
-            childIds: result.child_ids,
-            conversation,
-            guidance: trimmed,
-          });
+          const outboundSources = preserveOpenWork
+            ? ""
+            : await sourcesForOutboundRedraft({
+                caseId,
+                timezone,
+                iso: conversation?.event.date ?? resolvedIso,
+                childIds: result.child_ids,
+                conversation,
+                guidance: trimmed,
+              });
           let establishedReply = "";
-          const eventName = result.event_subject ?? conversation?.event.subject ?? null;
-          if (sessionId && (noteOnly || turnHasCalendar)) {
+          const eventName = preserveOpenWork
+            ? result.event_subject ?? null
+            : result.event_subject ?? conversation?.event.subject ?? null;
+          if (!preserveOpenWork && sessionId && (noteOnly || turnHasCalendar)) {
             const openReply = await latestRevisableDraft(admin, sessionId, user.id);
             if (openReply?.proposalType === "ask_clarification" && turnHasCalendar) {
               await closeAnsweredClarification(admin, user.id, openReply);
@@ -1078,7 +1350,7 @@ export async function POST(request: NextRequest) {
               }
             }
           }
-          if (sessionId && turnHasCalendar) {
+          if (!preserveOpenWork && sessionId && turnHasCalendar) {
             const openCalendar = await latestRevisableDraft(admin, sessionId, user.id, {
               calendarOnly: true,
             });
@@ -1106,7 +1378,7 @@ export async function POST(request: NextRequest) {
                 }
               }
             }
-          } else if (sessionId && noteOnly) {
+          } else if (!preserveOpenWork && sessionId && noteOnly) {
             const openCalendar = await latestRevisableDraft(admin, sessionId, user.id, {
               calendarOnly: true,
             });
@@ -1134,7 +1406,7 @@ export async function POST(request: NextRequest) {
                 }
               }
             }
-          } else if (sessionId && !noteOnly) {
+          } else if (!preserveOpenWork && sessionId && !noteOnly) {
             const blockedDraft = await latestRevisableDraft(
               admin,
               sessionId,

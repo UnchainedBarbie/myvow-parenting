@@ -6,6 +6,7 @@ import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import { FileText, Pencil } from "lucide-react";
 import { ChildMultiSelect } from "@/components/documents/child-multi-select";
+import { documentPreviewNote } from "@/lib/documents-files";
 
 type DocumentHistoryEntry = {
   id: string;
@@ -362,7 +363,7 @@ export function DocumentDetailModal({
                       {doc.file_name}
                     </p>
                     <p className="text-[11px] text-foreground-secondary">
-                      Already attached
+                      {documentPreviewNote(doc.file_name, doc.mime_type) ?? "Already attached"}
                     </p>
                   </div>
                 </div>
@@ -454,6 +455,11 @@ export function DocumentDetailModal({
               <div>
                 <p className="text-xs text-foreground-secondary mb-0.5">File name</p>
                 <p className="text-sm text-foreground break-all">{doc.file_name}</p>
+                {documentPreviewNote(doc.file_name, doc.mime_type) ? (
+                  <p className="text-[11px] text-foreground-secondary mt-0.5">
+                    {documentPreviewNote(doc.file_name, doc.mime_type)}
+                  </p>
+                ) : null}
                 {doc.file_size_bytes != null && (
                   <p className="text-[11px] text-foreground-secondary mt-0.5">{formatSize(doc.file_size_bytes)}</p>
                 )}

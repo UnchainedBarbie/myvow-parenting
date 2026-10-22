@@ -402,7 +402,11 @@ export function SageInbox({
     const proposals = item.plan?.proposals ?? [];
     const p = proposals[proposalIndex];
     if (!p || !isLogDocumentProposal(p.type)) return;
-    const row = buildDocumentReviewRow(item, p);
+    const row = buildDocumentReviewRow(
+      item,
+      p,
+      childrenList.map((child) => ({ id: child.id, name: child.first_name }))
+    );
     if (!row) return;
     setCalendarAgree(null);
     setExpenseAgree(null);

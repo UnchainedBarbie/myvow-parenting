@@ -25,6 +25,9 @@ import {
 } from "@/components/sage/proposal-helpers";
 import { SageAgreeFormModal } from "@/components/sage/sage-agree-form-modal";
 import type { SageItem, SagePlan, SageProposal } from "@/components/sage/proposal-types";
+import { DOCUMENT_ACCEPT, DOCUMENT_ACCEPT_LABEL, documentFileProblem } from "@/lib/documents-files";
+import { interpretDocumentTurn } from "@/lib/sage/document-intent";
+import { splitDocumentAnswer } from "@/lib/sage/document-search";
 import { notifySageProposalsChanged } from "@/lib/open-items";
 import { confirmProposalIsCurrent } from "@/lib/sage/proposal-actions";
 import { isReplacedProposalError } from "@/lib/sage/proposal-lifecycle";
@@ -68,17 +71,6 @@ function narrationText(content: string): string {
 
 const SAGE_ACTION_PILL =
   "inline-flex items-center gap-1.5 rounded-full border border-[#7C8B6E] bg-transparent px-2.5 py-1.5 text-[11px] text-[#5B7A52] hover:bg-[#F2F5EF] transition-colors";
-
-const CHAT_ACCEPT = "image/*,.pdf,application/pdf";
-const CHAT_ACCEPT_LABEL = "PDF, JPG, PNG";
-const CHAT_MAX_BYTES = 25 * 1024 * 1024;
-const CHAT_ALLOWED_TYPES = [
-  "image/jpeg",
-  "image/png",
-  "image/gif",
-  "image/webp",
-  "application/pdf",
-];
 
 type Child = { id: string; first_name: string };
 
@@ -452,6 +444,20 @@ export function SageClient({
     });
   }
 
+  async function openSavedDocument(id: string) {
+    try {
+      const res = await fetch(`/api/documents/${id}/download`);
+      const data = (await res.json().catch(() => ({}))) as { url?: string; error?: string };
+      if (!res.ok || !data.url) {
+        showErrorToast(data.error || "Couldn't open that document.");
+        return;
+      }
+      window.open(data.url, "_blank", "noopener,noreferrer");
+    } catch {
+      showErrorToast("Couldn't open that document.");
+    }
+  }
+
   function openDocumentAgree(
     item: SageItem,
     proposalIndex: number,
@@ -461,7 +467,11 @@ export function SageClient({
     const proposals = item.plan?.proposals ?? [];
     const p = proposals[proposalIndex];
     if (!p || !isLogDocumentProposal(p.type)) return;
-    const row = buildDocumentReviewRow(item, p);
+    const row = buildDocumentReviewRow(
+      item,
+      p,
+      childrenList.map((child) => ({ id: child.id, name: child.first_name }))
+    );
     if (!row) {
       showErrorToast("Couldn't open the document — no file is attached.");
       return;
@@ -832,16 +842,34 @@ export function SageClient({
     file: File,
     cid: string
   ): Promise<ChatAttachedDoc> {
+    const caption = draft.trim();
+    const filing = interpretDocumentTurn({
+      text: caption,
+      fileName: file.name,
+      fileMime: file.type,
+      fileSize: file.size,
+      children: childrenList.map((child) => ({ id: child.id, name: child.first_name })),
+      pending: null,
+      filed: null,
+      today: new Date(),
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "America/Denver",
+    });
+    const filed =
+      filing.action === "create" || filing.action === "revise" ? filing.proposal : null;
+    const receipt = /\b(receipt|invoice|expense)\b/i.test(`${caption} ${file.name}`);
     const formData = new FormData();
     formData.set("file", file);
     formData.set("case_id", cid);
-    formData.set("category", "expenses");
-    formData.set("visibility", "parents_only");
-    const base =
-      file.name.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ").trim() ||
-      "Receipt";
-    formData.set("title", base.slice(0, 120));
-    formData.set("description", "Receipt attached in Sage chat.");
+    formData.set("category", filed?.category || (receipt ? "expenses" : "other"));
+    formData.set("visibility", filed?.visibility || "parents_only");
+    const fallbackTitle =
+      file.name.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ").trim() || "Document";
+    formData.set("title", (filed?.title || fallbackTitle).slice(0, 120));
+    formData.set(
+      "description",
+      (filed?.description || (receipt ? "Receipt attached in Sage chat." : "File attached in Sage chat.")).slice(0, 600)
+    );
+    if (filed?.childId) formData.append("child_ids", filed.childId);
     formData.set("status", "pending");
     const res = await fetch("/api/documents/upload", {
       method: "POST",
@@ -861,11 +889,8 @@ export function SageClient({
     };
   }
 
-  function isAllowedChatFile(file: File): boolean {
-    if (file.size > CHAT_MAX_BYTES) return false;
-    return (
-      CHAT_ALLOWED_TYPES.includes(file.type) || file.type.startsWith("image/")
-    );
+  function isAllowedChatFile(file: File): string | null {
+    return documentFileProblem(file.name, file.type, file.size);
   }
 
   async function handleComposerFile(file: File | null) {
@@ -877,8 +902,9 @@ export function SageClient({
       setAttachUploading(false);
       return;
     }
-    if (!isAllowedChatFile(file)) {
-      showErrorToast(`Accepted: ${CHAT_ACCEPT_LABEL} (up to 25MB).`);
+    const problem = isAllowedChatFile(file);
+    if (problem) {
+      showErrorToast(problem);
       return;
     }
     setPendingFile(file);
@@ -931,6 +957,9 @@ export function SageClient({
         : `Attached: ${fileLabel}`
       : content;
     setSending(true);
+    let optimisticId = "";
+    const sentDraft = content;
+    const sentAttachment = attachment;
     try {
       let sid = sessionId;
       if (sid === null) {
@@ -944,6 +973,7 @@ export function SageClient({
         content: optimisticContent,
         created_at: new Date().toISOString(),
       };
+      optimisticId = optimisticUser.id;
       setMessages((prev) => [...prev, optimisticUser]);
       setDraft("");
       setPendingFile(null);
@@ -971,6 +1001,12 @@ export function SageClient({
         showErrorToast(
           (data as { message?: string }).message ?? "Sage is unavailable right now."
         );
+        setMessages((prev) => prev.filter((m) => m.id !== optimisticUser.id));
+        setDraft(sentDraft);
+        if (sentAttachment) {
+          setAttachedDoc(sentAttachment);
+          setPendingFile(null);
+        }
         if (sessionId === null && sid) {
           router.replace(sageChatHref(sid));
         }
@@ -1037,6 +1073,11 @@ export function SageClient({
       }
     } catch {
       showErrorToast("Something went wrong. Try again.");
+      if (optimisticId) {
+        setMessages((prev) => prev.filter((m) => m.id !== optimisticId));
+        setDraft(sentDraft);
+        if (sentAttachment) setAttachedDoc(sentAttachment);
+      }
     } finally {
       setSending(false);
     }
@@ -1106,7 +1147,24 @@ export function SageClient({
                               : "bg-[#FDFBF7] text-foreground rounded-bl-sm border border-[#E8E4DC]"
                           )}
                         >
-                          <p className="whitespace-pre-wrap">{narrationText(msg.content)}</p>
+                          {(() => {
+                            const spoken = splitDocumentAnswer(narrationText(msg.content));
+                            return (
+                              <>
+                                <p className="whitespace-pre-wrap">{spoken.text}</p>
+                                {spoken.links.map((link) => (
+                                  <button
+                                    key={link.id}
+                                    type="button"
+                                    className="mt-2 block text-left text-[13px] text-[#5B7A52] underline"
+                                    onClick={() => void openSavedDocument(link.id)}
+                                  >
+                                    Open {link.label}
+                                  </button>
+                                ))}
+                              </>
+                            );
+                          })()}
                           {!isUser &&
                             msg.source_message_id &&
                             msg.source_conversation_id && (
@@ -1245,7 +1303,7 @@ export function SageClient({
         <input
           ref={fileInputRef}
           type="file"
-          accept={CHAT_ACCEPT}
+          accept={DOCUMENT_ACCEPT}
           className="hidden"
           onChange={(e) => {
             const file = e.target.files?.[0] ?? null;
@@ -1277,7 +1335,7 @@ export function SageClient({
                   ? "Uploading…"
                   : attachedDoc
                     ? "Attached"
-                    : CHAT_ACCEPT_LABEL}
+                    : DOCUMENT_ACCEPT_LABEL}
               </p>
             </div>
             <button

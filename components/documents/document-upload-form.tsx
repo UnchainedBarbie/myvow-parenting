@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { FileText, Image, Trash2, Shield, Clock, FileCheck, Camera } from "lucide-react";
 import { ChildMultiSelect } from "@/components/documents/child-multi-select";
+import { documentFileProblem } from "@/lib/documents-files";
 
 const DOCUMENT_CATEGORIES = [
   { value: "court_order", label: "Court Order" },
@@ -31,7 +32,6 @@ const VISIBILITY_OPTIONS = [
 
 const TITLE_MAX = 120;
 const DESCRIPTION_MAX = 600;
-const MAX_FILE_BYTES = 25 * 1024 * 1024; // 25MB
 const ACCEPT = "image/*,.pdf,application/pdf,.doc,.docx";
 const ACCEPT_LABEL = "PDF, JPG, PNG, DOCX";
 
@@ -138,10 +138,7 @@ export function DocumentUploadForm({ caseId, children, logEntries = [] }: Docume
   const [descriptionSuggested, setDescriptionSuggested] = useState(false);
 
   function validateFile(f: File): string | null {
-    const allowed = ["image/jpeg", "image/png", "image/gif", "image/webp", "application/pdf", "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"];
-    if (!allowed.some((t) => f.type === t || f.type.startsWith("image/"))) return `Accepted: ${ACCEPT_LABEL}.`;
-    if (f.size > MAX_FILE_BYTES) return `Max size 25MB. This file is ${formatSize(f.size)}.`;
-    return null;
+    return documentFileProblem(f.name, f.type, f.size);
   }
 
   const applySuggestions = useCallback((f: File) => {

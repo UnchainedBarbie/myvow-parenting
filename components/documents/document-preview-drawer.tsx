@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import { X, Download, Copy, FileText, Image } from "lucide-react";
 
 import { CategoryPill } from "@/components/documents/category-pill";
+import { documentPreviewNote } from "@/lib/documents-files";
 
 const CATEGORY_LABELS: Record<string, string> = {
   court_order: "Court Order",
@@ -137,6 +138,11 @@ export function DocumentPreviewDrawer({
                 )}
                 <span className="sr-only">Preview (load from API for full preview)</span>
               </div>
+              {documentPreviewNote(doc.file_name, doc.mime_type) ? (
+                <p className="text-xs text-foreground-secondary">
+                  {documentPreviewNote(doc.file_name, doc.mime_type)}
+                </p>
+              ) : null}
 
               <div className="flex flex-wrap items-center gap-2">
                 <Button

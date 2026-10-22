@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { FileText, Image, Trash2, Shield, Clock, FileCheck, Camera } from "lucide-react";
 import { ChildMultiSelect } from "@/components/documents/child-multi-select";
-import { documentFileProblem } from "@/lib/documents-files";
+import { DOCUMENT_ACCEPT, DOCUMENT_ACCEPT_LABEL, documentFileProblem } from "@/lib/documents-files";
 
 const DOCUMENT_CATEGORIES = [
   { value: "court_order", label: "Court Order" },
@@ -32,8 +32,8 @@ const VISIBILITY_OPTIONS = [
 
 const TITLE_MAX = 120;
 const DESCRIPTION_MAX = 600;
-const ACCEPT = "image/*,.pdf,application/pdf,.doc,.docx";
-const ACCEPT_LABEL = "PDF, JPG, PNG, DOCX";
+const ACCEPT = DOCUMENT_ACCEPT;
+const ACCEPT_LABEL = DOCUMENT_ACCEPT_LABEL;
 
 type Child = { id: string; first_name: string };
 type LogEntry = { id: string; external_comm_id: string | null; created_at: string };
@@ -296,7 +296,7 @@ export function DocumentUploadForm({ caseId, children, logEntries = [] }: Docume
                     }}
                   />
                   <p className="text-xs text-foreground-secondary">Drop file or click to browse</p>
-                  <p className="text-[11px] text-foreground-secondary mt-1">{ACCEPT_LABEL}, max 25MB</p>
+                  <p className="text-[11px] text-foreground-secondary mt-1">{ACCEPT_LABEL}</p>
                   <div className="mt-2 flex items-center gap-2">
                     <Button
                       type="button"

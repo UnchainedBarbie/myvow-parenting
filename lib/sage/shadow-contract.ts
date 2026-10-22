@@ -6,6 +6,7 @@
  */
 
 import { documentAuthorizedForViewer } from "@/lib/documents-tab";
+import { buildShadowConversation, shadowTurnsFromJournal } from "@/lib/sage/shadow-context";
 import type { WorkingMemory } from "@/lib/sage/working-memory";
 
 export const SHADOW_INTENTS = [
@@ -380,17 +381,20 @@ export function buildShadowPacket(input: ShadowTurnInput): ShadowPacket {
   const coparent = safeName(input.coparentName ?? "");
   if (coparent) mint("coparent", "message", "coparent");
 
-  const recent = (input.recentTurns ?? [])
-    .slice(-6)
-    .map((turn) => ({
-      role: turn.role === "sage" ? "sage" : "parent",
-      text: clip(turn.text, 280),
-    }))
-    .filter((turn) => turn.text);
+  const conversation = buildShadowConversation(
+    shadowTurnsFromJournal(
+      (input.recentTurns ?? []).map((turn) => ({
+        role: turn.role === "sage" ? "sage" : "user",
+        content: turn.text,
+      })),
+      input.message
+    ),
+    input.message
+  );
 
   const packet = {
     message: clip(input.message, 2000),
-    ...(recent.length ? { recent_turns: recent } : {}),
+    conversation,
     memory: {
       ...(memory?.focus
         ? {

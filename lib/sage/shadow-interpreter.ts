@@ -37,6 +37,9 @@ A payment the parent already made is an expense, even when it mentions an appoin
 Finding a saved document is retrieve. Changing its description is update.
 Advice about what to say is advice, not message_coparent, unless the parent asks you to prepare the message.
 continuation.open means a clarification is still waiting. Answer it with supply_missing and context_handle only when this message supplies the missing detail.
+conversation.turns are this parent's recent messages and your replies in the current session. conversation.last_intention is the latest retrieval, including one that found nothing.
+When conversation.this_turn is repeat, use that same intent and domain. When it is new, do not attach the message to last_intention. When it is ambiguous, set needs_clarification and do not borrow a domain from continuation or a proposal title.
+When conversation.prefer is conversation, prefer those turns over continuation and memory.focus.
 A different domain, child, or explicit new request is a new intention. Leave target_handle empty unless the packet lists the record to change.`;
 
 export type ShadowDeps = {

@@ -12,7 +12,9 @@ import type { ProcessObservationResult } from "@/lib/sage/process-observation";
 import {
   attachmentFilingText,
   attachmentRouteKind,
+  attachmentShouldBeCalendar,
   interpretDocumentTurn,
+  isDocumentFilingRequest,
   type DocumentProposalState,
   type KnownDocumentChild,
 } from "@/lib/sage/document-intent";
@@ -418,7 +420,7 @@ export async function processChatAttachment(opts: {
   filedDocument?: DocumentProposalState | null;
   today?: Date;
 }): Promise<ChatAttachmentProcessResult> {
-  const routed =
+  let routed =
     opts.forcedType ??
     attachmentRouteKind({
       caption: opts.caption,
@@ -426,7 +428,15 @@ export async function processChatAttachment(opts: {
       classifyType: opts.classify.type,
       pendingDocument: Boolean(opts.pendingDocument),
     });
-  if (opts.forcedType == null && opts.classify.confidence === 0 && routed !== "document") {
+  const unread = opts.classify.contentsRead === false;
+  if (unread && opts.forcedType == null) {
+    const caption = opts.caption.trim();
+    const explicit =
+      (attachmentShouldBeCalendar(caption) && !isDocumentFilingRequest(caption)) ||
+      /\b(expense|reimburse|reimbursement)\b/i.test(caption);
+    if (!explicit) routed = "document";
+  }
+  if (opts.forcedType == null && opts.classify.confidence === 0 && routed !== "document" && !unread) {
     return {
       kind: "disambiguate",
       classify: opts.classify,
@@ -465,14 +475,19 @@ export async function processChatAttachment(opts: {
       sourceId: opts.sourceId,
       filing,
     });
+    const approvalReply =
+      interpreted.action === "create" || interpreted.action === "revise"
+        ? interpreted.reply
+        : buildDocumentCommandFromClassify(opts.classify, opts.caption);
+    const reply =
+      unread && interpreted.action !== "revise" && interpreted.action !== "ask" && interpreted.action !== "error"
+        ? "I can save this file in Documents once you approve it. I haven't read its contents."
+        : approvalReply;
     return {
       kind: "document",
       classify: opts.classify,
       attachment: opts.attachment,
-      reply:
-        interpreted.action === "create" || interpreted.action === "revise"
-          ? interpreted.reply
-          : buildDocumentCommandFromClassify(opts.classify, opts.caption),
+      reply,
       result,
       revisesExisting: interpreted.action === "revise",
     };

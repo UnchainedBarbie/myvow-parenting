@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { documentContentType } from "@/lib/documents-files";
 import { extractPdfText } from "@/lib/pdf-extract";
 
 export const CLASSIFY_PROMPT = `You are an AI assistant for a co-parenting application called MyVow Parenting. Analyze the uploaded file and classify it as one of: document, expense, or event.
@@ -157,13 +158,37 @@ export type ClassifyPayload = {
   end_time: string | null;
   location: string | null;
   is_all_day: boolean;
+  /** False when the file was stored without sending its contents to the model. */
+  contentsRead?: boolean;
 };
 
-const IMAGE_TYPES = ["image/jpeg", "image/png", "image/jpg", "image/webp", "image/gif"];
 const PDF_TYPE = "application/pdf";
 
-function isImage(mime: string): boolean {
-  return IMAGE_TYPES.includes(mime) || mime.startsWith("image/");
+function anthropicImageType(
+  mime: string
+): "image/jpeg" | "image/png" | "image/gif" | "image/webp" | null {
+  if (mime === "image/jpg" || mime === "image/jpeg") return "image/jpeg";
+  if (mime === "image/png" || mime === "image/gif" || mime === "image/webp") return mime;
+  return null;
+}
+
+export function unreadDocumentClassification(fileName: string): ClassifyPayload {
+  return {
+    type: "document",
+    confidence: 0,
+    title: fileName,
+    description: "",
+    category: "other",
+    child_names: [],
+    date: null,
+    amount: null,
+    vendor: null,
+    start_time: null,
+    end_time: null,
+    location: null,
+    is_all_day: false,
+    contentsRead: false,
+  };
 }
 
 export function parseClassifyResponse(content: string | undefined, fallbackFileName: string): ClassifyPayload {
@@ -265,6 +290,11 @@ export async function runClassify(
   contentType: string,
   fileName: string
 ): Promise<ClassifyPayload> {
+  const storedType = documentContentType(fileName, contentType);
+  const imageType = anthropicImageType(storedType);
+  if (!imageType && storedType !== PDF_TYPE) {
+    return unreadDocumentClassification(fileName);
+  }
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
     return {
@@ -288,9 +318,9 @@ export async function runClassify(
   let text = "";
 
   try {
-    if (isImage(contentType)) {
+    if (imageType) {
       const base64FileData = buf.toString("base64");
-      const mimeType = contentType as "image/jpeg" | "image/png" | "image/gif" | "image/webp";
+      const mimeType = imageType;
       const response = await anthropic.messages.create({
         model: "claude-sonnet-4-6",
         max_tokens: 4096,
@@ -312,7 +342,7 @@ export async function runClassify(
         ],
       });
       text = response.content[0].type === "text" ? response.content[0].text : "";
-    } else if (contentType === PDF_TYPE) {
+    } else if (storedType === PDF_TYPE) {
       const extracted = await extractPdfText(buf);
       if (extracted && extracted.length > 100) {
         const truncated = extracted.slice(0, 8000);
@@ -348,13 +378,7 @@ export async function runClassify(
         text = response.content[0].type === "text" ? response.content[0].text : "";
       }
     } else {
-      const textPrompt = `Filename: ${fileName}. File type: ${contentType}. Infer classification and suggested fields from the filename. ${CLASSIFY_PROMPT}`;
-      const response = await anthropic.messages.create({
-        model: "claude-sonnet-4-6",
-        max_tokens: 4096,
-        messages: [{ role: "user", content: textPrompt }],
-      });
-      text = response.content[0].type === "text" ? response.content[0].text : "";
+      return unreadDocumentClassification(fileName);
     }
   } catch (err) {
     console.error("[ai-classify] Anthropic API call failed:", err);

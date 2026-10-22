@@ -5,6 +5,7 @@ import { loadCalendarContext } from "@/lib/sage/calendar-chat";
 import { reconcileCalendarPlan } from "@/lib/sage/calendar-match";
 import { processChatMessage } from "@/lib/sage/chat";
 import { scheduleShadowComparison } from "@/lib/sage/shadow-interpreter";
+import { SHADOW_CONTEXT_TURNS, shadowTurnsFromJournal } from "@/lib/sage/shadow-context";
 import { pendingDocument, shouldPreserveOpenWork } from "@/lib/sage/chat-intent";
 import { applySessionControl } from "@/lib/sage/chat-control";
 import { isDocumentFilingRequest, openDocumentStates } from "@/lib/sage/document-intent";
@@ -288,6 +289,24 @@ async function previousFilingText(
     .filter(Boolean);
   const earlier = texts[0] === currentContent.trim() ? texts.slice(1) : texts;
   return earlier.find((text) => isDocumentFilingRequest(text.replace(/\n+Attached:[\s\S]*$/, ""))) ?? "";
+}
+
+async function loadShadowSessionTurns(
+  admin: AdminClient,
+  sessionId: string,
+  userId: string,
+  currentMessage: string
+) {
+  const { data, error } = await admin
+    .from("sage_journal_messages")
+    .select("role, content")
+    .eq("session_id", sessionId)
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false })
+    .limit(SHADOW_CONTEXT_TURNS + 1);
+  if (error || !data) return [];
+  const rows = [...(data as { role?: string | null; content?: string | null }[])].reverse();
+  return shadowTurnsFromJournal(rows, currentMessage);
 }
 
 async function rememberPendingDocument(
@@ -1258,6 +1277,7 @@ export async function POST(request: NextRequest) {
             documents: savedDocuments,
             viewerId: user.id,
             viewerRole,
+            recentTurns: sessionId ? await loadShadowSessionTurns(admin, sessionId, user.id, trimmed) : [],
           });
           if (reply.trim()) sageContent = reply;
           const createdDocument = result.plan.proposals.find((proposal) => proposal.type === "log_document");

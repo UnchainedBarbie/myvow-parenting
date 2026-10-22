@@ -1,4 +1,4 @@
-import { documentFileProblem } from "@/lib/documents-files";
+import { documentCanBeRead, documentFileProblem } from "@/lib/documents-files";
 import { isInactiveProposal, reviseProposal } from "@/lib/sage/proposal-lifecycle";
 
 export type DocumentVisibility = "private" | "parents_only" | "family";
@@ -461,6 +461,7 @@ export function interpretDocumentTurn(input: {
   if (!next) return { action: "none" };
 
   const revising = Boolean(pending) && next.key === pending?.key;
+  const unread = fileName != null && !documentCanBeRead(fileName, input.fileMime ?? "");
   return {
     action: revising ? "revise" : "create",
     proposal: next,
@@ -468,7 +469,9 @@ export function interpretDocumentTurn(input: {
       ? "I updated the document waiting for your approval. Nothing is filed until you approve it."
       : next.updatesExisting
         ? "I can update the filed document. Nothing changes until you approve it."
-        : "I can file that document once you approve it.",
+        : unread
+          ? "I can save this file in Documents once you approve it. I haven't read its contents."
+          : "I can file that document once you approve it.",
   };
 }
 

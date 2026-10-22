@@ -108,17 +108,18 @@ async function main() {
   assert.equal(describedAfter.thread.pending?.documentId, "doc-2");
   assert.equal(describedAfter.thread.pending?.description, "Occupational therapy evaluation for Ashley");
 
-  const blocked = applyDocumentTurn(
+  const storedSheet = applyDocumentTurn(
     described.thread,
     { text: sentence, fileName: "notes.xlsx", fileMime: "application/vnd.ms-excel", fileSize: 400 },
     children,
     today,
     timezone
   );
-  assert.match(blocked.error ?? "", /isn't supported/);
-  assert.equal(blocked.thread.pending?.key, pending.key);
-  assert.equal(blocked.thread.pending?.fileName, null);
-  assert.equal(documentFileProblem("notes.xlsx", "", 400)?.includes("replacement"), true);
+  assert.equal(storedSheet.error, null);
+  assert.equal(storedSheet.thread.pending?.key, pending.key);
+  assert.equal(storedSheet.thread.pending?.fileName, "notes.xlsx");
+  assert.equal(documentFileProblem("notes.xlsx", "application/vnd.ms-excel", 400), null);
+  assert.equal(documentFileProblem("notes.xlsx", "", 400), null);
 
   const replaced = applyDocumentTurn(
     withFile.thread,

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { documentContentType, documentFileProblem } from "@/lib/documents-files";
+import { documentBytesProblem, documentStoredContentType, originalDocumentName } from "@/lib/documents-files";
 import { createClient } from "@/lib/supabase/server";
 import { getServiceRoleClient } from "@/lib/supabase/server";
 
@@ -31,11 +31,13 @@ export async function POST(request: NextRequest) {
     if (!file || !case_id) {
       return NextResponse.json({ message: "Missing file or case_id" }, { status: 400 });
     }
-    const fileProblem = documentFileProblem(file.name, file.type, file.size);
+    const originalName = originalDocumentName(file.name);
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const fileProblem = documentBytesProblem(originalName, file.type, bytes.byteLength, bytes);
     if (fileProblem) {
       return NextResponse.json({ message: fileProblem }, { status: 400 });
     }
-    const contentType = documentContentType(file.name, file.type);
+    const contentType = documentStoredContentType(originalName, bytes) ?? "application/octet-stream";
 
     const titleTrimmed = title?.trim() ?? "";
     if (!titleTrimmed) {
@@ -70,8 +72,8 @@ export async function POST(request: NextRequest) {
       : "active";
 
     const admin = getServiceRoleClient();
-    const path = `${case_id}/${user.id}/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9.-]/g, "_")}`;
-    const buf = Buffer.from(await file.arrayBuffer());
+    const path = `${case_id}/${user.id}/${Date.now()}-${originalName.replace(/[^a-zA-Z0-9.-]/g, "_")}`;
+    const buf = Buffer.from(bytes);
     const { error: uploadError } = await admin.storage
       .from("documents")
       .upload(path, buf, { contentType, upsert: false });
@@ -83,8 +85,8 @@ export async function POST(request: NextRequest) {
       case_id,
       uploaded_by: user.id,
       title: titleTrimmed,
-      file_name: file.name,
-      file_size_bytes: file.size,
+      file_name: originalName,
+      file_size_bytes: bytes.byteLength,
       mime_type: contentType,
       storage_path: path,
       category: category ?? "other",

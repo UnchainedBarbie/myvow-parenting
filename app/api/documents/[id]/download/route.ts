@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { originalDocumentName } from "@/lib/documents-files";
+import { documentAuthorizedForViewer } from "@/lib/documents-tab";
 import { createClient } from "@/lib/supabase/server";
 import { getServiceRoleClient } from "@/lib/supabase/server";
 
@@ -20,7 +22,7 @@ export async function GET(
     const admin = getServiceRoleClient();
     const { data: doc, error: docErr } = await admin
       .from("documents")
-      .select("id, case_id, storage_path, file_name")
+      .select("id, case_id, storage_path, file_name, visibility, uploaded_by")
       .eq("id", id)
       .eq("status", "active")
       .is("deleted_at", null)
@@ -29,15 +31,24 @@ export async function GET(
 
     const { data: membership } = await admin
       .from("case_members")
-      .select("case_id")
+      .select("case_id, role")
       .eq("case_id", doc.case_id)
       .eq("user_id", user.id)
       .maybeSingle();
     if (!membership) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    if (
+      !documentAuthorizedForViewer(
+        { visibility: doc.visibility as string | null, uploadedBy: doc.uploaded_by as string | null },
+        { userId: user.id, role: membership.role as string | null }
+      )
+    ) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
 
+    const downloadName = originalDocumentName(String(doc.file_name ?? "")) || "document";
     const { data: signed } = await admin.storage
       .from("documents")
-      .createSignedUrl(doc.storage_path, 60, { download: doc.file_name });
+      .createSignedUrl(doc.storage_path, 60, { download: downloadName });
     if (!signed?.signedUrl) return NextResponse.json({ error: "Could not generate download URL" }, { status: 500 });
 
     try {

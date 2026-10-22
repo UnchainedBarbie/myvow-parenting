@@ -33,7 +33,6 @@ export async function POST(request: NextRequest) {
       source,
       source_message_id,
       notify_coparent,
-      draft_message,
     } = body as {
       case_id?: string;
       title?: string;
@@ -50,7 +49,6 @@ export async function POST(request: NextRequest) {
       source?: "manual" | "email" | "photo";
       source_message_id?: string;
       notify_coparent?: boolean;
-      draft_message?: string;
     };
     const titleValue = typeof title === "string" ? title.trim() : "";
     const startValue = typeof start_time === "string" ? start_time.trim() : "";
@@ -132,7 +130,6 @@ export async function POST(request: NextRequest) {
     let notice: Awaited<ReturnType<typeof saveCalendarCoparentNotice>> = {
       status: "skipped",
       pendingInvite: false,
-      draft: null,
     };
     try {
       notice = await saveCalendarCoparentNotice(admin, {
@@ -149,7 +146,7 @@ export async function POST(request: NextRequest) {
       start: startValue,
       end: typeof end_time === "string" ? end_time : null,
       description: privateFlag ? null : descriptionValue,
-      draftMessage: typeof draft_message === "string" ? draft_message : null,
+      allDay: all_day === true,
     });
     } catch (noticeError) {
       console.error(
@@ -162,7 +159,6 @@ export async function POST(request: NextRequest) {
       event_id: event.id,
       coparent_notice: notice.status,
       coparent_pending_invite: notice.pendingInvite,
-      coparent_draft: notice.draft,
     });
   } catch (e) {
     return NextResponse.json(

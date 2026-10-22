@@ -47,6 +47,7 @@ interface CalendarRootProps {
   holidays?: HolidayCustodyRow[];
   kidsLabelUser?: string | null;
   kidsLabelCoparent?: string | null;
+  initialEventId?: string;
 }
 
 export function CalendarRoot({
@@ -67,12 +68,12 @@ export function CalendarRoot({
   holidays = [],
   kidsLabelUser = null,
   kidsLabelCoparent = null,
+  initialEventId,
 }: CalendarRootProps) {
   const router = useRouter();
-  const [selectedEvent, setSelectedEvent] = useState<CalendarEventRow | null>(
-    null
-  );
-  const [modalOpen, setModalOpen] = useState(false);
+  const opened = eventsForModal.find((event) => event.id === initialEventId) ?? null;
+  const [selectedEvent, setSelectedEvent] = useState<CalendarEventRow | null>(opened);
+  const [modalOpen, setModalOpen] = useState(Boolean(opened));
 
   const fallbackDate = events[0]?.start_time ?? Date.now();
   const year = yearProp ?? new Date(fallbackDate).getFullYear();

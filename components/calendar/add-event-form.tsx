@@ -19,7 +19,6 @@ const DESCRIPTION_MAX = 250;
 function coparentSaveSummary(data: {
   coparent_notice?: string;
   coparent_pending_invite?: boolean;
-  coparent_draft?: string | null;
 }): string | null {
   const parts: string[] = [];
   if (data.coparent_notice === "sent") {
@@ -29,11 +28,6 @@ function coparentSaveSummary(data: {
   }
   if (data.coparent_notice === "not_registered" || data.coparent_pending_invite) {
     parts.push("An invited co-parent is not registered yet, so nothing was delivered to them.");
-  }
-  if (data.coparent_draft === "queued") {
-    parts.push("A message draft is waiting for your approval. It was not sent.");
-  } else if (data.coparent_draft === "not_registered") {
-    parts.push("A message draft was not created because your co-parent is not registered.");
   }
   return parts.length > 0 ? parts.join(" ") : null;
 }
@@ -169,7 +163,6 @@ export function AddEventForm({
   const [notifyChoice, setNotifyChoice] = useState<boolean | null>(
     typeof initialValues?.notifyCoparent === "boolean" ? initialValues.notifyCoparent : null
   );
-  const [draftMessage, setDraftMessage] = useState("");
   const [sourceMessageId, setSourceMessageId] = useState<string | null>(null);
   const [photoUploading, setPhotoUploading] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -343,7 +336,6 @@ export function AddEventForm({
       return;
     }
     const notifyCoparent = effectiveNotifyCoparent(visibility, notifyChoice);
-    const draft = sharedWithCoparent(visibility) ? draftMessage.trim() : "";
     const startTimeValue = allDay ? startTime.trim() || "00:00" : startTime;
     const endTimeValue = allDay ? "" : endTime || "";
     // date is "YYYY-MM-DD", times are "HH:mm" — interpret as LOCAL, convert to UTC
@@ -378,7 +370,6 @@ export function AddEventForm({
               ...(initialValues?.eventStatus ? { status: initialValues.eventStatus } : {}),
               recurring_rule: isRepeating ? repeat : null,
               notify_coparent: notifyCoparent,
-              ...(draft ? { draft_message: draft } : {}),
             }),
           })
         : await fetch("/api/calendar/create", {
@@ -399,7 +390,6 @@ export function AddEventForm({
               kid_title: kidTitle.trim() || undefined,
               ...(sourceMessageId && { source: "photo", source_message_id: sourceMessageId }),
               notify_coparent: notifyCoparent,
-              ...(draft ? { draft_message: draft } : {}),
             }),
           });
       const data = await res.json();
@@ -691,28 +681,6 @@ export function AddEventForm({
               </span>
             </span>
           </label>
-          {sharedWithCoparent(visibility) && (
-            <div className="space-y-2">
-              <Label htmlFor="coparent-draft" className="text-xs font-medium">
-                Draft a separate message (optional)
-              </Label>
-              <textarea
-                id="coparent-draft"
-                value={draftMessage}
-                onChange={(e) => setDraftMessage(e.target.value)}
-                placeholder="Write a note to review before anything is sent"
-                rows={3}
-                className={cn(
-                  "flex w-full rounded-card border border-input bg-background px-2 py-1 text-xs",
-                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
-                  "min-h-[64px] resize-y"
-                )}
-              />
-              <p className="text-[11px] text-foreground-secondary">
-                This stays a draft until you approve it. It is not sent with the calendar notice.
-              </p>
-            </div>
-          )}
           {(visibility === "family" || visibility === "family_read_only" || visibility === "just_me_and_kids") && (
             <div className="space-y-2">
               <Label

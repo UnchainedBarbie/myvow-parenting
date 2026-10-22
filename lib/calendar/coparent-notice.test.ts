@@ -2,10 +2,16 @@ import assert from "node:assert/strict";
 import {
   buildCalendarNotice,
   calendarChangeLabels,
+  calendarNoticeHref,
+  calendarNoticeLink,
   defaultNotifyCoparent,
   effectiveNotifyCoparent,
   noticeFingerprint,
+  noticeLocation,
   planCalendarNotice,
+  readCalendarEventRef,
+  viewerCanOpenCalendarEvent,
+  withCalendarEventRef,
 } from "@/lib/calendar/coparent-notice";
 import { eventSubjectFromTexts, resolveEventSubject } from "@/lib/sage/event-subject";
 
@@ -74,10 +80,104 @@ assert.deepEqual(created.recipientIds, ["parent-2"]);
 assert.equal(created.pendingInvite, true);
 assert.equal(created.notice?.type, "calendar_event");
 assert.match(created.notice?.message ?? "", /Ashley — Orthodontist Appointment/);
+assert.match(created.notice?.message ?? "", /Thu, Oct 22, 3:30 PM–4:00 PM/);
 assert.match(created.notice?.message ?? "", /Smile Orthodontics/);
-assert.match(created.notice?.message ?? "", /No email was sent/);
-assert.doesNotMatch(created.notice?.message ?? "", /received/);
+assert.doesNotMatch(created.notice?.message ?? "", /email|sms|received/i);
 assert.equal((created.notice?.message ?? "").includes(secret), false);
+assert.equal(
+  noticeLocation({
+    visibility: "family",
+    description: "Location: Smile Orthodontics\nBraces adjustment and private clinical note.",
+  }),
+  "Smile Orthodontics"
+);
+assert.equal(
+  noticeLocation({
+    visibility: "private",
+    description: "Location: Smile Orthodontics\nBraces adjustment and private clinical note.",
+  }),
+  null
+);
+const linked = withCalendarEventRef(created.notice?.message ?? "", "event-1");
+const shown = readCalendarEventRef(linked);
+assert.equal(shown.eventId, "event-1");
+assert.equal(shown.text.includes("[[calendar-event:"), false);
+assert.equal(
+  calendarNoticeHref({
+    visibility: "family",
+    eventId: "event-1",
+    start: "2026-10-22T21:30:00.000Z",
+    timezone: "America/Denver",
+  }),
+  "/calendar?event=event-1&year=2026&month=10"
+);
+assert.equal(
+  calendarNoticeHref({
+    visibility: "private",
+    eventId: "event-1",
+    start: "2026-10-22T21:30:00.000Z",
+  }),
+  null
+);
+assert.equal(
+  calendarNoticeHref({
+    visibility: "just_me_and_kids",
+    eventId: "event-1",
+    start: "2026-10-22T21:30:00.000Z",
+  }),
+  null
+);
+assert.equal(
+  viewerCanOpenCalendarEvent({
+    visibility: "private",
+    createdBy: "parent-1",
+    viewerId: "parent-2",
+    description: secret,
+  }),
+  false
+);
+assert.equal(
+  viewerCanOpenCalendarEvent({
+    visibility: "family",
+    createdBy: "parent-1",
+    viewerId: "parent-2",
+  }),
+  true
+);
+const privateLink = calendarNoticeLink({
+  message: linked,
+  viewerId: "parent-2",
+  memberCaseIds: ["case-1"],
+  timezone: "America/Denver",
+  event: {
+    id: "event-1",
+    caseId: "case-1",
+    visibility: "private",
+    createdBy: "parent-1",
+    description: secret,
+    start: "2026-10-22T21:30:00.000Z",
+    deleted: false,
+  },
+});
+assert.equal(privateLink.href, null);
+assert.equal(privateLink.text.includes(secret), false);
+const sharedLink = calendarNoticeLink({
+  message: linked,
+  viewerId: "parent-2",
+  memberCaseIds: ["case-1"],
+  timezone: "America/Denver",
+  event: {
+    id: "event-1",
+    caseId: "case-1",
+    visibility: "family",
+    createdBy: "parent-1",
+    description: "Location: Smile Orthodontics\nBraces adjustment and private clinical note.",
+    start: "2026-10-22T21:30:00.000Z",
+    deleted: false,
+  },
+});
+assert.equal(sharedLink.href, "/calendar?event=event-1&year=2026&month=10");
+assert.equal(sharedLink.text.includes("private clinical note"), false);
 
 const pendingOnly = planCalendarNotice({
   eventId: "event-1",

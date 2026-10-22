@@ -7,6 +7,7 @@ import { CalendarWithCustody } from "@/components/calendar/calendar-with-custody
 import { CalendarExportButton } from "@/components/calendar/calendar-export-button";
 import { CalendarYearView } from "@/components/calendar/calendar-year-view";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { safeEventId, viewerCanOpenCalendarEvent } from "@/lib/calendar/coparent-notice";
 
 function getMonthRange(year: number, month: number) {
   const start = new Date(year, month - 1, 1);
@@ -42,7 +43,7 @@ function getListRange() {
 export default async function CalendarPage({
   searchParams,
 }: {
-  searchParams: { year?: string; month?: string; view?: string; from?: string; to?: string };
+  searchParams: { year?: string; month?: string; view?: string; from?: string; to?: string; event?: string };
 }) {
   const supabase = await createClient();
   const {
@@ -336,10 +337,37 @@ export default async function CalendarPage({
       return true;
     })
     .map((e) => toEventRow(e));
-  const eventsForModal: CalendarEventRow[] = [
+  let eventsForModal: CalendarEventRow[] = [
     ...events,
     ...upcomingFullRows.filter((e) => !eventIdsInMonth.has(e.id)),
   ];
+  const requestedEventId = safeEventId(searchParams.event);
+  if (requestedEventId && !eventsForModal.some((event) => event.id === requestedEventId)) {
+    const { data: extra } = await admin
+      .from("calendar_events")
+      .select(
+        "id, title, description, event_type, child_id, start_time, end_time, all_day, status, visibility, kid_title, created_by, created_at, recurring_rule, deleted_at"
+      )
+      .eq("id", requestedEventId)
+      .eq("case_id", caseId)
+      .is("deleted_at", null)
+      .maybeSingle();
+    if (
+      extra &&
+      viewerCanOpenCalendarEvent({
+        visibility: (extra as { visibility?: string | null }).visibility,
+        createdBy: (extra as { created_by?: string | null }).created_by,
+        viewerId: user.id,
+        description: (extra as { description?: string | null }).description,
+      })
+    ) {
+      eventsForModal = [...eventsForModal, toEventRow(extra)];
+    }
+  }
+  const initialEventId =
+    requestedEventId && eventsForModal.some((event) => event.id === requestedEventId)
+      ? requestedEventId
+      : undefined;
 
   // Precompute event dates for year view (by YYYY-MM-DD key).
   const eventsByDateKey = new Set<string>();
@@ -451,6 +479,7 @@ export default async function CalendarPage({
                 holidays={holidays}
                 kidsLabelUser={kidsLabelUser}
                 kidsLabelCoparent={kidsLabelCoparent}
+                initialEventId={initialEventId}
               />
             </div>
           )}

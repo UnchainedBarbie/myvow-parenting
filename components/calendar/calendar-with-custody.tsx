@@ -93,6 +93,7 @@ interface CalendarWithCustodyProps {
   holidays?: HolidayCustodyRow[];
   kidsLabelUser?: string | null;
   kidsLabelCoparent?: string | null;
+  initialEventId?: string;
 }
 
 function getDefaultOverlayOn(): boolean {
@@ -120,6 +121,7 @@ export function CalendarWithCustody({
   appMode = null,
   kidsLabelUser = null,
   kidsLabelCoparent = null,
+  initialEventId,
 }: CalendarWithCustodyProps) {
   const [custodySchedule, setCustodySchedule] = useState<CustodyScheduleFromApi>(null);
   const [custodyOverrides, setCustodyOverrides] = useState<CustodyOverridesMap>({});
@@ -252,6 +254,7 @@ export function CalendarWithCustody({
       holidays={holidays}
       kidsLabelUser={kidsLabelUser}
       kidsLabelCoparent={kidsLabelCoparent}
+      initialEventId={initialEventId}
     />
   );
 }

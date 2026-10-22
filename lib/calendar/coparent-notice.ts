@@ -20,6 +20,8 @@ export type CalendarNoticeInput = {
   kind: "created" | "updated";
   changes?: string[];
   location?: string | null;
+  allDay?: boolean;
+  timezone?: string | null;
 };
 
 export type CalendarNotice = {
@@ -101,6 +103,165 @@ export function calendarChangeLabels(previous: {
   return labels;
 }
 
+const EVENT_REF = /\n\[\[calendar-event:([A-Za-z0-9_-]{1,80})\]\]\s*$/;
+
+export function safeEventId(eventId: string | null | undefined): string | null {
+  const id = (eventId ?? "").trim();
+  return /^[A-Za-z0-9_-]{1,80}$/.test(id) ? id : null;
+}
+
+/** A location line only. The rest of a description stays out of the notice. */
+export function noticeLocation(input: {
+  visibility: CalendarAudience | null | undefined;
+  location?: string | null;
+  description?: string | null;
+}): string | null {
+  if (!sharedWithCoparent(input.visibility)) return null;
+  const explicit = (input.location ?? "").trim();
+  const line = explicit || locationLine(input.description) || "";
+  return line ? line.slice(0, 120) : null;
+}
+
+function noticeZone(timezone: string | null | undefined): string {
+  const zone = (timezone ?? "").trim() || "America/Denver";
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: zone }).format(new Date());
+    return zone;
+  } catch {
+    return "America/Denver";
+  }
+}
+
+export function formatNoticeWhen(
+  start: string | null,
+  end: string | null,
+  allDay: boolean,
+  timezone: string | null | undefined
+): string {
+  if (!start) return "";
+  const startDate = new Date(start);
+  if (Number.isNaN(startDate.getTime())) return "";
+  const zone = noticeZone(timezone);
+  const day = new Intl.DateTimeFormat("en-US", {
+    timeZone: zone,
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  }).format(startDate);
+  if (allDay) return day;
+  const clock = new Intl.DateTimeFormat("en-US", {
+    timeZone: zone,
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(startDate);
+  if (!end) return `${day}, ${clock}`;
+  const endDate = new Date(end);
+  if (Number.isNaN(endDate.getTime())) return `${day}, ${clock}`;
+  const endClock = new Intl.DateTimeFormat("en-US", {
+    timeZone: zone,
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(endDate);
+  return `${day}, ${clock}–${endClock}`;
+}
+
+export function calendarNoticeHref(input: {
+  visibility: CalendarAudience | null | undefined;
+  eventId: string;
+  start: string | null;
+  timezone?: string | null;
+}): string | null {
+  if (!sharedWithCoparent(input.visibility)) return null;
+  const id = safeEventId(input.eventId);
+  if (!id) return null;
+  const params = new URLSearchParams();
+  params.set("event", id);
+  if (input.start) {
+    const when = new Date(input.start);
+    if (!Number.isNaN(when.getTime())) {
+      const parts = new Intl.DateTimeFormat("en-US", {
+        timeZone: noticeZone(input.timezone),
+        year: "numeric",
+        month: "numeric",
+      }).formatToParts(when);
+      const year = parts.find((part) => part.type === "year")?.value;
+      const month = parts.find((part) => part.type === "month")?.value;
+      if (year && month) {
+        params.set("year", year);
+        params.set("month", month);
+      }
+    }
+  }
+  return `/calendar?${params.toString()}`;
+}
+
+export function withCalendarEventRef(message: string, eventId: string): string {
+  const id = safeEventId(eventId);
+  if (!id) return message;
+  return `${message}\n[[calendar-event:${id}]]`;
+}
+
+export function readCalendarEventRef(message: string): { text: string; eventId: string | null } {
+  const match = message.match(EVENT_REF);
+  if (!match || match.index == null) return { text: message.trim(), eventId: null };
+  return { text: message.slice(0, match.index).trim(), eventId: match[1] };
+}
+
+export function calendarNoticeLink(input: {
+  message: string;
+  event: {
+    id: string;
+    caseId: string;
+    visibility: string | null;
+    createdBy: string | null;
+    description: string | null;
+    start: string | null;
+    deleted: boolean;
+  } | null;
+  viewerId: string;
+  memberCaseIds: string[];
+  timezone?: string | null;
+}): { text: string; href: string | null } {
+  const shown = readCalendarEventRef(input.message);
+  const event = input.event;
+  if (!shown.eventId || !event || event.id !== shown.eventId || !input.memberCaseIds.includes(event.caseId)) {
+    return { text: shown.text, href: null };
+  }
+  if (!viewerCanOpenCalendarEvent({
+    visibility: event.visibility,
+    createdBy: event.createdBy,
+    viewerId: input.viewerId,
+    description: event.description,
+    deleted: event.deleted,
+  })) {
+    return { text: shown.text, href: null };
+  }
+  return {
+    text: shown.text,
+    href: calendarNoticeHref({
+      visibility: event.visibility,
+      eventId: event.id,
+      start: event.start,
+      timezone: input.timezone,
+    }),
+  };
+}
+
+export function viewerCanOpenCalendarEvent(input: {
+  visibility: string | null | undefined;
+  createdBy: string | null | undefined;
+  viewerId: string;
+  description?: string | null;
+  deleted?: boolean;
+}): boolean {
+  if (input.deleted) return false;
+  const legacyPrivate = !input.visibility && (input.description ?? "").startsWith("[PRIVATE]");
+  if (input.visibility === "private" || input.visibility === "just_me_and_kids" || legacyPrivate) {
+    return input.createdBy === input.viewerId;
+  }
+  return sharedWithCoparent(input.visibility);
+}
+
 export function buildCalendarNotice(input: CalendarNoticeInput & {
   eventId: string;
   start: string | null;
@@ -108,19 +269,22 @@ export function buildCalendarNotice(input: CalendarNoticeInput & {
 }): CalendarNotice | null {
   if (!effectiveNotifyCoparent(input.visibility, input.choice)) return null;
   const title = input.title.trim().slice(0, 120) || "Calendar event";
-  const location = sharedWithCoparent(input.visibility) ? (input.location ?? "").trim() : "";
+  const location = noticeLocation({
+    visibility: input.visibility,
+    location: input.location,
+  });
   const changes = (input.changes ?? []).filter((label) => label === "date" || label === "time" || label === "location" || label === "title");
   const headline = input.kind === "created" ? "Calendar event added" : "Calendar event updated";
-  const detail = input.kind === "created"
-    ? `${title} was added to the calendar.`
-    : changes.length > 0
-      ? `${title} was updated. Changed: ${changes.join(", ")}.`
-      : `${title} was updated.`;
-  const place = location ? ` Location: ${location}.` : "";
+  const action = input.kind === "created" ? "was added" : "was updated";
+  const when = formatNoticeWhen(input.start, input.end, input.allDay === true, input.timezone);
+  const lines = [`${title} ${action}.`];
+  if (when) lines.push(when);
+  if (location) lines.push(`Location: ${location}.`);
+  if (input.kind === "updated" && changes.length > 0) lines.push(`Changed: ${changes.join(", ")}.`);
   return {
     type: "calendar_event",
     title: headline,
-    message: `${detail}${place} This is an in-app notice. No email was sent.`.slice(0, 500),
+    message: lines.join("\n").slice(0, 420),
     priority: "normal",
     fingerprint: noticeFingerprint({
       eventId: input.eventId,

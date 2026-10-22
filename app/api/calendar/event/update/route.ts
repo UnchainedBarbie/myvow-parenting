@@ -14,7 +14,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body: any = await request.json();
-    const { event_id, history, status, notify_coparent, draft_message, ...rest } = body;
+    const { event_id, history, status, notify_coparent, ...rest } = body;
 
     if (!event_id) {
       return NextResponse.json(
@@ -173,9 +173,7 @@ export async function POST(request: NextRequest) {
       | "parents_only"
       | "just_me_and_kids"
       | "private";
-    const askedAboutCoparent =
-      typeof notify_coparent === "boolean" ||
-      (typeof draft_message === "string" && draft_message.trim().length > 0);
+    const askedAboutCoparent = typeof notify_coparent === "boolean";
     let notice: Awaited<ReturnType<typeof saveCalendarCoparentNotice>> | null = null;
     if (caseId && askedAboutCoparent) {
       try {
@@ -193,6 +191,7 @@ export async function POST(request: NextRequest) {
           start: typeof saved.start_time === "string" ? saved.start_time : null,
           end: typeof saved.end_time === "string" ? saved.end_time : null,
           description: privateRecord ? null : savedDescription,
+          allDay: (saved as { all_day?: boolean }).all_day === true,
           previous: before
             ? {
                 title: (before as { title?: string | null }).title,
@@ -201,7 +200,6 @@ export async function POST(request: NextRequest) {
                 description: (before as { description?: string | null }).description,
               }
             : null,
-          draftMessage: typeof draft_message === "string" ? draft_message : null,
         });
       } catch (noticeError) {
         console.error(
@@ -218,7 +216,6 @@ export async function POST(request: NextRequest) {
           ? {
               coparent_notice: notice.status,
               coparent_pending_invite: notice.pendingInvite,
-              coparent_draft: notice.draft,
             }
           : {}),
         ...(historyRecorded === false && {

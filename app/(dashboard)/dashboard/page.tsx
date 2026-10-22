@@ -9,6 +9,8 @@ import { ReviewCard } from "@/components/dashboard/review-card";
 import { DashboardOnboardingGate } from "@/components/dashboard/dashboard-onboarding-gate";
 import { EventRequestsCard } from "@/components/dashboard/event-requests-card";
 import { OpenItemsSection } from "@/components/dashboard/open-items-section";
+import { CalendarNotices } from "@/components/dashboard/calendar-notices";
+import { loadCalendarNoticeCards } from "@/lib/calendar/load-calendar-notices";
 type TodayEvent = {
   id: string;
   title: string;
@@ -112,12 +114,15 @@ export default async function DashboardPage() {
     .eq("read", false)
     .order("created_at", { ascending: false });
 
+  const calendarCards = await loadCalendarNoticeCards(admin, user.id, timezone);
+
   if (!caseId) {
     const today = new Date();
     const todayLabel = formatDateLabel(today, timezone);
     const greeting = getGreetingLabel(profile?.full_name ?? null, timezone);
     return (
       <div className="px-3 pt-3 pb-1 md:px-4 md:pt-4 md:pb-2">
+        <CalendarNotices cards={calendarCards} />
         {safetyNotifications && safetyNotifications.length > 0 && (
           <div className="mb-4 space-y-2">
             {safetyNotifications.map((n) => (
@@ -499,6 +504,7 @@ export default async function DashboardPage() {
 
   return (
     <div className="px-3 pt-3 pb-1 md:px-4 md:pt-4 md:pb-2">
+      <CalendarNotices cards={calendarCards} />
       {safetyNotifications && safetyNotifications.length > 0 && (
         <div className="mb-4 space-y-2">
           {safetyNotifications.map((n) => (

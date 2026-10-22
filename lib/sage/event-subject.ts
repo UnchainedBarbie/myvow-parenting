@@ -16,8 +16,11 @@ const SUBJECTS = [
   "piano lesson",
   "dance recital",
   "parent teacher conference",
+  "orthodontist appointment",
   "dentist appointment",
   "doctor appointment",
+  "therapy appointment",
+  "ot appointment",
   "choir",
   "wrestling",
   "concert",
@@ -50,6 +53,16 @@ export function eventSubjectFromTexts(texts: string[]): string | null {
  * Keep a more specific earlier subject when this turn only repeated the head noun.
  * "concert" plus an earlier "choir concert" stays "choir concert".
  */
+/** Keep a stored subject when the latest text only repeats a shorter noun such as "appointment". */
+export function resolveEventSubject(
+  stored: string | null | undefined,
+  texts: string[]
+): string | null {
+  const extracted = eventSubjectFromTexts(texts);
+  const saved = (stored ?? "").trim();
+  return preferEventSubject(extracted, saved || null);
+}
+
 export function preferEventSubject(
   current: string | null,
   earlier: string | null

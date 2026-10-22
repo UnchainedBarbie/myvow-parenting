@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getServiceRoleClient } from "@/lib/supabase/server";
+import { saveCalendarCoparentNotice } from "@/lib/calendar/save-coparent-notice";
+import { effectiveNotifyCoparent } from "@/lib/calendar/coparent-notice";
 
 /**
  * Create calendar event. Service role for writes.
@@ -30,6 +32,8 @@ export async function POST(request: NextRequest) {
       visibility,
       source,
       source_message_id,
+      notify_coparent,
+      draft_message,
     } = body as {
       case_id?: string;
       title?: string;
@@ -45,6 +49,8 @@ export async function POST(request: NextRequest) {
       visibility?: "family" | "parents_only" | "just_me_and_kids" | "private";
       source?: "manual" | "email" | "photo";
       source_message_id?: string;
+      notify_coparent?: boolean;
+      draft_message?: string;
     };
     const titleValue = typeof title === "string" ? title.trim() : "";
     const startValue = typeof start_time === "string" ? start_time.trim() : "";
@@ -122,44 +128,42 @@ export async function POST(request: NextRequest) {
       // Ignore history failures so event creation is not blocked.
     }
 
-    // Attempt to store a notification record when creating a shared event and a co-parent exists.
-    if (!privateFlag) {
-      const { data: members } = await admin
-        .from("case_members")
-        .select("user_id, is_participating, external_email")
-        .eq("case_id", case_id)
-        .neq("user_id", user.id);
-
-      const recipients =
-        members?.filter(
-          (m: any) =>
-            m.user_id &&
-            (m.is_participating ?? true) &&
-            !m.external_email
-        ) ?? [];
-
-      if (recipients.length > 0) {
-        const notificationPayload = recipients.map((m: any) => ({
-          case_id,
-          event_id: event.id,
-          recipient_user_id: m.user_id,
-          type: "event_created",
-        }));
-        const { error: notifError }: any = await admin
-          .from("calendar_notifications")
-          .insert(notificationPayload);
-
-        // Ignore if the notifications table does not exist; surface other errors.
-        if (notifError && notifError.code && notifError.code !== "42P01") {
-          return NextResponse.json(
-            { message: notifError.message || "Notification insert failed" },
-            { status: 500 }
-          );
-        }
-      }
+    const noticeVisibility = privateFlag ? "private" : visibilityValue;
+    let notice: Awaited<ReturnType<typeof saveCalendarCoparentNotice>> = {
+      status: "skipped",
+      pendingInvite: false,
+      draft: null,
+    };
+    try {
+      notice = await saveCalendarCoparentNotice(admin, {
+      caseId: case_id,
+      eventId: event.id,
+      actorId: user.id,
+      visibility: noticeVisibility,
+      notify: effectiveNotifyCoparent(
+        noticeVisibility,
+        typeof notify_coparent === "boolean" ? notify_coparent : null
+      ),
+      kind: "created",
+      title: titleValue,
+      start: startValue,
+      end: typeof end_time === "string" ? end_time : null,
+      description: privateFlag ? null : descriptionValue,
+      draftMessage: typeof draft_message === "string" ? draft_message : null,
+    });
+    } catch (noticeError) {
+      console.error(
+        "[calendar/notice]",
+        noticeError instanceof Error ? noticeError.message : "notice failed"
+      );
     }
 
-    return NextResponse.json({ event_id: event.id });
+    return NextResponse.json({
+      event_id: event.id,
+      coparent_notice: notice.status,
+      coparent_pending_invite: notice.pendingInvite,
+      coparent_draft: notice.draft,
+    });
   } catch (e) {
     return NextResponse.json(
       { message: e instanceof Error ? e.message : "Create failed" },

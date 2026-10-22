@@ -212,6 +212,56 @@ assert.equal(therapyForm.visibility, "parents_only");
 assert.equal(therapyForm.kidTitle, undefined);
 assert.equal(therapyForm.eventType, "therapy");
 
+const orthoAsk = routeChatIntent({
+  message: "Ashley has an orthodontist appointment next Thursday.",
+  children,
+  timezone,
+  today,
+});
+assert.equal(orthoAsk.result.event_subject, "Orthodontist Appointment");
+assert.equal(orthoAsk.result.plan.proposals.some((p) => p.type === "calendar_update"), false);
+assert.equal(hasVisibleProposalCards(orthoAsk.result.plan.proposals), false);
+assert.equal(
+  deriveOpenItems([
+    {
+      id: "item-ortho-ask",
+      created_at: "2026-10-21T18:00:00Z",
+      source_type: "chat",
+      item_type: "calendar_event",
+      action_required: false,
+      plan: orthoAsk.result.plan,
+    },
+  ]).length,
+  0
+);
+
+const orthoReady = routeChatIntent({
+  message: "3:30 PM",
+  children,
+  timezone,
+  today,
+  conversation: {
+    thread_subject: "Orthodontist Appointment",
+    event: {
+      subject: "Orthodontist Appointment",
+      child: "Ashley",
+      date: "2026-10-22",
+      time: null,
+    },
+    open_proposals: [],
+  },
+});
+const orthoCard = orthoReady.result.plan.proposals.find((p) => p.type === "calendar_update");
+assert.ok(orthoCard);
+assert.equal(orthoCard.title, "Ashley — Orthodontist Appointment");
+assert.equal(orthoCard.category, "medical");
+assert.equal(orthoCard.requires_approval, true);
+assert.equal("executed" in orthoCard, false);
+assert.equal(orthoReady.result.plan.proposals.filter((p) => p.type === "calendar_update").length, 1);
+const orthoForm = buildCalendarInitialValues(item([ashley.id]), orthoCard as SageProposal);
+assert.equal(orthoForm.title, "Ashley — Orthodontist Appointment");
+assert.equal(orthoForm.eventType, "medical");
+
 const located = routeChatIntent({
   message: "It's at Smile Orthodontics, and we need to arrive 15 minutes early.",
   children,

@@ -5,7 +5,7 @@
 
 import { getServiceRoleClient } from "@/lib/supabase/server";
 import { savedEventPointer } from "@/lib/sage/calendar-chat";
-import { eventSubjectFromTexts, preferEventSubject } from "@/lib/sage/event-subject";
+import { eventSubjectFromTexts, preferEventSubject, resolveEventSubject } from "@/lib/sage/event-subject";
 import { parseClockMinutes, resolveDate } from "@/lib/sage/resolver";
 import {
   deriveWorkingMemory,
@@ -405,10 +405,7 @@ export async function loadConversationContext(
       if (!documentOnly && !child) child = childNamedIn(text);
     }
     if (!documentOnly) {
-      subject = preferEventSubject(
-        subject,
-        eventSubjectFromTexts([storedSubject, ...texts])
-      );
+      subject = preferEventSubject(subject, resolveEventSubject(storedSubject, texts));
     }
     if (!skipEventDate && !date) {
       const blob = texts.filter(Boolean).join(" ");

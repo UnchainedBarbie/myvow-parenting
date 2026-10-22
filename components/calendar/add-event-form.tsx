@@ -7,12 +7,36 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { FileText, Image, Trash2, Camera } from "lucide-react";
+import { showSuccessToast } from "@/components/ui/toaster";
+import { effectiveNotifyCoparent, sharedWithCoparent } from "@/lib/calendar/coparent-notice";
 
 const MAX_FILE_BYTES = 25 * 1024 * 1024; // 25MB
 const ACCEPT = "image/*,.pdf,application/pdf,.doc,.docx";
 const ACCEPT_LABEL = "PDF, JPG, PNG, DOCX, max 25MB";
 const TITLE_MAX = 120;
 const DESCRIPTION_MAX = 250;
+
+function coparentSaveSummary(data: {
+  coparent_notice?: string;
+  coparent_pending_invite?: boolean;
+  coparent_draft?: string | null;
+}): string | null {
+  const parts: string[] = [];
+  if (data.coparent_notice === "sent") {
+    parts.push("Your co-parent will see an in-app notice. No email was sent.");
+  } else if (data.coparent_notice === "already_sent") {
+    parts.push("This in-app notice was already saved.");
+  }
+  if (data.coparent_notice === "not_registered" || data.coparent_pending_invite) {
+    parts.push("An invited co-parent is not registered yet, so nothing was delivered to them.");
+  }
+  if (data.coparent_draft === "queued") {
+    parts.push("A message draft is waiting for your approval. It was not sent.");
+  } else if (data.coparent_draft === "not_registered") {
+    parts.push("A message draft was not created because your co-parent is not registered.");
+  }
+  return parts.length > 0 ? parts.join(" ") : null;
+}
 
 function formatSize(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
@@ -92,6 +116,7 @@ export type AddEventFormInitialValues = {
   kidTitle?: string;
   /** Applied on an update, such as canceled. */
   eventStatus?: string;
+  notifyCoparent?: boolean;
 };
 
 interface AddEventFormProps {
@@ -141,6 +166,10 @@ export function AddEventForm({
   const [kidTitle, setKidTitle] = useState(initialValues?.kidTitle ?? "");
   const [autoParentsOnlyHint, setAutoParentsOnlyHint] = useState(false);
   const [visibilityTouched, setVisibilityTouched] = useState(false);
+  const [notifyChoice, setNotifyChoice] = useState<boolean | null>(
+    typeof initialValues?.notifyCoparent === "boolean" ? initialValues.notifyCoparent : null
+  );
+  const [draftMessage, setDraftMessage] = useState("");
   const [sourceMessageId, setSourceMessageId] = useState<string | null>(null);
   const [photoUploading, setPhotoUploading] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -313,6 +342,8 @@ export function AddEventForm({
       setError("Please enter a start time.");
       return;
     }
+    const notifyCoparent = effectiveNotifyCoparent(visibility, notifyChoice);
+    const draft = sharedWithCoparent(visibility) ? draftMessage.trim() : "";
     const startTimeValue = allDay ? startTime.trim() || "00:00" : startTime;
     const endTimeValue = allDay ? "" : endTime || "";
     // date is "YYYY-MM-DD", times are "HH:mm" — interpret as LOCAL, convert to UTC
@@ -346,6 +377,8 @@ export function AddEventForm({
               kid_title: kidTitle.trim() || null,
               ...(initialValues?.eventStatus ? { status: initialValues.eventStatus } : {}),
               recurring_rule: isRepeating ? repeat : null,
+              notify_coparent: notifyCoparent,
+              ...(draft ? { draft_message: draft } : {}),
             }),
           })
         : await fetch("/api/calendar/create", {
@@ -365,10 +398,14 @@ export function AddEventForm({
               recurring_rule: isRepeating ? repeat : undefined,
               kid_title: kidTitle.trim() || undefined,
               ...(sourceMessageId && { source: "photo", source_message_id: sourceMessageId }),
+              notify_coparent: notifyCoparent,
+              ...(draft ? { draft_message: draft } : {}),
             }),
           });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || data.error || "Save failed");
+      const summary = coparentSaveSummary(data);
+      if (summary) showSuccessToast(summary, 8000);
       const eventId = editingId || (data.event_id as string | undefined);
       if (onSuccess && eventId) {
         await onSuccess(eventId);
@@ -638,6 +675,44 @@ export function AddEventForm({
               {visibility === "private" && "Only you can see this."}
             </p>
           </div>
+          <label className="flex items-start gap-2 text-xs text-foreground">
+            <input
+              type="checkbox"
+              className="mt-0.5 rounded border-border"
+              checked={effectiveNotifyCoparent(visibility, notifyChoice)}
+              disabled={!sharedWithCoparent(visibility)}
+              onChange={(e) => setNotifyChoice(e.target.checked)}
+            />
+            <span>
+              Notify co-parent about this event
+              <span className="block text-[11px] text-foreground-secondary">
+                On when your co-parent can see the event, and off for a private event.
+                After the event is saved, they get an in-app notice. No email is sent.
+              </span>
+            </span>
+          </label>
+          {sharedWithCoparent(visibility) && (
+            <div className="space-y-2">
+              <Label htmlFor="coparent-draft" className="text-xs font-medium">
+                Draft a separate message (optional)
+              </Label>
+              <textarea
+                id="coparent-draft"
+                value={draftMessage}
+                onChange={(e) => setDraftMessage(e.target.value)}
+                placeholder="Write a note to review before anything is sent"
+                rows={3}
+                className={cn(
+                  "flex w-full rounded-card border border-input bg-background px-2 py-1 text-xs",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                  "min-h-[64px] resize-y"
+                )}
+              />
+              <p className="text-[11px] text-foreground-secondary">
+                This stays a draft until you approve it. It is not sent with the calendar notice.
+              </p>
+            </div>
+          )}
           {(visibility === "family" || visibility === "family_read_only" || visibility === "just_me_and_kids") && (
             <div className="space-y-2">
               <Label

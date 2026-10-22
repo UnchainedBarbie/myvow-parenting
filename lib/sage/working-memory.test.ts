@@ -102,9 +102,9 @@ const expenseCard = expense.result.plan.proposals[0];
 assert.equal(expenseCard.amount, 40);
 assert.equal(expenseCard.stated_percent, 50);
 assert.equal(expenseCard.requires_approval, true);
-assert.notEqual(expenseCard.executed, true);
+assert.equal("executed" in expenseCard, false);
 assert.equal(expenseCard.calendar_event_id ?? null, null);
-assert.equal(expenseCard.result_expense_id ?? null, null);
+assert.equal("result_expense_id" in expenseCard, false);
 assert.equal(shouldPreserveOpenWork(expenseMessage, calendarMemory, expense.result.plan.proposals), true);
 const stillOpen = deriveWorkingMemory(calendarSources);
 assert.equal(stillOpen.clarification?.proposalId, "ask-1");
@@ -254,7 +254,7 @@ assert.equal(
 const missed = settleParentChatPlan(
   {
     status: "no_action",
-    proposals: [{ type: "note_only", draft: "Got it — noted." }],
+    proposals: [{ type: "note_only" }],
     reasoning: "No matching action route — note only.",
   },
   calendarMemory

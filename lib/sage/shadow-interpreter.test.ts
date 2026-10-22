@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { routeChatIntent } from "@/lib/sage/chat-intent";
 import type { ConversationContext } from "@/lib/sage/conversation-context";
+import type { SearchableDocument } from "@/lib/sage/document-search";
 import {
   buildShadowPacket,
   compareSnapshots,
@@ -183,7 +184,7 @@ function evaluate(message: string, extra: Omit<ShadowTurnInput, "message" | "rou
       visibility: "family",
       createdBy: "parent-1",
     })),
-    documents: extra.documents ?? documents,
+    documents: searchableDocuments(extra.documents ?? documents),
     viewerId: extra.viewerId ?? "parent-1",
     viewerRole: extra.viewerRole ?? "parent",
     timezone,
@@ -208,9 +209,9 @@ function evaluate(message: string, extra: Omit<ShadowTurnInput, "message" | "rou
   assert.ok(validated, message);
   const comparison = compareSnapshots(routerSnapshot(input.router), validated);
   for (const proposal of routed.result.plan.proposals) {
-    assert.notEqual(proposal.executed, true);
+    assert.equal("executed" in proposal, false);
     assert.equal(proposal.requires_approval, true);
-    assert.equal(proposal.type === "reply_coparent" && proposal.executed === true, false);
+    assert.equal(proposal.type === "reply_coparent" && "executed" in proposal, false);
   }
   const prompt = packet.prompt;
   assert.equal(prompt.includes(message) || message.trim() === "", true);
@@ -221,6 +222,20 @@ function evaluate(message: string, extra: Omit<ShadowTurnInput, "message" | "rou
   assert.equal(prompt.includes(hiddenId), false);
   assert.equal(prompt.includes("child-ashley"), false);
   return { routed, packet, validated, comparison, prompt };
+}
+
+function searchableDocuments(docs: NonNullable<ShadowTurnInput["documents"]>): SearchableDocument[] {
+  return docs.map((doc) => ({
+    id: doc.id,
+    title: doc.title,
+    description: doc.description ?? "",
+    category: doc.category,
+    fileName: doc.fileName,
+    childIds: doc.childIds,
+    createdAt: doc.createdAt,
+    visibility: doc.visibility,
+    uploadedBy: doc.uploadedBy,
+  }));
 }
 
 function conversationFrom(extra: Omit<ShadowTurnInput, "message" | "router">): ConversationContext | undefined {
@@ -546,7 +561,7 @@ async function transport() {
 const logged: string[] = [];
 const compared = await runShadowInterpreter(baseInput, {
   enabled: true,
-  env: { ANTHROPIC_API_KEY: "test-key" },
+  env: { ANTHROPIC_API_KEY: "test-key", NODE_ENV: "test" },
   fetchImpl: async (_url, init) => {
     const body = JSON.parse(String(init?.body));
     assert.equal(body.tool_choice.type, "tool");

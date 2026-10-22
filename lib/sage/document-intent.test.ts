@@ -503,6 +503,7 @@ async function main() {
     pendingDocument: saved,
     today,
   });
+  assert.equal(fileOntoPending.kind, "document");
   assert.equal(fileOntoPending.revisesExisting, true);
   assert.equal(fileOntoPending.result?.plan.proposals.length, 1);
   assert.equal(fileOntoPending.result?.plan.proposals[0]?.attached_document_id, "doc-1");

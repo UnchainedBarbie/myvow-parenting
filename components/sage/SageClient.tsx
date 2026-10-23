@@ -26,6 +26,7 @@ import {
 import { SageAgreeFormModal } from "@/components/sage/sage-agree-form-modal";
 import type { SageItem, SagePlan, SageProposal } from "@/components/sage/proposal-types";
 import { DOCUMENT_ACCEPT, DOCUMENT_ACCEPT_LABEL, documentFileProblem } from "@/lib/documents-files";
+import { attachmentInstruction, mentionsSeveralChildren } from "@/lib/sage/attachment-role";
 import { SageOriginalMessage } from "@/components/sage/sage-original-message";
 import { interpretDocumentTurn } from "@/lib/sage/document-intent";
 import { splitDocumentAnswer } from "@/lib/sage/document-search";
@@ -845,19 +846,25 @@ export function SageClient({
     cid: string
   ): Promise<ChatAttachedDoc> {
     const caption = draft.trim();
-    const filing = interpretDocumentTurn({
-      text: caption,
-      fileName: file.name,
-      fileMime: file.type,
-      fileSize: file.size,
-      children: childrenList.map((child) => ({ id: child.id, name: child.first_name })),
-      pending: null,
-      filed: null,
-      today: new Date(),
-      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "America/Denver",
-    });
+    const instruction = attachmentInstruction(caption);
+    const keepForMessage = instruction === "message" || instruction === "summarize";
+    const filing = keepForMessage
+      ? { action: "none" as const }
+      : interpretDocumentTurn({
+          text: caption,
+          fileName: file.name,
+          fileMime: file.type,
+          fileSize: file.size,
+          children: childrenList.map((child) => ({ id: child.id, name: child.first_name })),
+          pending: null,
+          filed: null,
+          today: new Date(),
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "America/Denver",
+        });
     const filed =
       filing.action === "create" || filing.action === "revise" ? filing.proposal : null;
+    const namedChild =
+      filed?.childId && !mentionsSeveralChildren(caption) ? filed.childId : null;
     const receipt = /\b(receipt|invoice|expense)\b/i.test(`${caption} ${file.name}`);
     const formData = new FormData();
     formData.set("file", file);
@@ -871,7 +878,7 @@ export function SageClient({
       "description",
       (filed?.description || (receipt ? "Receipt attached in Sage chat." : "File attached in Sage chat.")).slice(0, 600)
     );
-    if (filed?.childId) formData.append("child_ids", filed.childId);
+    if (namedChild) formData.append("child_ids", namedChild);
     formData.set("status", "pending");
     const res = await fetch("/api/documents/upload", {
       method: "POST",

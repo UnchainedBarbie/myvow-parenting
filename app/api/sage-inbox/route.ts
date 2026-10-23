@@ -720,6 +720,7 @@ export async function POST(req: NextRequest) {
           recipientEmail,
           subject: p.subject ?? null,
           proposalId: (p.id ?? "").trim() || null,
+          attachmentDocumentId: (p.attached_document_id ?? "").trim() || null,
         });
         if (!sent.ok) {
           proposals[idx] = { ...p };

@@ -1,5 +1,6 @@
 import { ServerClient, Message, Header } from "postmark";
 import type { getServiceRoleClient } from "@/lib/supabase/server";
+import { messageAttachmentDecision } from "@/lib/sage/attachment-role";
 import { estimateIntensity } from "@/lib/sage/intensity";
 
 type Admin = ReturnType<typeof getServiceRoleClient>;
@@ -123,6 +124,7 @@ export async function deliverParentMessage(
     recipientEmail: string;
     subject?: string | null;
     proposalId?: string | null;
+    attachmentDocumentId?: string | null;
   }
 ): Promise<
   | { ok: true; messageId: string; deliveryStatus: "sent" | "delivered"; recipientEmail: string }
@@ -167,6 +169,14 @@ export async function deliverParentMessage(
     };
   }
   const messageId = (inserted.data as { id: string }).id;
+  await linkApprovedAttachment(admin, {
+    messageId,
+    caseId: input.caseId,
+    senderId: input.senderId,
+    recipientEmail,
+    documentId: input.attachmentDocumentId ?? null,
+    conversationId: conversation?.id ?? null,
+  });
   let deliveryStatus: "sent" | "delivered" = "sent";
 
   const { data: caseRow } = await admin
@@ -226,4 +236,82 @@ export async function deliverParentMessage(
   }
 
   return { ok: true, messageId, deliveryStatus, recipientEmail };
+}
+
+async function linkApprovedAttachment(
+  admin: Admin,
+  input: {
+    messageId: string;
+    caseId: string;
+    senderId: string;
+    recipientEmail: string;
+    documentId: string | null;
+    conversationId: string | null;
+  }
+): Promise<void> {
+  const documentId = (input.documentId ?? "").trim();
+  if (!documentId) return;
+  const { data: doc } = await admin
+    .from("documents")
+    .select("id, case_id, uploaded_by, visibility, status, file_name, deleted_at")
+    .eq("id", documentId)
+    .maybeSingle();
+  if (!doc || (doc as { deleted_at?: string | null }).deleted_at) return;
+  const row = doc as {
+    case_id?: string | null;
+    uploaded_by?: string | null;
+    visibility?: string | null;
+    status?: string | null;
+    file_name?: string | null;
+  };
+  const { data: members } = await admin
+    .from("case_members")
+    .select("user_id, role")
+    .eq("case_id", input.caseId)
+    .eq("role", "parent");
+  const recipientEmail = input.recipientEmail.trim().toLowerCase();
+  const memberIds = ((members ?? []) as { user_id?: string | null; role?: string | null }[])
+    .map((member) => (member.user_id ?? "").trim())
+    .filter((id) => id && id !== input.senderId);
+  const users = memberIds.length
+    ? (
+        await admin.from("users").select("id, email").in("id", memberIds)
+      ).data
+    : [];
+  const recipient = ((users ?? []) as { id?: string; email?: string | null }[]).find(
+    (user) => (user.email ?? "").trim().toLowerCase() === recipientEmail
+  );
+  const member = ((members ?? []) as { user_id?: string | null; role?: string | null }[]).find(
+    (item) => (item.user_id ?? "").trim() === (recipient?.id ?? "")
+  );
+  const decision = messageAttachmentDecision({
+    documentCaseId: row.case_id ?? "",
+    messageCaseId: input.caseId,
+    uploadedBy: row.uploaded_by ?? "",
+    senderId: input.senderId,
+    visibility: row.visibility ?? null,
+    status: row.status ?? null,
+    fileName: row.file_name ?? "",
+    recipientUserId: recipient?.id ?? null,
+    recipientRole: member?.role ?? null,
+    recipientOnCase: Boolean(recipient?.id),
+  });
+  if (!decision.link) return;
+  const { error } = await admin.from("message_documents").insert({
+    message_id: input.messageId,
+    document_id: documentId,
+  });
+  if (error) {
+    console.error("[deliver-parent-message] message_documents", error.message);
+    return;
+  }
+  await admin.from("messages").update({ has_attachments: true }).eq("id", input.messageId);
+  if (input.conversationId) {
+    await admin.from("conversation_attachments").insert({
+      conversation_id: input.conversationId,
+      attachment_id: documentId,
+      attachment_type: "document",
+      created_by: input.senderId,
+    });
+  }
 }

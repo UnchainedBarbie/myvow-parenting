@@ -275,6 +275,11 @@ export function ProposalCardList({
                     {p.subject ? ` · ${p.subject}` : ""}
                   </p>
                 ) : null}
+                {p.attached_file_name ? (
+                  <p className="text-[11px] leading-snug text-foreground-secondary break-words">
+                    Attachment: {p.attached_file_name}
+                  </p>
+                ) : null}
                 <p
                   className={cn(
                     "text-[12px] leading-snug text-foreground",

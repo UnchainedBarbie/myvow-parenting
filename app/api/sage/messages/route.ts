@@ -1138,6 +1138,7 @@ export async function POST(request: NextRequest) {
     if (caseId) {
       try {
         if (reentry) {
+          const coparents = await loadKnownCoparents(admin, caseId, user.id);
           const processed = await processChatAttachment({
             caseId,
             timezone,
@@ -1146,6 +1147,7 @@ export async function POST(request: NextRequest) {
             classify: reentry.classify,
             attachment: reentry.attachment,
             forcedType: reentry.forcedType,
+            coparents,
           });
           if (processed.reply.trim()) sageContent = processed.reply;
           observeAttachmentTurn({
@@ -1180,6 +1182,7 @@ export async function POST(request: NextRequest) {
           const priorText = sessionId
             ? await previousFilingText(admin, sessionId, user.id, userContent)
             : "";
+          const coparents = await loadKnownCoparents(admin, caseId, user.id);
           const processed = await processChatAttachment({
             caseId,
             timezone,
@@ -1191,6 +1194,7 @@ export async function POST(request: NextRequest) {
             children: calendarContext.children,
             pendingDocument: pendingDocument(attachmentContext) ?? latestOpenDocument,
             filedDocument: attachmentContext?.recent_document ?? null,
+            coparents,
             today: new Date(),
           });
           if (processed.reply.trim()) sageContent = processed.reply;

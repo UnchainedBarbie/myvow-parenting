@@ -22,12 +22,15 @@ export async function GET(
     const admin = getServiceRoleClient();
     const { data: doc, error: docErr } = await admin
       .from("documents")
-      .select("id, case_id, storage_path, file_name, visibility, uploaded_by")
+      .select("id, case_id, storage_path, file_name, visibility, uploaded_by, status")
       .eq("id", id)
-      .eq("status", "active")
       .is("deleted_at", null)
       .single();
     if (docErr || !doc) return NextResponse.json({ error: "Document not found" }, { status: 404 });
+    const status = String((doc as { status?: string | null }).status ?? "");
+    if (status !== "active" && status !== "pending") {
+      return NextResponse.json({ error: "Document not found" }, { status: 404 });
+    }
 
     const { data: membership } = await admin
       .from("case_members")
@@ -36,13 +39,28 @@ export async function GET(
       .eq("user_id", user.id)
       .maybeSingle();
     if (!membership) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    if (
-      !documentAuthorizedForViewer(
-        { visibility: doc.visibility as string | null, uploadedBy: doc.uploaded_by as string | null },
-        { userId: user.id, role: membership.role as string | null }
-      )
-    ) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    const allowed = documentAuthorizedForViewer(
+      { visibility: doc.visibility as string | null, uploadedBy: doc.uploaded_by as string | null },
+      { userId: user.id, role: membership.role as string | null }
+    );
+    if (!allowed) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    if (status === "pending" && doc.uploaded_by !== user.id) {
+      const { data: link } = await admin
+        .from("message_documents")
+        .select("message_id")
+        .eq("document_id", id)
+        .limit(1)
+        .maybeSingle();
+      const messageId = (link as { message_id?: string } | null)?.message_id;
+      if (!messageId) return NextResponse.json({ error: "Document not found" }, { status: 404 });
+      const { data: message } = await admin
+        .from("messages")
+        .select("case_id")
+        .eq("id", messageId)
+        .maybeSingle();
+      if ((message as { case_id?: string } | null)?.case_id !== doc.case_id) {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
     }
 
     const downloadName = originalDocumentName(String(doc.file_name ?? "")) || "document";

@@ -10,10 +10,20 @@ import { processChatMessage } from "@/lib/sage/chat";
 import { buildObservationFromChat } from "@/lib/sage/observation-builder";
 import type { ProcessObservationResult } from "@/lib/sage/process-observation";
 import {
+  attachedMessageDraft,
+  attachedMessageRecipient,
+  attachmentCanBeSent,
+  attachmentInstruction,
+  childNamedInInstruction,
+  mentionsSeveralChildren,
+} from "@/lib/sage/attachment-role";
+import type { KnownCoparent } from "@/lib/sage/chat-intent";
+import {
   attachmentFilingText,
   attachmentRouteKind,
   attachmentShouldBeCalendar,
   interpretDocumentTurn,
+  isDocumentEdit,
   isDocumentFilingRequest,
   type DocumentProposalState,
   type KnownDocumentChild,
@@ -26,6 +36,7 @@ export type ChatAttachmentMeta = {
   document_id: string;
   file_name: string;
   url: string;
+  visibility?: string | null;
 };
 
 export type ForcedAttachType = "expense" | "event" | "document";
@@ -60,6 +71,20 @@ export type ChatAttachmentProcessResult =
       attachment: ChatAttachmentMeta;
       reply: string;
       result: ProcessObservationResult;
+    }
+  | {
+      kind: "message";
+      classify: ClassifyPayload;
+      attachment: ChatAttachmentMeta;
+      reply: string;
+      result: ProcessObservationResult;
+    }
+  | {
+      kind: "explain";
+      classify: ClassifyPayload;
+      attachment: ChatAttachmentMeta;
+      reply: string;
+      result: null;
     };
 
 type AdminClient = ReturnType<typeof getServiceRoleClient>;
@@ -157,7 +182,7 @@ export async function loadAndClassifyDocument(opts: {
   const { admin, userId, caseId, documentId } = opts;
   const { data: doc, error } = await admin
     .from("documents")
-    .select("id, case_id, uploaded_by, storage_path, file_name, mime_type")
+    .select("id, case_id, uploaded_by, storage_path, file_name, mime_type, visibility")
     .eq("id", documentId)
     .maybeSingle();
   if (error || !doc) {
@@ -211,6 +236,7 @@ export async function loadAndClassifyDocument(opts: {
       document_id: doc.id as string,
       file_name: fileName,
       url: `/api/documents/${doc.id}/download`,
+      visibility: (doc.visibility as string | null) ?? null,
     },
   };
 }
@@ -404,6 +430,176 @@ function buildDocumentProposalResult(input: {
   };
 }
 
+function withoutUnnamedChild(
+  filing: DocumentProposalState | null,
+  caption: string,
+  children: KnownDocumentChild[]
+): DocumentProposalState | null {
+  if (!filing || !mentionsSeveralChildren(caption)) return filing;
+  if (childNamedInInstruction(caption, children)) return filing;
+  const title = filing.title.includes(" — ") ? filing.title.split(" — ").slice(1).join(" — ") : filing.title;
+  return {
+    ...filing,
+    title,
+    childId: null,
+    childName: null,
+    description: filing.description.replace(/\s+for\s+[A-Z][a-z]+\.?$/, "").trim() || filing.description,
+  };
+}
+
+function attachmentFields(attachment: ChatAttachmentMeta): Pick<
+  Proposal,
+  "attached_document_id" | "attached_file_name" | "attached_file_url"
+> {
+  return {
+    attached_document_id: attachment.document_id,
+    attached_file_name: attachment.file_name,
+    attached_file_url: attachment.url,
+  };
+}
+
+function explainAttachment(
+  opts: Parameters<typeof processChatAttachment>[0],
+  reply: string
+): ChatAttachmentProcessResult {
+  return {
+    kind: "explain",
+    classify: opts.classify,
+    attachment: opts.attachment,
+    reply,
+    result: null,
+  };
+}
+
+function directedAttachmentResult(
+  opts: Parameters<typeof processChatAttachment>[0],
+  instruction: "summarize" | "message" | "save_and_message"
+): ChatAttachmentProcessResult | null {
+  const fileName = opts.attachment.file_name;
+  if (instruction === "summarize") {
+    const readable = opts.classify.contentsRead !== false && opts.classify.description.trim();
+    if (!readable) {
+      return explainAttachment(
+        opts,
+        `I can't summarize ${fileName} because I haven't read its contents. I can save it in Documents, or attach it to a message, once you ask me to.`
+      );
+    }
+    return explainAttachment(opts, opts.classify.description.trim());
+  }
+  if (!attachmentCanBeSent(fileName)) {
+    return explainAttachment(
+      opts,
+      `I can't attach ${fileName} to a message. I can only send PDF, image, Word, Excel, CSV, and text files.`
+    );
+  }
+  if ((opts.attachment.visibility ?? "").toLowerCase() === "private") {
+    return explainAttachment(
+      opts,
+      "This file is private, so your co-parent can't open it. I haven't sent anything."
+    );
+  }
+  const recipient = attachedMessageRecipient(opts.caption, opts.coparents ?? []);
+  const proposals: Proposal[] = [];
+  if (instruction === "save_and_message") {
+    const saved = buildDocumentProposalResult({
+      classify: { ...opts.classify, contentsRead: false, description: "" },
+      attachment: opts.attachment,
+      caption: opts.caption,
+      sourceId: opts.sourceId,
+      filing: null,
+    });
+    const document = saved.plan.proposals[0];
+    if (document) proposals.push({ ...document, requires_approval: true });
+  }
+  if (recipient.kind === "clarify") {
+    proposals.push({
+      type: "ask_clarification",
+      draft: recipient.reply,
+      depends_on: null,
+      requires_approval: true,
+      audience: "parent",
+      clarifies: "message",
+      ...attachmentFields(opts.attachment),
+    });
+  } else {
+    const email = recipient.coparent.email?.trim() || "";
+    if (!email) {
+      proposals.push({
+        type: "ask_clarification",
+        draft: `I don't have a delivery email for ${recipient.coparent.name}. Add one and I can prepare the message.`,
+        depends_on: null,
+        requires_approval: true,
+        audience: "parent",
+        clarifies: "message",
+        recipient_name: recipient.coparent.name,
+        ...attachmentFields(opts.attachment),
+      });
+    } else {
+      proposals.push({
+        type: "reply_coparent",
+        draft: attachedMessageDraft(opts.caption, fileName),
+        depends_on: null,
+        requires_approval: true,
+        recipient_name: recipient.coparent.name,
+        recipient_email: email,
+        subject: null,
+        ...attachmentFields(opts.attachment),
+      });
+    }
+  }
+  const message = proposals.find((proposal) => proposal.type === "reply_coparent");
+  const saved = proposals.some((proposal) => proposal.type === "log_document");
+  const reply = message?.recipient_name
+    ? saved
+      ? `I prepared a message to ${message.recipient_name} with ${fileName} attached, and a separate save in Documents. Nothing is sent or filed until you approve each one.`
+      : `Here is a message to ${message.recipient_name} with ${fileName} attached. Nothing is sent until you choose Send.`
+    : proposals.find((proposal) => proposal.type === "ask_clarification")?.draft ??
+      "Who should I send that to?";
+  const observation = buildObservationFromChat(opts.caption.trim() || reply, { id: opts.sourceId });
+  return {
+    kind: "message",
+    classify: opts.classify,
+    attachment: opts.attachment,
+    reply,
+    result: {
+      observation,
+      interpretation: {
+        intent: {
+          item_type: "message",
+          domain: "message",
+          summary: reply,
+          evidence_excerpt: fileName,
+          tool_name: "messaging",
+          action_required: true,
+          action_type: "review",
+          urgency: "normal",
+          confidence: opts.classify.confidence,
+        },
+        entities: {
+          children: [],
+          people: message?.recipient_name ? [{ name: message.recipient_name, confidence: 0.9 }] : [],
+          dates: [],
+          amounts: [],
+          merchants: [],
+          providers: [],
+          documents: [{ name: fileName }],
+        },
+        reasoning: { signals: ["co-parent message with attachment"] },
+      },
+      child_ids: [],
+      unresolved_children: [],
+      resolved_dates: [],
+      plan: {
+        status: proposals.every((proposal) => proposal.type === "ask_clarification")
+          ? "awaiting_clarification"
+          : "ready",
+        reasoning: "The attachment follows the parent's instruction. Nothing is sent or filed until approved.",
+        proposals,
+      },
+    },
+  };
+}
+
 export async function processChatAttachment(opts: {
   caseId: string;
   timezone: string;
@@ -418,15 +614,28 @@ export async function processChatAttachment(opts: {
   children?: KnownDocumentChild[];
   pendingDocument?: DocumentProposalState | null;
   filedDocument?: DocumentProposalState | null;
+  coparents?: KnownCoparent[];
   today?: Date;
 }): Promise<ChatAttachmentProcessResult> {
+  const instruction = attachmentInstruction(opts.caption);
+  if (
+    opts.forcedType == null &&
+    (instruction === "summarize" || instruction === "message" || instruction === "save_and_message")
+  ) {
+    const directed = directedAttachmentResult(opts, instruction);
+    if (directed) return directed;
+  }
+  const pendingDocument =
+    instruction === "save" && isDocumentFilingRequest(opts.caption) && !isDocumentEdit(opts.caption)
+      ? null
+      : opts.pendingDocument;
   let routed =
     opts.forcedType ??
     attachmentRouteKind({
       caption: opts.caption,
       fileName: opts.attachment.file_name,
       classifyType: opts.classify.type,
-      pendingDocument: Boolean(opts.pendingDocument),
+      pendingDocument: Boolean(pendingDocument),
     });
   const unread = opts.classify.contentsRead === false;
   if (unread && opts.forcedType == null) {
@@ -460,14 +669,17 @@ export async function processChatAttachment(opts: {
       text,
       fileName: opts.attachment.file_name,
       children: opts.children ?? [],
-      pending: opts.pendingDocument ?? null,
+      pending: pendingDocument ?? null,
       filed: opts.filedDocument ?? null,
       today: opts.today ?? new Date(),
       timezone: opts.timezone,
       incomingDocumentId: opts.attachment.document_id,
     });
-    const filing =
-      interpreted.action === "create" || interpreted.action === "revise" ? interpreted.proposal : null;
+    const filing = withoutUnnamedChild(
+      interpreted.action === "create" || interpreted.action === "revise" ? interpreted.proposal : null,
+      opts.caption,
+      opts.children ?? []
+    );
     const result = buildDocumentProposalResult({
       classify: opts.classify,
       attachment: opts.attachment,

@@ -11,6 +11,12 @@ import { recordEmailIntake } from "@/lib/messages/record-email-intake";
 import { resolveInboundSender } from "@/lib/messages/resolve-inbound-sender";
 import { resolveIntakeCase } from "@/lib/messages/resolve-intake-case";
 import {
+  decideInboundAttachment,
+  inboundDeliveryAction,
+  type AttachmentNotice,
+} from "@/lib/messages/inbound-attachment";
+import { originalDocumentName } from "@/lib/documents-files";
+import {
   processInboundMessageForSage,
   resolveVisibleTo,
 } from "@/lib/sage/process-inbox-item";
@@ -20,14 +26,6 @@ export const runtime = "nodejs";
 export const maxDuration = 60;
 
 const DOCUMENTS_BUCKET = "documents";
-const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024; // 10MB
-const ALLOWED_ATTACHMENT_TYPES = [
-  "application/pdf",
-  "image/jpeg",
-  "image/jpg",
-  "image/png",
-  "image/webp",
-];
 
 
 function mailboxList(value: string | null | undefined, ingestAddress: string | null): string | null {
@@ -405,36 +403,27 @@ async function storePendingDocuments(opts: {
   emailIntakeId: string;
   subject: string;
   attachments: PostmarkAttachment[];
-}): Promise<{ id: string; storagePath: string; filename: string }[]> {
+}): Promise<{
+  stored: { id: string; storagePath: string; filename: string }[];
+  failed: AttachmentNotice[];
+}> {
   const { admin, caseId, uploadedBy, emailIntakeId, subject, attachments } = opts;
-  const created: { id: string; storagePath: string; filename: string }[] = [];
+  const stored: { id: string; storagePath: string; filename: string }[] = [];
+  const failed: AttachmentNotice[] = [];
   const usedPaths = new Set<string>();
   const description = subject.trim() || "";
   for (const att of attachments) {
-    const filename = (att.Name ?? "attachment").toString().slice(0, 255);
-    const contentType = (att.ContentType ?? "application/octet-stream").toString();
-
-    if (!ALLOWED_ATTACHMENT_TYPES.includes(contentType)) {
-      console.log(`[ingest-attach] skipped type=${contentType} file=${filename}`);
+    const decision = decideInboundAttachment({
+      name: att.Name,
+      contentType: att.ContentType,
+      contentBase64: att.Content,
+    });
+    if (!decision.ok) {
+      console.log(`[ingest-attach] rejected file=${decision.filename} reason=${decision.reason}`);
+      failed.push({ filename: decision.filename, reason: decision.reason });
       continue;
     }
-    if (!att.Content || typeof att.Content !== "string") {
-      console.error(`[ingest-attach] no content file=${filename}`);
-      continue;
-    }
-
-    let buf: Buffer;
-    try {
-      buf = Buffer.from(att.Content, "base64");
-    } catch (e) {
-      console.error("[ingest-attach] failed to decode base64:", e);
-      continue;
-    }
-    if (buf.length > MAX_ATTACHMENT_BYTES) {
-      console.error(`[ingest-attach] too large file=${filename}`);
-      continue;
-    }
-
+    const filename = decision.filename;
     try {
       const safeName = filename.replace(/[^a-zA-Z0-9.-]/g, "_");
       let timestamp = Date.now();
@@ -447,9 +436,11 @@ async function storePendingDocuments(opts: {
 
       const { error: uploadError } = await admin.storage
         .from(DOCUMENTS_BUCKET)
-        .upload(storagePath, buf, { contentType, upsert: false });
+        .upload(storagePath, decision.bytes, { contentType: decision.mimeType, upsert: false });
       if (uploadError) {
+        const reason = uploadError.message || "Storage upload failed.";
         console.error(`[ingest-attach] upload failed file=${filename}`, uploadError);
+        failed.push({ filename, reason });
         continue;
       }
 
@@ -460,8 +451,8 @@ async function storePendingDocuments(opts: {
           uploaded_by: uploadedBy,
           title: titleFromFilename(filename),
           file_name: filename,
-          file_size_bytes: buf.length,
-          mime_type: contentType,
+          file_size_bytes: decision.bytes.length,
+          mime_type: decision.mimeType,
           storage_path: storagePath,
           category: "other",
           description: description || filename,
@@ -474,22 +465,23 @@ async function storePendingDocuments(opts: {
         .select("id")
         .single();
       if (docErr || !doc) {
-        console.error(
-          `[ingest-attach] documents insert failed file=${filename}`,
-          docErr?.message ?? "insert failed"
-        );
+        const reason = docErr?.message || "The file record could not be saved.";
+        console.error(`[ingest-attach] documents insert failed file=${filename}`, reason);
+        failed.push({ filename, reason });
         continue;
       }
-      created.push({
+      stored.push({
         id: (doc as { id: string }).id,
         storagePath,
         filename,
       });
     } catch (e) {
+      const reason = e instanceof Error ? e.message : "The file could not be saved.";
       console.error("[ingest-attach] error:", e);
+      failed.push({ filename, reason });
     }
   }
-  return created;
+  return { stored, failed };
 }
 
 export async function POST(req: NextRequest) {
@@ -574,12 +566,12 @@ export async function POST(req: NextRequest) {
       branch: decision.branch,
       submittedByUserId: decision.branch === "self" ? visibleTo : decision.userId,
     });
-    if ("error" in recorded) {
-      console.error(`[sender-id] intake failed: ${recorded.error}`);
-      return NextResponse.json({ ok: true });
-    }
-    if ("duplicate" in recorded) {
-      console.log(`[sender-id] duplicate message_id=${extracted.messageId ?? "null"}`);
+    if (inboundDeliveryAction(recorded) === "stop" || !("id" in recorded)) {
+      if ("duplicate" in recorded) {
+        console.log(`[sender-id] duplicate message_id=${extracted.messageId ?? "null"}`);
+      } else if ("error" in recorded) {
+        console.error(`[sender-id] intake failed: ${recorded.error}`);
+      }
       return NextResponse.json({ ok: true });
     }
 
@@ -617,7 +609,8 @@ export async function POST(req: NextRequest) {
         intakeId: recorded.id,
         sessionId,
         bodyText: extracted.bodyText,
-        documents: createdDocuments.map((doc) => ({ id: doc.id, filename: doc.filename })),
+        documents: createdDocuments.stored.map((doc) => ({ id: doc.id, filename: doc.filename })),
+        failedAttachments: createdDocuments.failed,
       });
       return NextResponse.json({ ok: true });
     }
@@ -632,6 +625,7 @@ export async function POST(req: NextRequest) {
       storagePath: string;
       filename: string;
     }[] = [];
+    const failedAttachments: AttachmentNotice[] = [];
     let createdMessageId: string | null = null;
 
     if (!conversationId) {
@@ -647,22 +641,28 @@ export async function POST(req: NextRequest) {
           console.error(
             `[ingest-attach] skipped no recipient error=${attachmentRecipient.error}`
           );
+          for (const att of attachments) {
+            failedAttachments.push({
+              filename: originalDocumentName(att.Name ?? "") || "attachment",
+              reason: "The file could not be saved because this case has no parent to attach it to.",
+            });
+          }
         } else {
           recipientUserId = attachmentRecipient;
         }
       }
 
       if (recipientUserId) {
-        createdDocuments.push(
-          ...(await storePendingDocuments({
-            admin,
-            caseId,
-            uploadedBy: recipientUserId,
-            emailIntakeId: recorded.id,
-            subject,
-            attachments,
-          }))
-        );
+        const saved = await storePendingDocuments({
+          admin,
+          caseId,
+          uploadedBy: recipientUserId,
+          emailIntakeId: recorded.id,
+          subject,
+          attachments,
+        });
+        createdDocuments.push(...saved.stored);
+        failedAttachments.push(...saved.failed);
       }
 
       try {
@@ -704,13 +704,18 @@ export async function POST(req: NextRequest) {
             message_id: createdMessageId,
             document_id: doc.id,
           });
-          if (linkErr) {
+          if (linkErr && !/duplicate key/i.test(linkErr.message)) {
             console.error(
               `[ingest-attach] message_documents insert failed document_id=${doc.id}`,
               linkErr.message
             );
+            failedAttachments.push({
+              filename: doc.filename,
+              reason: "The file was stored but could not be linked to this message.",
+            });
             continue;
           }
+          if (linkErr) continue;
           console.log(
             `[ingest-attach] document_id=${doc.id} path=${doc.storagePath} file=${doc.filename}`
           );
@@ -719,7 +724,7 @@ export async function POST(req: NextRequest) {
         waitUntil(
           (async () => {
             try {
-              await processInboundMessageForSage(createdMessageId);
+              await processInboundMessageForSage(createdMessageId, failedAttachments);
             } catch (e) {
               console.error("[msg-sage]", e);
             }

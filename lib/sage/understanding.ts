@@ -173,6 +173,8 @@ function buildUserPrompt(event: NormalizedEvent): string {
             const parts = [`Filename: ${a.filename}`];
             if (a.text?.trim()) {
               parts.push(`Extracted text:\n${a.text.trim().slice(0, 4000)}`);
+            } else {
+              parts.push("Contents were not read. The file is still attached.");
             }
             return parts.join("\n");
           })

@@ -1,4 +1,5 @@
 import type { getServiceRoleClient } from "@/lib/supabase/server";
+import { sageAttachmentSentences, type AttachmentNotice } from "@/lib/messages/inbound-attachment";
 import { selfForwardResult } from "@/lib/sage/chat-intent";
 import type { ProcessObservationResult } from "@/lib/sage/process-observation";
 
@@ -149,6 +150,7 @@ export async function runSelfEmailComposer(opts: {
   sessionId: string;
   bodyText: string;
   documents: { id: string; filename: string }[];
+  failedAttachments?: AttachmentNotice[];
 }): Promise<void> {
   const { admin } = opts;
   const content = selfJournalContent(opts.bodyText, opts.documents.map((doc) => doc.filename));
@@ -182,6 +184,11 @@ export async function runSelfEmailComposer(opts: {
       opts.documents.map((doc) => doc.filename)
     );
     if (held.reply.trim()) sageContent = held.reply;
+    const failureNote = sageAttachmentSentences({
+      saved: [],
+      failed: opts.failedAttachments ?? [],
+    });
+    if (failureNote) sageContent = `${sageContent} ${failureNote}`;
     sageItemId = await insertChatSageItem(admin, {
       caseId: opts.caseId,
       userId: opts.userId,

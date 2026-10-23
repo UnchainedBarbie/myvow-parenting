@@ -7,6 +7,11 @@
  */
 
 import { extractPdfText } from "@/lib/pdf-extract";
+import {
+  sageAttachmentSentences,
+  sageReadsAttachment,
+  type AttachmentNotice,
+} from "@/lib/messages/inbound-attachment";
 import { getServiceRoleClient } from "@/lib/supabase/server";
 import {
   buildObservation,
@@ -510,16 +515,17 @@ async function loadMessagePdfAttachments(
     const filename = (doc.file_name ?? "").trim();
     const filePath = (doc.storage_path ?? "").trim();
     const mime = (doc.mime_type ?? "").trim().toLowerCase();
-    const isPdf =
-      mime === PDF_TYPE || filename.toLowerCase().endsWith(".pdf");
-    if (!filename || !filePath || !isPdf) {
-      const failed = [
-        !filename ? "missing_filename" : "",
-        !filePath ? "missing_storage_path" : "",
-        !isPdf ? "not_pdf" : "",
-      ].filter(Boolean);
+    const readable = sageReadsAttachment(filename, mime);
+    if (!filename || !filePath) {
       console.log(
-        `[msg-sage] attachment skipped document_id=${documentId} reason=${failed.join(",")}`
+        `[msg-sage] attachment skipped document_id=${documentId} reason=${!filename ? "missing_filename" : "missing_storage_path"}`
+      );
+      continue;
+    }
+    if (!readable) {
+      unreadable.push(filename);
+      console.log(
+        `[msg-sage] attachment stored unread document_id=${documentId} file=${filename}`
       );
       continue;
     }
@@ -562,7 +568,10 @@ async function loadMessagePdfAttachments(
  * Co-Parent inbound message → Sage. Propose only.
  * Does not write a role:'user' journal row.
  */
-export async function processInboundMessageForSage(messageId: string): Promise<void> {
+export async function processInboundMessageForSage(
+  messageId: string,
+  failedAttachments: AttachmentNotice[] = []
+): Promise<void> {
   const admin = getServiceRoleClient();
   try {
     const { data: messageRow, error: messageErr } = await admin
@@ -618,14 +627,19 @@ export async function processInboundMessageForSage(messageId: string): Promise<v
     const bodyText = (message.original_content ?? "").trim();
     const { extracted: pdfAttachments, unreadable } =
       await loadMessagePdfAttachments(admin, message.id);
+    const attachmentFacts = sageAttachmentSentences({
+      saved: [
+        ...pdfAttachments.map((file) => ({ filename: file.filename, read: true })),
+        ...unreadable.map((filename) => ({ filename, read: false })),
+      ],
+      failed: failedAttachments,
+    });
     const parts: string[] = [];
     if (bodyText) parts.push(bodyText);
     for (const attachment of pdfAttachments) {
       parts.push(formatAttachmentBlock(attachment));
     }
-    for (const filename of unreadable) {
-      parts.push(`[Attachment: ${filename} — no readable text]`);
-    }
+    if (attachmentFacts) parts.push(attachmentFacts);
     const text = parts.join("\n\n");
     if (!text) {
       logMsgSage(messageId, "skipped=empty_body");
@@ -795,7 +809,10 @@ export async function processInboundMessageForSage(messageId: string): Promise<v
     }
 
     const sageItemId = (sageRow as { id: string }).id;
-    const content = narrationFor(itemPlan, intent.summary);
+    const spoken = narrationFor(itemPlan, intent.summary);
+    const content = attachmentFacts && !spoken.includes(attachmentFacts)
+      ? `${spoken} ${attachmentFacts}`
+      : spoken;
     const journalRow = {
       user_id: visibleTo,
       role: "sage" as const,

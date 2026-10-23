@@ -200,26 +200,38 @@ export function resolvedCalendarIso(
 }
 
 /**
- * The card date picker is for a calendar change whose date is still missing.
- * A completed expense carries its incurred date on the proposal. The parent
- * reviews that date in the expense form, so the card does not ask again.
+ * Date already chosen for a calendar proposal. Shown on the card.
+ * A reply does not use this field.
+ */
+export function calendarCardDate(p: SageProposal): string | null {
+  if (!isCalendarUpdateProposal(p.type)) return null;
+  const value = (p.chosen_date || p.date || "").trim();
+  return value || null;
+}
+
+/**
+ * The inline date picker is only for a scheduling proposal that still has no date
+ * and does not open the calendar form. A co-parent reply has no due date.
+ * Absent chosen_date is not itself a reason to ask.
  */
 export function needsDateField(
   p: SageProposal,
   item?: SageItem | null
 ): boolean {
   if (isLogExpenseProposal(p.type)) return false;
-  const forceType = (p as SageProposal & { force_type?: unknown }).force_type;
-  if (
-    forceType === "expense" ||
-    forceType === "event" ||
-    forceType === "document"
-  ) {
-    return false;
-  }
-  if (isCalendarUpdateProposal(p.type)) return false;
   if (isLogDocumentProposal(p.type)) return false;
+  if (isCalendarUpdateProposal(p.type)) return false;
+  const type = (p.type ?? "").trim().toLowerCase();
+  if (type === "reply_coparent" || type === "note_only" || type === "ask_clarification") return false;
+  const forceType = (p as SageProposal & { force_type?: unknown }).force_type;
+  if (forceType === "expense" || forceType === "event" || forceType === "document") return false;
+  const scheduling =
+    p.calendar_intent === "offer" ||
+    p.calendar_intent === "update" ||
+    (p as SageProposal & { clarifies?: unknown }).clarifies === "calendar";
+  if (!scheduling) return false;
   if ((p.chosen_date ?? "").trim()) return false;
+  if ((p.date ?? "").trim()) return false;
   if (resolvedCalendarIso(item)) return false;
   if (p.date_supplied === true) return false;
   return true;

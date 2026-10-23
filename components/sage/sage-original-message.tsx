@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { documentPreviewNote } from "@/lib/documents-files";
+import { documentDownloadPath, documentPreviewNote } from "@/lib/documents-files";
 
 type OriginalPayload = {
   unavailable?: boolean;
@@ -89,12 +89,6 @@ export function SageOriginalMessage({
     }
   }
 
-  async function openAttachment(id: string) {
-    const res = await fetch(`/api/documents/${id}/download`);
-    const data = (await res.json().catch(() => ({}))) as { url?: string; error?: string };
-    if (res.ok && data.url) window.open(data.url, "_blank", "noopener,noreferrer");
-  }
-
   return (
     <div className="mt-2 max-w-full">
       <button
@@ -147,15 +141,24 @@ export function SageOriginalMessage({
                   {payload?.attachments?.map((file) => (
                     <li key={file.id} className="flex flex-wrap items-center gap-2">
                       <span className="min-w-0 break-all">{file.fileName}</span>
-                      <button
-                        type="button"
+                      {file.mimeType?.startsWith("image/") || file.mimeType === "application/pdf" ? (
+                        <a
+                          href={documentDownloadPath(file.id, true)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-[11px] text-[#5B7A52] underline"
+                        >
+                          Preview
+                        </a>
+                      ) : null}
+                      <a
+                        href={documentDownloadPath(file.id, false)}
+                        target="_blank"
+                        rel="noopener noreferrer"
                         className="text-[11px] text-[#5B7A52] underline"
-                        onClick={() => void openAttachment(file.id)}
                       >
-                        {file.mimeType?.startsWith("image/") || file.mimeType === "application/pdf"
-                          ? "Preview"
-                          : "Download"}
-                      </button>
+                        Download
+                      </a>
                       <span className="text-[10px] text-foreground-secondary">
                         {file.previewNote ?? documentPreviewNote(file.fileName, file.mimeType) ?? ""}
                       </span>

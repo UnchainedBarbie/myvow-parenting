@@ -110,6 +110,19 @@ export function documentOpensInline(
   return previewRequested && documentPreviewNote(fileName, mime) == null;
 }
 
+/** Name sent as the download filename. Spaces stay so the saved file matches the original. */
+export function downloadDispositionName(fileName: string): string {
+  const name = originalDocumentName(fileName) || "document";
+  return name.replace(/[?#&\r\n]/g, "_");
+}
+
+/** Authorized download route. redirect=1 sends the browser to the signed file URL. */
+export function documentDownloadPath(id: string, preview = false): string {
+  const params = new URLSearchParams({ redirect: "1" });
+  if (preview) params.set("preview", "1");
+  return `/api/documents/${id}/download?${params.toString()}`;
+}
+
 /** Client check before upload. The server still inspects the bytes. */
 export function documentFileProblem(
   fileName: string,

@@ -12,6 +12,7 @@ import {
 import type { SageItem, SageProposal } from "./proposal-types";
 import { isSupersededProposal } from "@/lib/sage/proposal-lifecycle";
 import {
+  calendarCardDate,
   canUndo,
   dateKey,
   displayDraft,
@@ -128,6 +129,7 @@ export function ProposalCardList({
           const noteOnly = p.type === "note_only";
           const actionable = isActionable(p);
           const showDate = !historical && actionable && needsDateField(p, item);
+          const cardDate = calendarCardDate(p);
           const dKey = dateKey(itemId, idx);
           const isChecked = checked.includes(idx);
           const rowBusy = busyKey === `${itemId}:${idx}` || itemBusy;
@@ -305,9 +307,9 @@ export function ProposalCardList({
                     aria-label="Choose date for calendar update"
                   />
                 )}
-                {isCalendarUpdateProposal(p.type) && (p.chosen_date || p.date) ? (
+                {cardDate ? (
                   <span className="text-[10px] text-foreground-secondary">
-                    date: {formatCardDate((p.chosen_date || p.date || "").trim())}
+                    date: {formatCardDate(cardDate)}
                   </span>
                 ) : null}
               </div>

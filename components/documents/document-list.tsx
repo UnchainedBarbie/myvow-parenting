@@ -15,6 +15,8 @@ import { TitleFilterPopover } from "@/components/documents/title-filter-popover"
 import { Filter, Pencil, Download, Trash2 } from "lucide-react";
 import { showErrorToast, showSuccessToast } from "@/components/ui/toaster";
 import { DOCUMENT_CATEGORY_LABELS, DOCUMENT_VISIBILITY_LABELS } from "@/lib/documents-tab";
+import { documentDownloadPath } from "@/lib/documents-files";
+import { INCOMING_ATTACHMENT_LABEL, librarySearchText, NOT_FILED_LABEL } from "@/lib/documents/incoming-attachments";
 
 const CHILD_NONE_VALUE = "__none__";
 /** Value for "All children" filter (documents where child_id is null). */
@@ -75,6 +77,11 @@ export type DocumentRow = {
   related_comm_id: string | null;
   deleted_at?: string | null;
   document_number?: number;
+  filing?: "incoming" | "filed";
+  source_message_id?: string | null;
+  source_conversation_id?: string | null;
+  source_sender?: string | null;
+  message_href?: string | null;
 };
 
 type Child = { id: string; first_name: string };
@@ -223,13 +230,15 @@ export function DocumentList({ documents, children = [] }: DocumentListProps) {
     let list = [...documents];
     if (debouncedSearch) {
       const q = debouncedSearch.toLowerCase();
-      list = list.filter(
-        (d) =>
-          (d.title ?? "").toLowerCase().includes(q) ||
-          (d.file_name ?? "").toLowerCase().includes(q) ||
-          (d.category ?? "").toLowerCase().includes(q) ||
-          (d.child_name ?? "").toLowerCase().includes(q) ||
-          (d.description ?? "").toLowerCase().includes(q)
+      list = list.filter((d) =>
+        librarySearchText({
+          title: d.title,
+          fileName: d.file_name,
+          category: d.category,
+          description: `${d.description ?? ""} ${d.child_name ?? ""}`,
+          sender: d.source_sender,
+          filing: d.filing ?? "filed",
+        }).includes(q)
       );
     }
     if (filterTitle.trim()) {
@@ -641,6 +650,7 @@ export function DocumentList({ documents, children = [] }: DocumentListProps) {
                       ? docIdFromNumber(doc.document_number)
                       : "—";
                   const isDeleted = !!doc.deleted_at;
+                  const incoming = doc.filing === "incoming";
                   const categoryColors = getCategoryColor(doc.category);
                   const rowBg = isDeleted
                     ? "bg-gray-50"
@@ -686,6 +696,22 @@ export function DocumentList({ documents, children = [] }: DocumentListProps) {
                             {doc.file_name ?? "—"}
                             {doc.file_size_bytes != null && ` • ${formatSize(doc.file_size_bytes)}`}
                           </span>
+                          {incoming ? (
+                            <span className="text-[11px] text-[#8A7A62]">
+                              {INCOMING_ATTACHMENT_LABEL}
+                              {doc.source_sender ? ` · ${doc.source_sender}` : ""}
+                              {" · "}
+                              {NOT_FILED_LABEL}
+                              {doc.message_href ? (
+                                <>
+                                  {" · "}
+                                  <a href={doc.message_href} className="text-[#5B7A52] underline" onClick={(e) => e.stopPropagation()}>
+                                    View message
+                                  </a>
+                                </>
+                              ) : null}
+                            </span>
+                          ) : null}
                         </div>
                       </td>
                       <td className={cn("px-3 py-1.5 align-middle", isDeleted && "line-through")}>
@@ -695,8 +721,8 @@ export function DocumentList({ documents, children = [] }: DocumentListProps) {
                             aria-hidden
                           />
                           <CategoryPill
-                            category={doc.category}
-                            label={CATEGORY_LABELS[doc.category] ?? doc.category}
+                            category={incoming ? "communication" : doc.category}
+                            label={incoming ? INCOMING_ATTACHMENT_LABEL : (CATEGORY_LABELS[doc.category] ?? doc.category)}
                           />
                         </span>
                       </td>
@@ -720,35 +746,32 @@ export function DocumentList({ documents, children = [] }: DocumentListProps) {
                       </td>
                       <td className="px-2 py-1.5 align-middle" onClick={(e) => e.stopPropagation()}>
                         <span className="inline-flex items-center gap-0.5">
-                          <button
-                            type="button"
-                            onClick={async (e) => {
-                              e.stopPropagation();
-                              const res = await fetch(`/api/documents/${doc.id}/download`);
-                              const data = await res.json();
-                              if (data?.url) window.open(data.url, "_blank");
-                            }}
+                          <a
+                            href={documentDownloadPath(doc.id, false)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={(e) => e.stopPropagation()}
                             className="p-1.5 rounded text-foreground-secondary hover:text-foreground hover:bg-muted/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                            aria-label="Download document"
+                            aria-label={`Download ${doc.file_name || "document"}`}
                           >
                             <Download className="h-3.5 w-3.5" />
-                          </button>
-                          <button
+                          </a>
+                          {incoming ? null : <button
                             type="button"
                             onClick={(e) => { e.stopPropagation(); openDetail(doc, true); }}
                             className="p-1.5 rounded text-foreground-secondary hover:text-foreground hover:bg-muted/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                             aria-label="Edit document"
                           >
                             <Pencil className="h-3.5 w-3.5" />
-                          </button>
-                          <button
+                          </button>}
+                          {incoming ? null : <button
                             type="button"
                             onClick={(e) => { e.stopPropagation(); setDeleteConfirm({ ids: [doc.id] }); }}
                             className="p-1.5 rounded text-gray-400 hover:text-red-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                             aria-label="Delete document"
                           >
                             <Trash2 className="h-4 w-4" />
-                          </button>
+                          </button>}
                         </span>
                       </td>
                     </tr>

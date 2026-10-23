@@ -6,7 +6,8 @@ import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import { FileText, Pencil } from "lucide-react";
 import { ChildMultiSelect } from "@/components/documents/child-multi-select";
-import { documentPreviewNote } from "@/lib/documents-files";
+import { documentDownloadPath, documentPreviewNote } from "@/lib/documents-files";
+import { INCOMING_ATTACHMENT_LABEL, NOT_FILED_LABEL } from "@/lib/documents/incoming-attachments";
 
 type DocumentHistoryEntry = {
   id: string;
@@ -68,6 +69,9 @@ export type DocumentRow = {
   related_comm_id: string | null;
   deleted_at?: string | null;
   document_number?: number;
+  filing?: "incoming" | "filed";
+  source_sender?: string | null;
+  message_href?: string | null;
 };
 
 type ChildOption = { id: string; first_name: string };
@@ -321,7 +325,7 @@ export function DocumentDetailModal({
             {reviewAndFile ? "File document" : "Document"}
           </h2>
           <div className="flex items-center gap-1">
-            {!isEditing && !reviewAndFile && doc && (
+            {!isEditing && !reviewAndFile && doc && doc.filing !== "incoming" && (
               <Button
                 type="button"
                 variant="outline"
@@ -466,14 +470,20 @@ export function DocumentDetailModal({
               </div>
               <div>
                 <p className="text-xs text-foreground-secondary mb-0.5">Category</p>
-                <p className="text-sm text-foreground">{CATEGORY_LABELS[doc.category] ?? doc.category}</p>
+                <p className="text-sm text-foreground">
+                  {doc.filing === "incoming"
+                    ? INCOMING_ATTACHMENT_LABEL
+                    : (CATEGORY_LABELS[doc.category] ?? doc.category)}
+                </p>
               </div>
               <div>
                 <p className="text-xs text-foreground-secondary mb-0.5">Child</p>
                 <p className="text-sm text-foreground">{doc.child_name ?? "All children"}</p>
               </div>
               <div>
-                <p className="text-xs text-foreground-secondary mb-0.5">Date uploaded</p>
+                <p className="text-xs text-foreground-secondary mb-0.5">
+                  {doc.filing === "incoming" ? "Received" : "Date uploaded"}
+                </p>
                 <p className="text-sm text-foreground">{formatDate(doc.created_at)}</p>
               </div>
               <div>
@@ -491,19 +501,31 @@ export function DocumentDetailModal({
                   <p className="text-sm text-foreground whitespace-pre-wrap">{doc.description}</p>
                 </div>
               )}
+              {doc.filing === "incoming" ? (
+                <div>
+                  <p className="text-xs text-foreground-secondary mb-0.5">Status</p>
+                  <p className="text-sm text-foreground">
+                    {INCOMING_ATTACHMENT_LABEL} · {NOT_FILED_LABEL}
+                  </p>
+                  {doc.source_sender ? (
+                    <p className="text-sm text-foreground-secondary">From {doc.source_sender}</p>
+                  ) : null}
+                  {doc.message_href ? (
+                    <a href={doc.message_href} className="text-sm text-[#5B7A52] underline">
+                      View original message
+                    </a>
+                  ) : null}
+                </div>
+              ) : null}
               <div className="pt-2">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="rounded-full"
-                  onClick={async () => {
-                    const res = await fetch(`/api/documents/${doc.id}/download`);
-                    const data = await res.json();
-                    if (data?.url) window.open(data.url, "_blank");
-                  }}
+                <a
+                  href={documentDownloadPath(doc.id, false)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center rounded-full border border-border px-3 py-1.5 text-sm text-foreground hover:bg-muted/60"
                 >
                   Download
-                </Button>
+                </a>
               </div>
             </>
           )}

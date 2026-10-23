@@ -8,10 +8,10 @@
 
 import { extractPdfText } from "@/lib/pdf-extract";
 import {
-  sageAttachmentSentences,
   sageReadsAttachment,
   type AttachmentNotice,
 } from "@/lib/messages/inbound-attachment";
+import { correctIntakeProposals, correctIntakeText } from "@/lib/sage/intake-facts";
 import { getServiceRoleClient } from "@/lib/supabase/server";
 import {
   buildObservation,
@@ -432,9 +432,11 @@ function coparentLabel(text: string): string {
 function narrationFor(plan: Plan, summary: string): string {
   const about = asSentence(coparentLabel(summary));
   const topic = about || "Co-Parent sent a message.";
-  const hasOutboundDraft = plan.proposals.some(
-    (p) => p.type === "reply_coparent" || p.type === "ask_clarification"
-  );
+  const hasOutboundDraft = plan.proposals.some((p) => {
+    const status = ((p as { status?: string }).status ?? "").toLowerCase();
+    if (status === "dismissed" || status === "superseded") return false;
+    return p.type === "reply_coparent" || p.type === "ask_clarification";
+  });
   if (hasOutboundDraft) {
     return `${topic} A reply is ready for you to review.`;
   }
@@ -627,18 +629,16 @@ export async function processInboundMessageForSage(
     const bodyText = (message.original_content ?? "").trim();
     const { extracted: pdfAttachments, unreadable } =
       await loadMessagePdfAttachments(admin, message.id);
-    const attachmentFacts = sageAttachmentSentences({
-      saved: [
-        ...pdfAttachments.map((file) => ({ filename: file.filename, read: true })),
-        ...unreadable.map((filename) => ({ filename, read: false })),
-      ],
-      failed: failedAttachments,
-    });
+    const storedFiles = [
+      ...pdfAttachments.map((file) => ({ filename: file.filename, read: true })),
+      ...unreadable.map((filename) => ({ filename, read: false })),
+    ];
     const parts: string[] = [];
     if (bodyText) parts.push(bodyText);
     for (const attachment of pdfAttachments) {
       parts.push(formatAttachmentBlock(attachment));
     }
+    const attachmentFacts = correctIntakeText("", { stored: storedFiles, failed: failedAttachments, ownMessage: false });
     if (attachmentFacts) parts.push(attachmentFacts);
     const text = parts.join("\n\n");
     if (!text) {
@@ -761,7 +761,17 @@ export async function processInboundMessageForSage(
     }
 
     const { intent, entities } = processed.interpretation;
-    const { child_ids, resolved_dates, plan: itemPlan } = processed;
+    const { child_ids, resolved_dates } = processed;
+    const correctedPlan = correctIntakeProposals(processed.plan.proposals, {
+      storedFileNames: storedFiles.map((file) => file.filename),
+      ownMessage: false,
+    });
+    const itemPlan = { ...processed.plan, proposals: correctedPlan.proposals };
+    const summary = correctIntakeText(intent.summary, {
+      stored: storedFiles,
+      failed: failedAttachments,
+      ownMessage: false,
+    });
     const { data: sageRow, error: insertError } = await admin
       .from("sage_items")
       .insert({
@@ -771,7 +781,7 @@ export async function processInboundMessageForSage(
         visible_to: visibleTo,
         item_type: intent.item_type,
         domain: intent.domain,
-        summary: intent.summary,
+        summary,
         evidence_excerpt: intent.evidence_excerpt,
         tool_name: intent.tool_name,
         action_required: intent.action_required,
@@ -809,10 +819,11 @@ export async function processInboundMessageForSage(
     }
 
     const sageItemId = (sageRow as { id: string }).id;
-    const spoken = narrationFor(itemPlan, intent.summary);
-    const content = attachmentFacts && !spoken.includes(attachmentFacts)
-      ? `${spoken} ${attachmentFacts}`
-      : spoken;
+    const content = correctIntakeText(narrationFor(itemPlan, summary), {
+      stored: storedFiles,
+      failed: failedAttachments,
+      ownMessage: false,
+    });
     const journalRow = {
       user_id: visibleTo,
       role: "sage" as const,

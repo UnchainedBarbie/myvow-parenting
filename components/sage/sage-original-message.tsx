@@ -5,6 +5,7 @@ import { documentPreviewNote } from "@/lib/documents-files";
 
 type OriginalPayload = {
   unavailable?: boolean;
+  ownMessage?: boolean;
   message?: string;
   error?: string;
   id?: string;
@@ -38,9 +39,11 @@ function formatWhen(value: string | null | undefined): string {
 export function SageOriginalMessage({
   messageId,
   label,
+  own = false,
 }: {
   messageId: string;
   label: string;
+  own?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -106,7 +109,7 @@ export function SageOriginalMessage({
       {open ? (
         <div className="mt-2 w-full max-w-full overflow-hidden rounded-xl border border-[#E8E4DC] bg-[#FFF8F0] px-3 py-2 text-[12px] text-foreground [overflow-anchor:none]">
           <p className="text-[10px] font-medium uppercase tracking-wide text-[#8A7A62]">
-            Co-parent’s original message
+            {own || payload?.ownMessage ? "Your original message" : "Co-parent’s original message"}
           </p>
           {loading ? (
             <p className="mt-1 text-foreground-secondary">Loading the original…</p>

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { waitUntil } from "@vercel/functions";
 import { getServiceRoleClient } from "@/lib/supabase/server";
 import { authorizeInboundIntake } from "@/lib/messages/authorize-inbound-intake";
+import { loadOwnerMailboxes } from "@/lib/messages/owner-mailboxes";
 import { ingestMessage } from "@/lib/messages/ingest-message";
 import {
   findOrCreateSelfSession,
@@ -549,7 +550,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true });
     }
 
-    const decision = authorizeInboundIntake(sender, visibleTo);
+    const ownerEmails = await loadOwnerMailboxes(admin, caseId, visibleTo);
+    const decision = authorizeInboundIntake(sender, visibleTo, ownerEmails);
     if (!decision.authorized) {
       console.log(`[sender-id] dropped from=${sender.fromEmail ?? "null"}`);
       return NextResponse.json({ ok: true });

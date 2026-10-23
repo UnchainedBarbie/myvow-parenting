@@ -83,7 +83,10 @@ export function ProposalCardList({
 
   const visible = proposals
     .map((p, idx) => ({ p, idx }))
-    .filter(({ p }) => !isParentClarification(p) && !(isLogDocumentProposal(p.type) && p.executed === true));
+    .filter(({ p }) => {
+      if ((p.status ?? "").toLowerCase() === "dismissed") return false;
+      return !isParentClarification(p) && !(isLogDocumentProposal(p.type) && p.executed === true);
+    });
   if (visible.length === 0) return null;
 
   const suppressActions = hideActions || historical;

@@ -883,6 +883,9 @@ export function buildDocumentReviewRow(
 /** Hide executed document cards and questions Sage is asking in the chat. */
 export function hasVisibleProposalCards(proposals: SageProposal[]): boolean {
   return proposals.some(
-    (p) => !isParentClarification(p) && !(isLogDocumentProposal(p.type) && p.executed === true)
+    (p) =>
+      (p.status ?? "").toLowerCase() !== "dismissed" &&
+      !isParentClarification(p) &&
+      !(isLogDocumentProposal(p.type) && p.executed === true)
   );
 }

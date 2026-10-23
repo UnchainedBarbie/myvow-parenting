@@ -61,6 +61,7 @@ export type SageMessage = {
   source_message_id?: string | null;
   source_conversation_id?: string | null;
   source_message_ids?: string[];
+  source_own_message?: boolean;
   sage_item?: SageItem | null;
 };
 
@@ -1194,6 +1195,7 @@ export function SageClient({
                           <SageOriginalMessage
                             key={messageId}
                             messageId={messageId}
+                            own={msg.source_own_message === true}
                             label={ids.length > 1 ? `View original ${index + 1}` : "View original"}
                           />
                         ))}

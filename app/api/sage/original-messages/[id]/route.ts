@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { documentPreviewNote } from "@/lib/documents-files";
 import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
+import { loadOwnerMailboxes } from "@/lib/messages/owner-mailboxes";
+import { senderIsAccountOwner } from "@/lib/sage/intake-facts";
 import {
   isMessageId,
   originalMessageAccess,
@@ -127,7 +129,8 @@ export async function GET(
       subject = ((conversation as { subject?: string | null } | null)?.subject ?? "").trim() || null;
     }
 
-    let sender = ((message.sender_external_email as string | null) ?? "").trim();
+    const senderEmail = ((message.sender_external_email as string | null) ?? "").trim();
+    let sender = senderEmail;
     const senderId = ((message.sender_id as string | null) ?? "").trim();
     if (senderId) {
       const { data: senderRow } = await admin
@@ -185,8 +188,20 @@ export async function GET(
       return NextResponse.json({ error: "Unsupported" }, { status: 500 });
     }
 
+    const ownerEmails = message.case_id
+      ? await loadOwnerMailboxes(admin, message.case_id, user.id)
+      : [];
+    if (user.email) ownerEmails.push(user.email);
+    const ownMessage = senderIsAccountOwner({
+      senderId: message.sender_id,
+      senderEmail,
+      ownerId: user.id,
+      ownerEmails,
+    });
+
     return NextResponse.json({
       unavailable: false,
+      ownMessage,
       id: message.id,
       sender: sender || "Co-parent",
       to: ((message.recipient_email as string | null) ?? "").trim() || null,

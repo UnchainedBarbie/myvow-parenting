@@ -38,6 +38,7 @@ import {
   type ChatAttachmentProcessResult,
 } from "@/lib/sage/process-chat-attachment";
 import { linkedIncomingMessageIds } from "@/lib/sage/original-message";
+import { applyStoredIntake } from "@/lib/sage/apply-intake-correction";
 
 export const runtime = "nodejs";
 
@@ -66,6 +67,7 @@ type SageMessageRow = {
   source_message_id?: string | null;
   source_conversation_id?: string | null;
   source_message_ids?: string[];
+  source_own_message?: boolean;
   sage_item?: unknown | null;
 };
 
@@ -865,6 +867,13 @@ export async function GET(request: NextRequest) {
         (c) => ({ id: c.id, first_name: c.first_name })
       );
     }
+
+    await applyStoredIntake(admin, {
+      userId: user.id,
+      userEmail: user.email,
+      caseId,
+      messages,
+    });
 
     return NextResponse.json({ messages, case_id: caseId, children });
   } catch (e) {

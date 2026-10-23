@@ -8,6 +8,7 @@ import {
   reconcileResolvedProposals,
   type SentReplyLink,
 } from "@/lib/sage/proposal-resolution";
+import { dismissStaleIntakeProposals } from "@/lib/sage/apply-intake-correction";
 import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
@@ -74,6 +75,12 @@ export async function GET() {
     }
 
     const items = (rows ?? []) as ItemRow[];
+    await dismissStaleIntakeProposals(admin, {
+      userId: user.id,
+      userEmail: user.email,
+      caseId,
+      items,
+    });
     const sentReplies = await sentReplyLinks(admin, caseId, items);
     await reconcileStoredPlans(admin, user.id, caseId, items, sentReplies);
     const drafts = deriveOpenItems(items);

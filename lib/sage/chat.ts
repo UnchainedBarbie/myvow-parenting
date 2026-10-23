@@ -22,6 +22,11 @@ import { isCalendarUpdateProposal, isLogExpenseProposal } from "@/lib/sage/propo
 import type { Proposal } from "@/lib/sage/planner";
 import { settleParentChatPlan } from "@/lib/sage/working-memory";
 import { scheduleShadowComparison } from "@/lib/sage/shadow-interpreter";
+import {
+  analysisObservationResult,
+  performDocumentAnalysis,
+  type AnalysisFile,
+} from "@/lib/sage/document-analysis";
 
 export type { ChatControl, PendingRevision };
 
@@ -55,6 +60,10 @@ export type ProcessChatMessageInput = {
   today?: Date;
   /** File name and id only. The shadow interpreter never receives the file URL. */
   attachments?: { id: string; fileName: string }[];
+  /** Metadata for files already in reach. Bytes load only after an explicit read request. */
+  analysisFiles?: AnalysisFile[];
+  loadAnalysisBytes?: (file: AnalysisFile) => Promise<Buffer | null>;
+  extractPdf?: (buffer: Buffer) => Promise<string>;
   recentTurns?: { role: "parent" | "sage"; text: string }[];
   /** Attachment processing schedules its own shadow call for the same journal row. */
   shadow?: boolean;
@@ -87,6 +96,25 @@ function buildReply(result: ProcessObservationResult): string {
 export async function processChatMessage(
   input: ProcessChatMessageInput
 ): Promise<ChatProcessResult> {
+  const read = await performDocumentAnalysis({
+    message: input.message,
+    files: input.analysisFiles ?? [],
+    viewer: { userId: input.viewerId ?? "", role: input.viewerRole },
+    caseId: input.case_id,
+    loadBytes: input.loadAnalysisBytes ?? (async () => null),
+    extractPdf: input.extractPdf,
+  });
+  if (read) {
+    const result = analysisObservationResult(read.reply, read.fileName, input.source_id);
+    scheduleReadShadow(input, "I read the requested document.", result.plan.reasoning);
+    return {
+      reply: read.reply,
+      actions: [],
+      result,
+      control: "none",
+      revision: null,
+    };
+  }
   const routed = routeChatIntent({
     message: input.message,
     conversation: input.conversation ?? null,
@@ -175,6 +203,36 @@ export async function processChatMessage(
     control: "none",
     revision: null,
   };
+}
+
+function scheduleReadShadow(
+  input: ProcessChatMessageInput,
+  reply: string,
+  reasoning: string
+): void {
+  if ((input.intake ?? "chat") !== "chat" || input.shadow === false) return;
+  const coparentName = input.coparents?.length === 1 ? input.coparents[0].name.trim().split(/\s+/)[0] : "";
+  const coparent = coparentName && !coparentName.includes("@") ? coparentName : null;
+  scheduleShadowComparison({
+    message: input.message,
+    recentTurns: input.recentTurns,
+    memory: input.conversation?.memory ?? null,
+    children: input.children ?? [],
+    events: input.events ?? [],
+    documents: input.documents ?? [],
+    attachments: (input.analysisFiles ?? []).map((file) => ({ id: file.id, fileName: file.fileName })),
+    viewerId: input.viewerId,
+    viewerRole: input.viewerRole,
+    coparentName: coparent,
+    turnKey: input.source_id,
+    router: {
+      handled: true,
+      control: "none",
+      reply,
+      reasoning,
+      proposals: [],
+    },
+  });
 }
 
 async function shareExpenseTurn(

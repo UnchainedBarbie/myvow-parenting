@@ -54,6 +54,7 @@ import {
   type FocusKind,
   type WorkingMemory,
 } from "@/lib/sage/working-memory";
+import { requestsDocumentAnalysis } from "@/lib/sage/document-read";
 
 export type KnownCoparent = {
   name: string;
@@ -250,7 +251,7 @@ export function refersToCoparentRole(text: string): boolean {
 
 function wantsNotify(text: string): boolean {
   const lower = text.toLowerCase();
-  if (/\btell me\b/.test(lower) && !/\b(him|her|them)\b/.test(lower) && !refersToCoparentRole(text)) {
+  if (/\b(let|tell) me\b/.test(lower) && !/\b(him|her|them)\b/.test(lower) && !refersToCoparentRole(text)) {
     return false;
   }
   if (refersToCoparentRole(text) && /\b(let|tell|notify|message|email|text|remind|know)\b/.test(lower)) {
@@ -375,7 +376,12 @@ function wantsExpense(text: string): boolean {
 export function explicitRequestKind(message: string): FocusKind | null {
   if (isExplicitNoteRequest(message)) return null;
   if (isPaymentReport(message) || wantsExpense(message)) return "expense";
-  if (isDocumentFilingRequest(message) || wantsDocument(message) || isDocumentQuestion(message)) {
+  if (
+    isDocumentFilingRequest(message) ||
+    wantsDocument(message) ||
+    isDocumentQuestion(message) ||
+    requestsDocumentAnalysis(message, false)
+  ) {
     return "document";
   }
   if (wantsCalendar(message)) return "calendar";
@@ -680,6 +686,7 @@ function completeOpenDetail(
       wantsCalendar(message) ||
       isDocumentQuestion(message) ||
       isDocumentFilingRequest(message) ||
+      requestsDocumentAnalysis(message, false) ||
       explicitSchedule(message)
     ) {
       return null;

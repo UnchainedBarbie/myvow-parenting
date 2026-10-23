@@ -7,6 +7,8 @@ import { processChatMessage } from "@/lib/sage/chat";
 import { scheduleShadowComparison } from "@/lib/sage/shadow-interpreter";
 import { SHADOW_CONTEXT_TURNS, shadowTurnsFromJournal } from "@/lib/sage/shadow-context";
 import { pendingDocument, shouldPreserveOpenWork } from "@/lib/sage/chat-intent";
+import { prepareAnalysisRead } from "@/lib/sage/analysis-sources";
+import { requestsDocumentAnalysis } from "@/lib/sage/document-read";
 import { applySessionControl } from "@/lib/sage/chat-control";
 import { isDocumentFilingRequest, openDocumentStates } from "@/lib/sage/document-intent";
 import {
@@ -1184,7 +1186,11 @@ export async function POST(request: NextRequest) {
             sourceId: (userRow as { id: string }).id,
             processed,
           });
-        } else if (classifiedAttachment && "classify" in classifiedAttachment) {
+        } else if (
+          classifiedAttachment &&
+          "classify" in classifiedAttachment &&
+          !requestsDocumentAnalysis(trimmed, true)
+        ) {
           const attachment = {
             ...classifiedAttachment.attachment,
             file_name:
@@ -1298,6 +1304,14 @@ export async function POST(request: NextRequest) {
           );
           const coparents = await loadKnownCoparents(admin, caseId, user.id);
           const calendarContext = await loadCalendarContext(admin, caseId, user.id);
+          const analysis = await prepareAnalysisRead(admin, {
+            message: trimmed,
+            caseId,
+            userId: user.id,
+            role: viewerRole,
+            sessionId: sessionId ?? null,
+            currentDocumentId: attachmentDocumentId,
+          });
           const { reply, result, control, revision } = await processChatMessage({
             message: trimmed,
             case_id: caseId,
@@ -1311,6 +1325,8 @@ export async function POST(request: NextRequest) {
             viewerId: user.id,
             viewerRole,
             recentTurns: sessionId ? await loadShadowSessionTurns(admin, sessionId, user.id, trimmed) : [],
+            analysisFiles: analysis?.files,
+            loadAnalysisBytes: analysis?.loadBytes,
           });
           if (reply.trim()) sageContent = reply;
           const createdDocument = result.plan.proposals.find((proposal) => proposal.type === "log_document");

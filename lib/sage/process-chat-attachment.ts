@@ -17,6 +17,8 @@ import {
   childNamedInInstruction,
   mentionsSeveralChildren,
 } from "@/lib/sage/attachment-role";
+import { composeAnalysisReply } from "@/lib/sage/document-analysis";
+import { extractDocument } from "@/lib/documents/extract-document";
 import type { KnownCoparent } from "@/lib/sage/chat-intent";
 import {
   attachmentFilingText,
@@ -471,20 +473,17 @@ function explainAttachment(
   };
 }
 
-function directedAttachmentResult(
+async function directedAttachmentResult(
   opts: Parameters<typeof processChatAttachment>[0],
   instruction: "summarize" | "message" | "save_and_message"
-): ChatAttachmentProcessResult | null {
+): Promise<ChatAttachmentProcessResult | null> {
   const fileName = opts.attachment.file_name;
   if (instruction === "summarize") {
-    const readable = opts.classify.contentsRead !== false && opts.classify.description.trim();
-    if (!readable) {
-      return explainAttachment(
-        opts,
-        `I can't summarize ${fileName} because I haven't read its contents. I can save it in Documents, or attach it to a message, once you ask me to.`
-      );
+    if (opts.bytes && opts.bytes.length > 0) {
+      const extracted = await extractDocument(opts.bytes, fileName);
+      return explainAttachment(opts, composeAnalysisReply(fileName, extracted));
     }
-    return explainAttachment(opts, opts.classify.description.trim());
+    return explainAttachment(opts, `${fileName} is attached. I haven't read its contents.`);
   }
   if (!attachmentCanBeSent(fileName)) {
     return explainAttachment(
@@ -616,13 +615,15 @@ export async function processChatAttachment(opts: {
   filedDocument?: DocumentProposalState | null;
   coparents?: KnownCoparent[];
   today?: Date;
+  /** Present only when the parent asked Sage to read this file. */
+  bytes?: Buffer | null;
 }): Promise<ChatAttachmentProcessResult> {
   const instruction = attachmentInstruction(opts.caption);
   if (
     opts.forcedType == null &&
     (instruction === "summarize" || instruction === "message" || instruction === "save_and_message")
   ) {
-    const directed = directedAttachmentResult(opts, instruction);
+    const directed = await directedAttachmentResult(opts, instruction);
     if (directed) return directed;
   }
   const pendingDocument =

@@ -41,7 +41,8 @@ conversation.turns are this parent's recent messages and your replies in the cur
 When conversation.this_turn is repeat, use that same intent and domain. When it is new, do not attach the message to last_intention. When it is ambiguous, set needs_clarification and do not borrow a domain from continuation or a proposal title.
 When conversation.prefer is conversation, prefer those turns over continuation and memory.focus.
 A different domain, child, or explicit new request is a new intention. Leave target_handle empty unless the packet lists the record to change.
-An attachment does not by itself mean create/document. If the parent asks to send it or get co-parent feedback, the intent is message_coparent. Do not file it unless they ask to save it.`;
+An attachment does not by itself mean create/document. If the parent asks to send it or get co-parent feedback, the intent is message_coparent. Do not file it unless they ask to save it.
+Asking Sage to read or assess a file is retrieve on the document domain, not message_coparent, and does not need a recipient.`;
 
 export type ShadowDeps = {
   fetchImpl?: typeof fetch;

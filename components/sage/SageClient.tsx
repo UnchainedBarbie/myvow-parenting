@@ -26,6 +26,7 @@ import {
 import { SageAgreeFormModal } from "@/components/sage/sage-agree-form-modal";
 import type { SageItem, SagePlan, SageProposal } from "@/components/sage/proposal-types";
 import { DOCUMENT_ACCEPT, DOCUMENT_ACCEPT_LABEL, documentFileProblem } from "@/lib/documents-files";
+import { SageOriginalMessage } from "@/components/sage/sage-original-message";
 import { interpretDocumentTurn } from "@/lib/sage/document-intent";
 import { splitDocumentAnswer } from "@/lib/sage/document-search";
 import { notifySageProposalsChanged } from "@/lib/open-items";
@@ -58,6 +59,7 @@ export type SageMessage = {
   sage_item_id?: string | null;
   source_message_id?: string | null;
   source_conversation_id?: string | null;
+  source_message_ids?: string[];
   sage_item?: SageItem | null;
 };
 
@@ -1165,21 +1167,29 @@ export function SageClient({
                               </>
                             );
                           })()}
-                          {!isUser &&
-                            msg.source_message_id &&
-                            msg.source_conversation_id && (
-                              <Link
-                                href={`/messages?conversation_id=${encodeURIComponent(msg.source_conversation_id)}`}
-                                className="mt-2 inline-flex items-center gap-1 text-[11px] text-[#5B7A52] hover:underline"
-                              >
-                                <span role="img" aria-label="View in Messages">
-                                  👁️
-                                </span>
-                                <span>View in Messages</span>
-                              </Link>
-                            )}
+                          {!isUser && msg.source_conversation_id && (
+                            <Link
+                              href={`/messages?conversation_id=${encodeURIComponent(msg.source_conversation_id)}`}
+                              className="mt-2 inline-flex items-center gap-1 text-[11px] text-[#5B7A52] hover:underline"
+                            >
+                              <span>View in Messages</span>
+                            </Link>
+                          )}
                         </div>
                       </div>
+                      {!isUser &&
+                        (msg.source_message_ids?.length
+                          ? msg.source_message_ids
+                          : msg.source_message_id
+                            ? [msg.source_message_id]
+                            : []
+                        ).map((messageId, index, ids) => (
+                          <SageOriginalMessage
+                            key={messageId}
+                            messageId={messageId}
+                            label={ids.length > 1 ? `View original ${index + 1}` : "View original"}
+                          />
+                        ))}
                       {!isUser &&
                         item &&
                         proposals.length > 0 &&

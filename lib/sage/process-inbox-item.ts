@@ -796,14 +796,20 @@ export async function processInboundMessageForSage(messageId: string): Promise<v
 
     const sageItemId = (sageRow as { id: string }).id;
     const content = narrationFor(itemPlan, intent.summary);
-    const { error: journalErr } = await admin.from("sage_journal_messages").insert({
+    const journalRow = {
       user_id: visibleTo,
-      role: "sage",
+      role: "sage" as const,
       session_id: sessionId,
       sage_item_id: sageItemId,
       source_message_id: message.id,
       content,
-    });
+    };
+    let { error: journalErr } = await admin.from("sage_journal_messages").insert(journalRow);
+    if (journalErr && /source_message_id/i.test(journalErr.message ?? "")) {
+      const { source_message_id: _ignored, ...withoutSource } = journalRow;
+      void _ignored;
+      ({ error: journalErr } = await admin.from("sage_journal_messages").insert(withoutSource));
+    }
     if (journalErr) {
       logMsgSage(
         messageId,

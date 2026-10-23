@@ -37,6 +37,7 @@ import {
   type ChatAttachmentMeta,
   type ChatAttachmentProcessResult,
 } from "@/lib/sage/process-chat-attachment";
+import { linkedIncomingMessageIds } from "@/lib/sage/original-message";
 
 export const runtime = "nodejs";
 
@@ -64,6 +65,7 @@ type SageMessageRow = {
   sage_item_id?: string | null;
   source_message_id?: string | null;
   source_conversation_id?: string | null;
+  source_message_ids?: string[];
   sage_item?: unknown | null;
 };
 
@@ -769,7 +771,7 @@ export async function GET(request: NextRequest) {
     if (itemIds.length > 0) {
       const { data: items } = await admin
         .from("sage_items")
-        .select(SAGE_ITEM_SELECT)
+        .select(`${SAGE_ITEM_SELECT}, source_type, source_id`)
         .in("id", itemIds)
         .eq("visible_to", user.id);
       for (const item of items ?? []) {
@@ -790,12 +792,25 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    const linkedIdsByJournal = new Map<string, string[]>();
+    for (const m of rows) {
+      if (m.role !== "sage") continue;
+      const linkedItem = m.sage_item_id ? itemsById.get(m.sage_item_id) : null;
+      const itemRecord =
+        linkedItem && typeof linkedItem === "object"
+          ? (linkedItem as Record<string, unknown>)
+          : null;
+      linkedIdsByJournal.set(
+        m.id,
+        linkedIncomingMessageIds({
+          sourceMessageId: m.source_message_id,
+          itemSourceType: typeof itemRecord?.source_type === "string" ? itemRecord.source_type : null,
+          itemSourceId: typeof itemRecord?.source_id === "string" ? itemRecord.source_id : null,
+        })
+      );
+    }
     const sourceMessageIds = [
-      ...new Set(
-        rows
-          .map((m) => m.source_message_id)
-          .filter((id): id is string => typeof id === "string" && id.length > 0)
-      ),
+      ...new Set(rows.flatMap((m) => linkedIdsByJournal.get(m.id) ?? [])),
     ];
     const conversationByMessageId = new Map<string, string>();
     if (sourceMessageIds.length > 0) {
@@ -819,12 +834,14 @@ export async function GET(request: NextRequest) {
         (m.role === "sage" && lastUserId
           ? itemsBySourceId.get(lastUserId) ?? null
           : null);
-      const sourceConversationId = m.source_message_id
-        ? conversationByMessageId.get(m.source_message_id) ?? null
-        : null;
+      const explicitIds = linkedIdsByJournal.get(m.id) ?? [];
+      const sourceConversationId = explicitIds
+        .map((id) => conversationByMessageId.get(id))
+        .find((id): id is string => typeof id === "string" && id.length > 0) ?? null;
       messages.push({
         ...m,
         sage_item: linked ?? null,
+        source_message_ids: explicitIds,
         source_conversation_id: sourceConversationId,
       });
     }

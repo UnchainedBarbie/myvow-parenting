@@ -39,6 +39,7 @@ import {
 } from "@/lib/sage/process-chat-attachment";
 import { linkedIncomingMessageIds } from "@/lib/sage/original-message";
 import { applyStoredIntake } from "@/lib/sage/apply-intake-correction";
+import type { SageAttachmentView } from "@/lib/sage/message-attachments";
 
 export const runtime = "nodejs";
 
@@ -68,6 +69,7 @@ type SageMessageRow = {
   source_conversation_id?: string | null;
   source_message_ids?: string[];
   source_own_message?: boolean;
+  source_attachments?: SageAttachmentView[];
   sage_item?: unknown | null;
 };
 
@@ -850,7 +852,7 @@ export async function GET(request: NextRequest) {
 
     const { data: membership } = await admin
       .from("case_members")
-      .select("case_id")
+      .select("case_id, role")
       .eq("user_id", user.id)
       .limit(1)
       .maybeSingle();
@@ -872,6 +874,7 @@ export async function GET(request: NextRequest) {
       userId: user.id,
       userEmail: user.email,
       caseId,
+      viewerRole: (membership as { role?: string | null } | null)?.role ?? null,
       messages,
     });
 

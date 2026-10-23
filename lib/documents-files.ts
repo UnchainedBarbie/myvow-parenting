@@ -101,6 +101,15 @@ export function documentPreviewNote(fileName: string, mime: string | null | unde
   return "This file isn't previewed in the browser. Download keeps the original file.";
 }
 
+/** Preview opens the file in the browser. Other types keep the download disposition. */
+export function documentOpensInline(
+  fileName: string,
+  mime: string | null | undefined,
+  previewRequested: boolean
+): boolean {
+  return previewRequested && documentPreviewNote(fileName, mime) == null;
+}
+
 /** Client check before upload. The server still inspects the bytes. */
 export function documentFileProblem(
   fileName: string,

@@ -102,5 +102,14 @@ assert.equal(
   }),
   false
 );
+assert.equal(
+  senderIsAccountOwner({
+    senderId: "other-user",
+    senderEmail: "Allison <allison@theholisticaccountant.com>",
+    ownerId: owner,
+    ownerEmails: [allison],
+  }),
+  true
+);
 
 console.log("intake fact tests passed");

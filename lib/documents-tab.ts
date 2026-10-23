@@ -57,3 +57,36 @@ export function documentAuthorizedForViewer(
   }
   return true;
 }
+
+export type DocumentLinkScope = "none" | "same_case" | "other_case";
+
+/**
+ * Whether this viewer may use the document download route.
+ * Pending files stay pending. A pending file the viewer did not upload is
+ * available only when a message on the same case already links it.
+ */
+export function documentDownloadAccess(input: {
+  found: boolean;
+  status: string | null;
+  visibility: string | null;
+  uploadedBy: string | null;
+  viewerId: string;
+  viewerRole: string | null;
+  viewerIsMember: boolean;
+  link: DocumentLinkScope;
+}): "ok" | "forbidden" | "not_found" {
+  if (!input.found) return "not_found";
+  const status = (input.status ?? "").trim().toLowerCase();
+  if (status !== "active" && status !== "pending") return "not_found";
+  if (!input.viewerIsMember) return "forbidden";
+  const allowed = documentAuthorizedForViewer(
+    { visibility: input.visibility, uploadedBy: input.uploadedBy },
+    { userId: input.viewerId, role: input.viewerRole }
+  );
+  if (!allowed) return "forbidden";
+  if (status === "pending" && input.uploadedBy !== input.viewerId) {
+    if (input.link === "none") return "not_found";
+    if (input.link === "other_case") return "forbidden";
+  }
+  return "ok";
+}

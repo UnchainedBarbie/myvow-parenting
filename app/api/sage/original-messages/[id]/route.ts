@@ -131,6 +131,7 @@ export async function GET(
 
     const senderEmail = ((message.sender_external_email as string | null) ?? "").trim();
     let sender = senderEmail;
+    let senderAccountEmail = "";
     const senderId = ((message.sender_id as string | null) ?? "").trim();
     if (senderId) {
       const { data: senderRow } = await admin
@@ -139,8 +140,8 @@ export async function GET(
         .eq("id", senderId)
         .maybeSingle();
       const name = ((senderRow as { full_name?: string | null } | null)?.full_name ?? "").trim();
-      const email = ((senderRow as { email?: string | null } | null)?.email ?? "").trim();
-      sender = name || sender || email;
+      senderAccountEmail = ((senderRow as { email?: string | null } | null)?.email ?? "").trim();
+      sender = name || sender || senderAccountEmail;
     }
 
     const { data: links } = await admin
@@ -195,6 +196,7 @@ export async function GET(
     const ownMessage = senderIsAccountOwner({
       senderId: message.sender_id,
       senderEmail,
+      senderEmails: [senderEmail, senderAccountEmail],
       ownerId: user.id,
       ownerEmails,
     });

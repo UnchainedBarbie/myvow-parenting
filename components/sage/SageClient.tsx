@@ -27,6 +27,7 @@ import { SageAgreeFormModal } from "@/components/sage/sage-agree-form-modal";
 import type { SageItem, SagePlan, SageProposal } from "@/components/sage/proposal-types";
 import { DOCUMENT_ACCEPT, DOCUMENT_ACCEPT_LABEL, documentFileProblem } from "@/lib/documents-files";
 import { attachmentInstruction, mentionsSeveralChildren } from "@/lib/sage/attachment-role";
+import { SageMessageAttachments } from "@/components/sage/sage-message-attachments";
 import { SageOriginalMessage } from "@/components/sage/sage-original-message";
 import { interpretDocumentTurn } from "@/lib/sage/document-intent";
 import { splitDocumentAnswer } from "@/lib/sage/document-search";
@@ -62,6 +63,13 @@ export type SageMessage = {
   source_conversation_id?: string | null;
   source_message_ids?: string[];
   source_own_message?: boolean;
+  source_attachments?: {
+    id: string;
+    fileName: string;
+    mimeType: string | null;
+    preview?: boolean;
+    icon?: "spreadsheet" | "image" | "pdf" | "text" | "file";
+  }[];
   sage_item?: SageItem | null;
 };
 
@@ -1185,6 +1193,9 @@ export function SageClient({
                           )}
                         </div>
                       </div>
+                      {!isUser && (msg.source_attachments?.length ?? 0) > 0 ? (
+                        <SageMessageAttachments files={msg.source_attachments ?? []} />
+                      ) : null}
                       {!isUser &&
                         (msg.source_message_ids?.length
                           ? msg.source_message_ids

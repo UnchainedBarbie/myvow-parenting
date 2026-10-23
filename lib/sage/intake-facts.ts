@@ -1,4 +1,5 @@
 import { sageAttachmentSentences, type AttachmentNotice } from "@/lib/messages/inbound-attachment";
+import { mailboxAddress } from "@/lib/messages/mailbox";
 
 export type StoredIntakeFile = { filename: string; read: boolean };
 
@@ -85,11 +86,19 @@ export function correctIntakeText(
 export function senderIsAccountOwner(input: {
   senderId?: string | null;
   senderEmail?: string | null;
+  senderEmails?: (string | null | undefined)[];
   ownerId: string;
   ownerEmails: string[];
 }): boolean {
   if (input.senderId && input.senderId === input.ownerId) return true;
-  const email = (input.senderEmail ?? "").trim().toLowerCase();
-  if (!email) return false;
-  return input.ownerEmails.some((owner) => owner.trim().toLowerCase() === email);
+  const owners = new Set(
+    input.ownerEmails
+      .map((email) => mailboxAddress(email))
+      .filter((email): email is string => Boolean(email))
+  );
+  const candidates = [input.senderEmail, ...(input.senderEmails ?? [])];
+  return candidates.some((value) => {
+    const email = mailboxAddress(value);
+    return Boolean(email && owners.has(email));
+  });
 }

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { originalDocumentName } from "@/lib/documents-files";
-import { documentAuthorizedForViewer } from "@/lib/documents-tab";
+import { documentOpensInline, originalDocumentName } from "@/lib/documents-files";
+import { documentDownloadAccess, type DocumentLinkScope } from "@/lib/documents-tab";
 import { createClient } from "@/lib/supabase/server";
 import { getServiceRoleClient } from "@/lib/supabase/server";
 
@@ -22,15 +22,13 @@ export async function GET(
     const admin = getServiceRoleClient();
     const { data: doc, error: docErr } = await admin
       .from("documents")
-      .select("id, case_id, storage_path, file_name, visibility, uploaded_by, status")
+      .select("id, case_id, storage_path, file_name, mime_type, visibility, uploaded_by, status")
       .eq("id", id)
       .is("deleted_at", null)
       .single();
     if (docErr || !doc) return NextResponse.json({ error: "Document not found" }, { status: 404 });
     const status = String((doc as { status?: string | null }).status ?? "");
-    if (status !== "active" && status !== "pending") {
-      return NextResponse.json({ error: "Document not found" }, { status: 404 });
-    }
+    const uploadedBy = (doc.uploaded_by as string | null) ?? null;
 
     const { data: membership } = await admin
       .from("case_members")
@@ -38,35 +36,49 @@ export async function GET(
       .eq("case_id", doc.case_id)
       .eq("user_id", user.id)
       .maybeSingle();
-    if (!membership) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    const allowed = documentAuthorizedForViewer(
-      { visibility: doc.visibility as string | null, uploadedBy: doc.uploaded_by as string | null },
-      { userId: user.id, role: membership.role as string | null }
-    );
-    if (!allowed) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    if (status === "pending" && doc.uploaded_by !== user.id) {
-      const { data: link } = await admin
+
+    let link: DocumentLinkScope = "same_case";
+    if (status === "pending" && uploadedBy !== user.id) {
+      const { data: linked } = await admin
         .from("message_documents")
         .select("message_id")
         .eq("document_id", id)
         .limit(1)
         .maybeSingle();
-      const messageId = (link as { message_id?: string } | null)?.message_id;
-      if (!messageId) return NextResponse.json({ error: "Document not found" }, { status: 404 });
-      const { data: message } = await admin
-        .from("messages")
-        .select("case_id")
-        .eq("id", messageId)
-        .maybeSingle();
-      if ((message as { case_id?: string } | null)?.case_id !== doc.case_id) {
-        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      const messageId = (linked as { message_id?: string } | null)?.message_id;
+      if (!messageId) {
+        link = "none";
+      } else {
+        const { data: message } = await admin
+          .from("messages")
+          .select("case_id")
+          .eq("id", messageId)
+          .maybeSingle();
+        link = (message as { case_id?: string } | null)?.case_id === doc.case_id ? "same_case" : "other_case";
       }
     }
+    const access = documentDownloadAccess({
+      found: true,
+      status,
+      visibility: doc.visibility as string | null,
+      uploadedBy,
+      viewerId: user.id,
+      viewerRole: (membership?.role as string | null) ?? null,
+      viewerIsMember: Boolean(membership),
+      link,
+    });
+    if (access === "not_found") return NextResponse.json({ error: "Document not found" }, { status: 404 });
+    if (access === "forbidden") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
     const downloadName = originalDocumentName(String(doc.file_name ?? "")) || "document";
+    const inline = documentOpensInline(
+      downloadName,
+      (doc as { mime_type?: string | null }).mime_type,
+      request.nextUrl.searchParams.get("preview") === "1"
+    );
     const { data: signed } = await admin.storage
       .from("documents")
-      .createSignedUrl(doc.storage_path, 60, { download: downloadName });
+      .createSignedUrl(doc.storage_path, 60, inline ? undefined : { download: downloadName });
     if (!signed?.signedUrl) return NextResponse.json({ error: "Could not generate download URL" }, { status: 500 });
 
     try {

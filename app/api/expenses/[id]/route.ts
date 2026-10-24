@@ -3,6 +3,13 @@ import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
 import { computeAllocationFromParentingPlan, allocationStatusForDb } from "@/lib/expenses-allocation";
 import { planExpenseEntry, type ExpenseLoggingIntent, type ExpensePayer } from "@/lib/expenses-sharing";
 import { expenseWorkflowStatus } from "@/lib/expenses-share";
+import {
+  alignReceiptDocumentVisibility,
+  expenseVisibleToViewer,
+  missingVisibilityColumn,
+  parseExpenseVisibility,
+  readExpenses,
+} from "@/lib/expenses-visibility";
 
 function parseChildIds(childIdsRaw: unknown, childId?: string | null): string[] {
   if (Array.isArray(childIdsRaw)) {
@@ -58,27 +65,26 @@ export async function GET(
     }
 
     const admin = getServiceRoleClient();
-    const { data: expense, error: fetchError } = await admin
-      .from("expenses")
-      .select("id, case_id, child_id, deleted_at")
-      .eq("id", expenseId)
-      .maybeSingle();
-
-    if (fetchError || !expense) {
-      return NextResponse.json({ message: "Expense not found" }, { status: 404 });
-    }
-    if (expense.deleted_at) {
+    const loaded = await readExpenses(
+      (columns) => admin.from("expenses").select(columns).eq("id", expenseId).limit(1),
+      "id, case_id, child_id, deleted_at"
+    );
+    const expense = loaded.rows[0];
+    if (loaded.error || !expense || expense.deleted_at) {
       return NextResponse.json({ message: "Expense not found" }, { status: 404 });
     }
 
     const { data: membership } = await admin
       .from("case_members")
-      .select("case_id")
+      .select("case_id, role")
       .eq("user_id", user.id)
       .eq("case_id", expense.case_id)
       .maybeSingle();
     if (!membership) {
       return NextResponse.json({ message: "Forbidden" }, { status: 403 });
+    }
+    if (!expenseVisibleToViewer(expense, { userId: user.id, role: membership.role })) {
+      return NextResponse.json({ message: "Expense not found" }, { status: 404 });
     }
 
     const { data: rows, error: junctionError } = await admin
@@ -130,15 +136,12 @@ export async function PATCH(
 
     const admin = getServiceRoleClient();
 
-    const { data: expense, error: fetchError } = await admin
-      .from("expenses")
-      .select(
-        "id, case_id, submitted_by, amount, amount_owed, split_percent, split_label, allocation_status, status, category, child_id, deleted_at"
-      )
-      .eq("id", expenseId)
-      .maybeSingle();
-
-    if (fetchError || !expense) {
+    const loaded = await readExpenses(
+      (columns) => admin.from("expenses").select(columns).eq("id", expenseId).limit(1),
+      "id, case_id, submitted_by, amount, amount_owed, split_percent, split_label, allocation_status, status, category, child_id, deleted_at, receipt_file_id"
+    );
+    const expense = loaded.rows[0];
+    if (loaded.error || !expense) {
       return NextResponse.json({ message: "Expense not found" }, { status: 404 });
     }
     if (expense.deleted_at) {
@@ -147,13 +150,16 @@ export async function PATCH(
 
     const { data: membership } = await admin
       .from("case_members")
-      .select("case_id")
+      .select("case_id, role")
       .eq("user_id", user.id)
       .eq("case_id", expense.case_id)
       .maybeSingle();
 
     if (!membership) {
       return NextResponse.json({ message: "Forbidden" }, { status: 403 });
+    }
+    if (!expenseVisibleToViewer(expense, { userId: user.id, role: membership.role })) {
+      return NextResponse.json({ message: "Expense not found" }, { status: 404 });
     }
 
     const body = (await request.json().catch(() => ({}))) as {
@@ -174,6 +180,7 @@ export async function PATCH(
       sharing_intent?: ExpenseLoggingIntent | null;
       stated_percent?: number | null;
       notify_coparent?: boolean;
+      visibility?: string | null;
     };
 
     const isOwner = expense.submitted_by === user.id;
@@ -198,6 +205,13 @@ export async function PATCH(
       }
       if (body.category_description !== undefined) {
         updates.category_description = body.category_description || null;
+      }
+      if (Object.prototype.hasOwnProperty.call(body, "visibility")) {
+        const nextVisibility = parseExpenseVisibility(body.visibility);
+        if (body.visibility != null && String(body.visibility).trim() !== "" && !nextVisibility) {
+          return NextResponse.json({ message: "Invalid visibility" }, { status: 400 });
+        }
+        updates.visibility = nextVisibility;
       }
     }
 
@@ -281,7 +295,24 @@ export async function PATCH(
       .eq("id", expenseId);
 
     if (updateError) {
+      if (updates.visibility && missingVisibilityColumn(updateError)) {
+        return NextResponse.json(
+          {
+            message:
+              "Expense visibility cannot be saved until the expenses visibility update is applied. Nothing was changed.",
+          },
+          { status: 503 }
+        );
+      }
       return NextResponse.json({ message: updateError.message }, { status: 500 });
+    }
+    const nextVisibility = parseExpenseVisibility(updates.visibility);
+    if (isOwner && nextVisibility && expense.receipt_file_id) {
+      await alignReceiptDocumentVisibility(admin, {
+        receiptId: String(expense.receipt_file_id),
+        visibility: nextVisibility,
+        userId: user.id,
+      });
     }
 
     if (childIds != null) {

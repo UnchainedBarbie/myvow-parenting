@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { documentOpensInline, downloadDispositionName, originalDocumentName } from "@/lib/documents-files";
 import { documentDownloadAccess, type DocumentLinkScope } from "@/lib/documents-tab";
+import { expenseVisibleToViewer, readExpenses } from "@/lib/expenses-visibility";
 import { createClient } from "@/lib/supabase/server";
 import { getServiceRoleClient } from "@/lib/supabase/server";
 
@@ -69,6 +70,25 @@ export async function GET(
     });
     if (access === "not_found") return NextResponse.json({ error: "Document not found" }, { status: 404 });
     if (access === "forbidden") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+
+    const linkedExpenses = await readExpenses(
+      (columns) =>
+        admin
+          .from("expenses")
+          .select(columns)
+          .eq("receipt_file_id", id)
+          .eq("case_id", doc.case_id)
+          .is("deleted_at", null),
+      "id"
+    );
+    if (
+      !linkedExpenses.error &&
+      linkedExpenses.rows.some(
+        (row) => !expenseVisibleToViewer(row, { userId: user.id, role: membership?.role ?? null })
+      )
+    ) {
+      return NextResponse.json({ error: "Document not found" }, { status: 404 });
+    }
 
     const storagePath = String(doc.storage_path ?? "").trim();
     if (!storagePath) return NextResponse.json({ error: "The stored file is missing." }, { status: 404 });

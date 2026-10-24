@@ -3,6 +3,11 @@ import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
 import { computeAllocationFromParentingPlan, allocationStatusForDb } from "@/lib/expenses-allocation";
 import { planExpenseEntry, type ExpenseLoggingIntent, type ExpensePayer } from "@/lib/expenses-sharing";
 import { expenseWorkflowStatus } from "@/lib/expenses-share";
+import {
+  alignReceiptDocumentVisibility,
+  missingVisibilityColumn,
+  parseExpenseVisibility,
+} from "@/lib/expenses-visibility";
 
 function parseChildIds(childIdsRaw: unknown, childId?: string | null): string[] {
   if (Array.isArray(childIdsRaw)) {
@@ -45,6 +50,7 @@ export async function POST(request: NextRequest) {
       paid_by,
       sharing_intent,
       stated_percent,
+      visibility,
     } = body as {
       case_id?: string;
       description?: string;
@@ -59,7 +65,12 @@ export async function POST(request: NextRequest) {
       paid_by?: ExpensePayer | null;
       sharing_intent?: ExpenseLoggingIntent | null;
       stated_percent?: number | null;
+      visibility?: string | null;
     };
+    const savedVisibility = parseExpenseVisibility(visibility);
+    if (visibility != null && String(visibility).trim() !== "" && !savedVisibility) {
+      return NextResponse.json({ message: "Invalid visibility" }, { status: 400 });
+    }
     const descTrimmed = (description ?? "").trim();
     if (!case_id || !descTrimmed || amount == null) {
       return NextResponse.json(
@@ -127,14 +138,31 @@ export async function POST(request: NextRequest) {
         incurred_date: incurred_date || null,
         category_description: category_description || null,
         status,
+        ...(savedVisibility ? { visibility: savedVisibility } : {}),
       })
       .select("id")
       .single();
     if (error) {
+      if (savedVisibility && missingVisibilityColumn(error)) {
+        return NextResponse.json(
+          {
+            message:
+              "Expense visibility cannot be saved until the expenses visibility update is applied. Nothing was saved.",
+          },
+          { status: 503 }
+        );
+      }
       return NextResponse.json(
         { message: error.message },
         { status: 500 }
       );
+    }
+    if (savedVisibility && receipt_file_id) {
+      await alignReceiptDocumentVisibility(admin, {
+        receiptId: receipt_file_id,
+        visibility: savedVisibility,
+        userId: user.id,
+      });
     }
     if (childIds.length > 0) {
       const { error: junctionError } = await admin.from("expense_children").insert(

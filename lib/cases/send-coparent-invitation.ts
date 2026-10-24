@@ -6,15 +6,34 @@ import {
   invitationBaseUrl,
   invitationDeliveryFields,
   invitationEmailText,
+  invitationMessageStream,
   inviteSlotAction,
+  providerFailure,
   type MailResult,
+  type ProviderFailure,
 } from "@/lib/cases/coparent-invitation";
 
 type Admin = ReturnType<typeof getServiceRoleClient>;
 
 export type InviteSaveResult =
-  | { ok: true; memberId: string; emailSent: boolean; error: string | null }
+  | {
+      ok: true;
+      memberId: string;
+      emailSent: boolean;
+      error: string | null;
+      failure: ProviderFailure | null;
+      messageStream: string;
+      from: string | null;
+    }
   | { ok: false; status: number; error: string };
+
+type OutboundMessage = {
+  From: string;
+  To?: string;
+  Subject: string;
+  TextBody?: string;
+  MessageStream?: string;
+};
 
 function missingInviteColumns(message: string | undefined): boolean {
   return /invitation_token_hash|invitation_expires_at|invitation_sent_at|invitation_last_error/i.test(
@@ -22,43 +41,61 @@ function missingInviteColumns(message: string | undefined): boolean {
   );
 }
 
-export async function sendCoparentInvitationEmail(input: {
-  from: string | null;
-  to: string;
-  subject: string;
-  text: string;
-}): Promise<MailResult> {
-  const token = process.env.POSTMARK_SERVER_TOKEN?.trim();
+export async function sendCoparentInvitationEmail(
+  input: {
+    from: string | null;
+    to: string;
+    subject: string;
+    text: string;
+  },
+  deps: {
+    token?: string | null;
+    send?: (message: OutboundMessage) => Promise<unknown>;
+  } = {}
+): Promise<MailResult> {
+  const token = (deps.token !== undefined ? deps.token : process.env.POSTMARK_SERVER_TOKEN)?.trim() ?? "";
   if (!token) {
     return {
       accepted: false,
+      failure: null,
       message: "The invitation was not emailed because outbound email is not configured on the server.",
     };
   }
   if (!input.from) {
     return {
       accepted: false,
+      failure: null,
       message: "The invitation was not emailed because no sender address is configured.",
     };
   }
+  const messageStream = invitationMessageStream();
+  const payload: OutboundMessage = {
+    From: input.from,
+    To: input.to,
+    Subject: input.subject,
+    TextBody: input.text,
+    MessageStream: messageStream,
+  };
   try {
-    const client = new ServerClient(token);
-    await client.sendEmail(
-      new Message(input.from, input.subject, undefined, input.text, input.to)
-    );
+    if (deps.send) {
+      await deps.send(payload);
+    } else {
+      const client = new ServerClient(token);
+      const message = new Message(input.from, input.subject, undefined, input.text, input.to);
+      message.MessageStream = messageStream;
+      await client.sendEmail(message);
+    }
     return { accepted: true };
   } catch (error) {
-    const message = error instanceof Error ? error.message : "The email provider did not accept the invitation.";
-    return { accepted: false, message };
+    const failure = providerFailure(error);
+    return { accepted: false, failure, message: failure.message };
   }
 }
 
-async function senderAddress(admin: Admin, caseId: string): Promise<string | null> {
+/** Verified transactional sender. The case inbound address is not a sender. */
+async function senderAddress(): Promise<string | null> {
   const configured = process.env.POSTMARK_FROM_EMAIL?.trim();
-  if (configured) return configured;
-  const { data } = await admin.from("cases").select("ingest_email").eq("id", caseId).maybeSingle();
-  const ingest = (data as { ingest_email?: string | null } | null)?.ingest_email?.trim();
-  return ingest || null;
+  return configured || null;
 }
 
 async function markReplyAddress(admin: Admin, memberId: string, email: string): Promise<void> {
@@ -77,7 +114,13 @@ export async function deliverCoparentInvitation(
     previousSentAt: string | null;
     now?: Date;
   }
-): Promise<{ emailSent: boolean; error: string | null }> {
+): Promise<{
+  emailSent: boolean;
+  error: string | null;
+  failure: ProviderFailure | null;
+  messageStream: string;
+  from: string | null;
+}> {
   const now = input.now ?? new Date();
   const created = createInvitationToken(now);
   const stored = await admin
@@ -92,17 +135,27 @@ export async function deliverCoparentInvitation(
     if (missingInviteColumns(stored.error.message)) {
       return {
         emailSent: false,
+        failure: null,
+        messageStream: invitationMessageStream(),
+        from: null,
         error:
           "The co-parent was saved, but invitation email cannot be sent until the invitation columns are added in the database.",
       };
     }
-    return { emailSent: false, error: "The invitation could not be prepared." };
+    return {
+      emailSent: false,
+      failure: null,
+      messageStream: invitationMessageStream(),
+      from: null,
+      error: "The invitation could not be prepared.",
+    };
   }
 
+  const from = await senderAddress();
   const link = `${invitationBaseUrl(input.origin)}/invite?token=${encodeURIComponent(created.token)}`;
   const message = invitationEmailText({ inviterName: input.inviterName, link });
   const mail = await sendCoparentInvitationEmail({
-    from: await senderAddress(admin, input.caseId),
+    from,
     to: input.email,
     subject: message.subject,
     text: message.text,
@@ -122,12 +175,21 @@ export async function deliverCoparentInvitation(
   if (written.error && !missingInviteColumns(written.error.message)) {
     return {
       emailSent: false,
+      failure: mail.accepted ? null : mail.failure,
+      messageStream: invitationMessageStream(),
+      from,
       error: delivery.emailSent
         ? "The email provider accepted the invitation, but the sent time could not be saved."
         : delivery.error,
     };
   }
-  return { emailSent: delivery.emailSent, error: delivery.error };
+  return {
+    emailSent: delivery.emailSent,
+    error: delivery.error,
+    failure: mail.accepted ? null : mail.failure,
+    messageStream: invitationMessageStream(),
+    from,
+  };
 }
 
 export async function saveAndInviteCoparent(
@@ -238,5 +300,13 @@ export async function saveAndInviteCoparent(
     origin: input.origin,
     previousSentAt,
   });
-  return { ok: true, memberId, emailSent: delivery.emailSent, error: delivery.error };
+  return {
+    ok: true,
+    memberId,
+    emailSent: delivery.emailSent,
+    error: delivery.error,
+    failure: delivery.failure,
+    messageStream: delivery.messageStream,
+    from: delivery.from,
+  };
 }

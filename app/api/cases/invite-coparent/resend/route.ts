@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { invitationFailureLog } from "@/lib/cases/coparent-invitation";
 import { normalizeMemberEmail } from "@/lib/cases/register-member-email";
 import { deliverCoparentInvitation } from "@/lib/cases/send-coparent-invitation";
 import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
@@ -60,8 +61,14 @@ export async function POST(req: NextRequest) {
     });
     if (!delivery.emailSent) {
       console.error(
-        "[cases/invite-coparent/resend] provider did not accept the invitation:",
-        delivery.error
+        "[cases/invite-coparent/resend] provider rejected",
+        invitationFailureLog({
+          failure: delivery.failure,
+          publicError: delivery.error,
+          messageStream: delivery.messageStream,
+          from: delivery.from,
+          serverTokenConfigured: Boolean(process.env.POSTMARK_SERVER_TOKEN?.trim()),
+        })
       );
     }
     return NextResponse.json({ ok: true, emailSent: delivery.emailSent, error: delivery.error });

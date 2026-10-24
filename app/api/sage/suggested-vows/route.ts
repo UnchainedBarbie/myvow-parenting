@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
+import { loadVisibleExpenses } from "@/lib/expenses-visibility";
 
 type SuggestedVow = { vow: string; reason: string };
 
@@ -19,7 +20,7 @@ export async function POST(_request: NextRequest) {
     // Resolve active case for this user
     const { data: membership } = await admin
       .from("case_members")
-      .select("case_id")
+      .select("case_id, role")
       .eq("user_id", user.id)
       .limit(1)
       .maybeSingle();
@@ -54,14 +55,20 @@ export async function POST(_request: NextRequest) {
       .limit(50);
 
     // Expenses: last 30 days in this case
-    const { data: expenses } = await admin
-      .from("expenses")
-      .select("description, status, dispute_reason, created_at")
-      .eq("case_id", caseId)
-      .is("deleted_at", null)
-      .gte("created_at", thirtyDaysAgo.toISOString())
-      .order("created_at", { ascending: false })
-      .limit(100);
+    const expenseLoaded = await loadVisibleExpenses(
+      (columns) =>
+        admin
+          .from("expenses")
+          .select(columns)
+          .eq("case_id", caseId)
+          .is("deleted_at", null)
+          .gte("created_at", thirtyDaysAgo.toISOString())
+          .order("created_at", { ascending: false })
+          .limit(100),
+      "description, status, dispute_reason, created_at",
+      { userId: user.id, role: membership?.role ?? null }
+    );
+    const expenses = expenseLoaded.rows;
 
     // Upcoming calendar events in next 14 days
     const { data: events } = await admin

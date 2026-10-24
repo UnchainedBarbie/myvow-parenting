@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
+import { presentMessageForViewer } from "@/lib/messages/parent-message-visibility";
 
 export async function GET(
   _request: NextRequest,
@@ -47,7 +48,7 @@ export async function GET(
     const { data: rawMessages, error: msgError } = await admin
       .from("messages")
       .select(
-        "id, direction, original_content, ai_rewritten_content, category, sub_category, current_status, external_comm_id, created_at, ai_classification, emotional_intensity_score, ai_rewritten, intensity_score, intensity_flag, delivery_status, delivered_at, is_emergency"
+        "id, sender_id, direction, original_content, ai_rewritten_content, category, sub_category, current_status, external_comm_id, created_at, ai_classification, emotional_intensity_score, ai_rewritten, intensity_score, intensity_flag, delivery_status, delivered_at, is_emergency"
       )
       .eq("conversation_id", conversationId)
       .order("created_at", { ascending: true });
@@ -59,9 +60,18 @@ export async function GET(
       );
     }
 
-    const baseMessages = (rawMessages ?? []).filter((m) => {
-      if (m.direction === "outgoing") return true;
-      return m.delivery_status === "delivered" || m.delivered_at != null;
+    const baseMessages = (rawMessages ?? []).flatMap((m) => {
+      const view = presentMessageForViewer(
+        m as {
+          sender_id?: string | null;
+          direction?: string | null;
+          delivery_status?: string | null;
+          delivered_at?: string | null;
+        },
+        user.id
+      );
+      if (!view.show) return [];
+      return [{ ...m, direction: view.direction }];
     });
 
     const messageIds = baseMessages.map((m) => m.id as string);

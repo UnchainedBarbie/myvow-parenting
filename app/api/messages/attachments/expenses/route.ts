@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
+import { loadVisibleExpenses } from "@/lib/expenses-visibility";
 
 export async function GET() {
   try {
@@ -19,7 +20,7 @@ export async function GET() {
       error: membershipError,
     } = await admin
       .from("case_members")
-      .select("case_id")
+      .select("case_id, role")
       .eq("user_id", user.id)
       .limit(1)
       .maybeSingle();
@@ -36,18 +37,23 @@ export async function GET() {
       return NextResponse.json({ expenses: [] });
     }
 
-    const { data, error } = await admin
-      .from("expenses")
-      .select("id, description, amount, category, status, created_at")
-      .eq("case_id", caseId)
-      .is("deleted_at", null)
-      .order("created_at", { ascending: false });
+    const loaded = await loadVisibleExpenses(
+      (columns) =>
+        admin
+          .from("expenses")
+          .select(columns)
+          .eq("case_id", caseId)
+          .is("deleted_at", null)
+          .order("created_at", { ascending: false }),
+      "id, description, amount, category, status, created_at",
+      { userId: user.id, role: membership?.role ?? null }
+    );
 
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
+    if (loaded.error) {
+      return NextResponse.json({ error: loaded.error.message }, { status: 500 });
     }
 
-    return NextResponse.json({ expenses: data ?? [] });
+    return NextResponse.json({ expenses: loaded.rows });
   } catch (e) {
     return NextResponse.json(
       { error: e instanceof Error ? e.message : "Failed to load expenses" },

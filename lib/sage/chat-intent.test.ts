@@ -12,7 +12,7 @@ import {
 import { knownCoparentsFromRows } from "@/lib/sage/known-coparents";
 import type { ConversationContext } from "@/lib/sage/conversation-context";
 import {
-  confirmedDeliveryFields,
+  acceptedEmailFields,
   messageSendDecision,
   parentMessageFields,
 } from "@/lib/messages/deliver-parent-message";
@@ -247,8 +247,22 @@ assert.equal(
   }).include,
   true
 );
-const delivered = confirmedDeliveryFields("<msg-1@myvow.in>", "2026-10-21T19:00:00.000Z");
-assert.equal(delivered.delivery_status, "delivered");
+const accepted = acceptedEmailFields("<msg-1@myvow.in>");
+assert.equal(accepted.delivery_status, "email_accepted");
+assert.equal(accepted.delivered_at, null);
+assert.equal(accepted.email_message_id, "<msg-1@myvow.in>");
+assert.notEqual(accepted.delivery_status, "delivered");
+assert.equal(
+  classifyCommunication({
+    status: "sent",
+    deliveryStatus: String(accepted.delivery_status),
+    deliveredAt: null,
+    senderIsParent: true,
+    selfForward: false,
+    sageOrJournal: false,
+  }).include,
+  true
+);
 assert.equal(
   classifyCommunication({
     status: "sent",

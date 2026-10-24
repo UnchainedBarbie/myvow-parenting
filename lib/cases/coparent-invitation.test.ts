@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { sendCoparentInvitationEmail } from "@/lib/cases/send-coparent-invitation";
 import { knownCoparentsFromRows } from "@/lib/sage/known-coparents";
 import {
   acceptanceUpdate,
@@ -8,11 +9,16 @@ import {
   hashInvitationToken,
   invitationDeliveryFields,
   invitationEmailText,
+  invitationFailureLog,
+  invitationMessageStream,
   inviteSlotAction,
   maskEmail,
   presentCoparent,
+  providerFailure,
   publicDeliveryError,
   safeInviteNext,
+  safeProviderMessage,
+  senderDomain,
   type InviteRow,
 } from "@/lib/cases/coparent-invitation";
 
@@ -90,7 +96,11 @@ assert.equal("external_email" in firstSend.fields, false);
 const notConfigured = invitationDeliveryFields({
   previousSentAt: null,
   now,
-  mail: { accepted: false, message: "The invitation was not emailed because outbound email is not configured on the server." },
+  mail: {
+    accepted: false,
+    failure: null,
+    message: "The invitation was not emailed because outbound email is not configured on the server.",
+  },
   tokenHash: "hash-config",
   expiresAt: future,
 });
@@ -102,7 +112,7 @@ assert.doesNotMatch(notConfigured.error ?? "", /delivered/i);
 const failedSend = invitationDeliveryFields({
   previousSentAt: null,
   now,
-  mail: { accepted: false, message: "Mailbox rejected the invitation." },
+  mail: { accepted: false, failure: null, message: "Mailbox rejected the invitation." },
   tokenHash: "hash-1",
   expiresAt: future,
 });
@@ -113,7 +123,7 @@ assert.match(failedSend.error ?? "", /Mailbox rejected/);
 const failedResend = invitationDeliveryFields({
   previousSentAt: "2026-10-01T00:00:00.000Z",
   now,
-  mail: { accepted: false, message: "Mailbox rejected the invitation." },
+  mail: { accepted: false, failure: null, message: "Mailbox rejected the invitation." },
   tokenHash: "hash-2",
   expiresAt: future,
 });
@@ -303,4 +313,83 @@ const beforeAcceptance = knownCoparentsFromRows(
 );
 assert.deepEqual(beforeAcceptance, [{ name: "Riley", email: "riley@example.com" }]);
 
-console.log("coparent invitation tests passed");
+async function providerRejectionTests(): Promise<void> {
+const previousStream = process.env.POSTMARK_MESSAGE_STREAM;
+delete process.env.POSTMARK_MESSAGE_STREAM;
+const providerText = "The Server Token you provided is invalid, or you do not have access to the server.";
+assert.equal(publicDeliveryError(providerText), "The email provider did not accept the invitation.");
+assert.match(safeProviderMessage(providerText), /Server Token you provided is invalid/);
+assert.doesNotMatch(
+  safeProviderMessage("Rejected riley@example.com https://app.example.com/invite?token=invite-token-value abcdefghijklmnopqrstuvwxyz012345"),
+  /riley@|invite-token-value|abcdefghijklmnopqrstuvwxyz012345/
+);
+
+const parsed = providerFailure({ message: providerText, code: 10, statusCode: 401 });
+assert.equal(parsed.httpStatus, 401);
+assert.equal(parsed.errorCode, 10);
+assert.match(parsed.message, /Server Token/);
+
+const logged = invitationFailureLog({
+  failure: parsed,
+  publicError: publicDeliveryError(providerText),
+  messageStream: invitationMessageStream(),
+  from: "MyVow <invites@myvow.example>",
+  serverTokenConfigured: true,
+});
+assert.equal(logged.httpStatus, 401);
+assert.equal(logged.errorCode, 10);
+assert.equal(logged.messageStream, "outbound");
+assert.equal(logged.senderDomain, "myvow.example");
+assert.equal(logged.serverTokenConfigured, true);
+assert.doesNotMatch(JSON.stringify(logged), /riley@|invite-token|POSTMARK/);
+
+const missingToken = await sendCoparentInvitationEmail(
+  { from: "invites@myvow.example", to: "riley@example.com", subject: "Invite", text: "hello" },
+  { token: "" }
+);
+assert.equal(missingToken.accepted, false);
+if (!missingToken.accepted) {
+  assert.equal(missingToken.failure, null);
+  assert.match(missingToken.message, /not configured/);
+}
+
+let sentStream = "";
+const rejected = await sendCoparentInvitationEmail(
+  { from: "invites@myvow.example", to: "riley@example.com", subject: "Invite", text: "hello" },
+  {
+    token: "configured",
+    send: async (message) => {
+      sentStream = message.MessageStream ?? "";
+      throw { message: providerText, code: 10, statusCode: 401 };
+    },
+  }
+);
+assert.equal(sentStream, "outbound");
+assert.equal(rejected.accepted, false);
+if (!rejected.accepted) {
+  assert.equal(rejected.failure?.httpStatus, 401);
+  assert.equal(rejected.failure?.errorCode, 10);
+  assert.match(rejected.failure?.message ?? "", /Server Token/);
+}
+
+const keptPending = invitationDeliveryFields({
+  previousSentAt: "2026-10-01T00:00:00.000Z",
+  now,
+  mail: { accepted: false, failure: parsed, message: providerText },
+  tokenHash: "hash-kept",
+  expiresAt: future,
+});
+assert.equal(keptPending.emailSent, false);
+assert.equal(keptPending.fields.invitation_sent_at, "2026-10-01T00:00:00.000Z");
+assert.equal(keptPending.fields.invitation_last_error, "The email provider did not accept the invitation.");
+assert.equal("invitation_status" in keptPending.fields, false);
+if (previousStream === undefined) delete process.env.POSTMARK_MESSAGE_STREAM;
+else process.env.POSTMARK_MESSAGE_STREAM = previousStream;
+}
+
+providerRejectionTests()
+  .then(() => console.log("coparent invitation tests passed"))
+  .catch((error) => {
+    console.error(error);
+    process.exit(1);
+  });

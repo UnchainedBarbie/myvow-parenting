@@ -21,6 +21,7 @@ import { buildCalendarReportPdf } from "@/lib/reports/calendar-report-pdf";
 import { loadCalendarReport } from "@/lib/reports/calendar-report-load";
 import { jsPDF } from "jspdf";
 import { randomUUID } from "crypto";
+import { loadVisibleExpenses } from "@/lib/expenses-visibility";
 
 const REPORT_TYPES = [
   "communication_report",
@@ -92,7 +93,7 @@ export async function POST(request: NextRequest) {
     const admin = getServiceRoleClient();
     const { data: membership } = await admin
       .from("case_members")
-      .select("case_id")
+      .select("case_id, role")
       .eq("case_id", case_id)
       .eq("user_id", user.id)
       .maybeSingle();
@@ -393,23 +394,25 @@ export async function POST(request: NextRequest) {
         .select("id, conversation_id, created_at, direction, original_content, ai_rewritten_content, ai_classification, category")
         .eq("case_id", case_id)
         .order("created_at", { ascending: true });
-      let expQuery = admin
-        .from("expenses")
-        .select("id, created_at, description, amount, category, status, amount_owed")
-        .eq("case_id", case_id)
-        .is("deleted_at", null)
-        .order("created_at", { ascending: true });
-      if (start) {
-        msgQuery = msgQuery.gte("created_at", start);
-        expQuery = expQuery.gte("created_at", start);
-      }
-      if (end) {
-        msgQuery = msgQuery.lte("created_at", end);
-        expQuery = expQuery.lte("created_at", end);
-      }
-      const [{ data: messages }, { data: expenses }, { data: sessions }] = await Promise.all([
+      if (start) msgQuery = msgQuery.gte("created_at", start);
+      if (end) msgQuery = msgQuery.lte("created_at", end);
+      const [{ data: messages }, expenseLoaded, { data: sessions }] = await Promise.all([
         msgQuery,
-        expQuery,
+        loadVisibleExpenses(
+          (columns) => {
+            let query = admin
+              .from("expenses")
+              .select(columns)
+              .eq("case_id", case_id)
+              .is("deleted_at", null)
+              .order("created_at", { ascending: true });
+            if (start) query = query.gte("created_at", start);
+            if (end) query = query.lte("created_at", end);
+            return query;
+          },
+          "id, created_at, description, amount, category, status, amount_owed",
+          { userId: user.id, role: membership.role }
+        ),
         admin
           .from("sage_sessions")
           .select("id, title, category, documented, documented_at, user_id")
@@ -438,7 +441,7 @@ export async function POST(request: NextRequest) {
         category: m.category,
         flags: flagsByMsg[m.id] ?? [],
       }));
-      const expRows: ExpenseRecord[] = (expenses ?? []).map((e) => ({
+      const expRows: ExpenseRecord[] = expenseLoaded.rows.map((e) => ({
         id: e.id,
         created_at: e.created_at,
         description: e.description,

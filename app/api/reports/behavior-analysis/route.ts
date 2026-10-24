@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
+import { loadVisibleExpenses } from "@/lib/expenses-visibility";
 
 type BehaviorAnalysisReportData = {
   summary: {
@@ -183,7 +184,7 @@ export async function POST(request: NextRequest) {
     // Resolve the user's case_id from case_members (first membership).
     const { data: membership, error: membershipError } = await admin
       .from("case_members")
-      .select("case_id")
+      .select("case_id, role")
       .eq("user_id", user.id)
       .limit(1)
       .maybeSingle();
@@ -371,16 +372,20 @@ export async function POST(request: NextRequest) {
     };
 
     // 3. Expenses for this case within date range.
-    const { data: expenses } = await admin
-      .from("expenses")
-      .select(
-        "id, created_at, amount, amount_owed, status, dispute_reason, paid_at"
-      )
-      .eq("case_id", caseId)
-      .is("deleted_at", null)
-      .gte("created_at", fromIso)
-      .lte("created_at", toIso)
-      .order("created_at", { ascending: true });
+    const expenseLoaded = await loadVisibleExpenses(
+      (columns) =>
+        admin
+          .from("expenses")
+          .select(columns)
+          .eq("case_id", caseId)
+          .is("deleted_at", null)
+          .gte("created_at", fromIso)
+          .lte("created_at", toIso)
+          .order("created_at", { ascending: true }),
+      "id, created_at, amount, amount_owed, status, dispute_reason, paid_at",
+      { userId: user.id, role: membership.role }
+    );
+    const expenses = expenseLoaded.rows;
 
     const expenseStatusCounts = (expenses ?? []).reduce(
       (acc, e) => {

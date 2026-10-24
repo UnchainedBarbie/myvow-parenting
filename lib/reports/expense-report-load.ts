@@ -1,6 +1,7 @@
 import archiver from "archiver";
 import { getServiceRoleClient } from "@/lib/supabase/server";
 import { documentAuthorizedForViewer, formatDocumentNumber } from "@/lib/documents-tab";
+import { loadVisibleExpenses } from "@/lib/expenses-visibility";
 import { classifyReceiptDocument } from "@/lib/reports/evidence-refs";
 import {
   classifySupportingFile,
@@ -98,7 +99,7 @@ export async function loadExpenseReport(input: {
   embedInPdf?: boolean;
 }): Promise<ExpenseReportLoad> {
   const { admin, caseId, userId } = input;
-  const [caseResult, memberResult, viewerResult, expenseResult] = await Promise.all([
+  const [caseResult, memberResult, viewerResult, roleResult] = await Promise.all([
     admin.from("cases").select("id, family_code").eq("id", caseId).maybeSingle(),
     admin
       .from("case_members")
@@ -106,19 +107,23 @@ export async function loadExpenseReport(input: {
       .eq("case_id", caseId)
       .eq("role", "parent"),
     admin.from("users").select("id, full_name, email, timezone").eq("id", userId).maybeSingle(),
-    admin
-      .from("expenses")
-      .select(
-        "id, expense_number, created_at, incurred_date, description, category, category_description, amount, submitted_by, amount_owed, other_parent_share, other_parent_percent, split_label, allocation_status, status, dispute_reason, approved_by, approved_at, resolved_at, paid_at, payment_method, payment_reference, payment_notes, receipt_file_id"
-      )
-      .eq("case_id", caseId)
-      .is("deleted_at", null)
-      .order("created_at", { ascending: true })
-      .order("id", { ascending: true }),
+    admin.from("case_members").select("role").eq("case_id", caseId).eq("user_id", userId).maybeSingle(),
   ]);
+  const expenseLoaded = await loadVisibleExpenses(
+    (columns) =>
+      admin
+        .from("expenses")
+        .select(columns)
+        .eq("case_id", caseId)
+        .is("deleted_at", null)
+        .order("created_at", { ascending: true })
+        .order("id", { ascending: true }),
+    "id, expense_number, created_at, incurred_date, description, category, category_description, amount, submitted_by, amount_owed, other_parent_share, other_parent_percent, split_label, allocation_status, status, dispute_reason, approved_by, approved_at, resolved_at, paid_at, payment_method, payment_reference, payment_notes, receipt_file_id",
+    { userId, role: (roleResult.data as { role?: string | null } | null)?.role ?? null }
+  );
 
-  if (expenseResult.error) {
-    throw new Error(expenseResult.error.message);
+  if (expenseLoaded.error) {
+    throw new Error(expenseLoaded.error.message);
   }
 
   const timeZone = safeZone((viewerResult.data as { timezone?: string | null } | null)?.timezone);
@@ -137,7 +142,7 @@ export async function loadExpenseReport(input: {
         .filter((id): id is string => typeof id === "string" && id.length > 0)
     ),
   ];
-  const rawExpenses = expenseResult.data ?? [];
+  const rawExpenses = expenseLoaded.rows;
   const relatedIds = [
     ...new Set(
       rawExpenses.flatMap((expense) => {
@@ -252,10 +257,18 @@ export async function loadExpenseReport(input: {
     }
   }
 
+  const viewerRole = (roleResult.data as { role?: string | null } | null)?.role ?? null;
   const expenses: ExpenseReportSource[] = rawExpenses.map((expense) => {
     const row = expense as Record<string, unknown>;
     const receiptId = typeof row.receipt_file_id === "string" ? row.receipt_file_id : null;
     const receipt = receiptId ? receiptDocs.get(receiptId) : undefined;
+    const receiptAllowed = Boolean(
+      receipt &&
+        documentAuthorizedForViewer(
+          { visibility: receipt.visibility, uploadedBy: receipt.uploadedBy },
+          { userId, role: viewerRole }
+        )
+    );
     return {
       id: String(row.id),
       expenseNumber: typeof row.expense_number === "number" ? row.expense_number : null,
@@ -280,11 +293,11 @@ export async function loadExpenseReport(input: {
       paymentMethod: typeof row.payment_method === "string" ? row.payment_method : null,
       paymentReference: typeof row.payment_reference === "string" ? row.payment_reference : null,
       paymentNotes: typeof row.payment_notes === "string" ? row.payment_notes : null,
-      receiptName: receipt?.fileName ?? null,
-      receiptDocumentNumber: receipt?.documentNumber ?? null,
-      receiptFileId: receiptId,
+      receiptName: receiptAllowed ? receipt?.fileName ?? null : null,
+      receiptDocumentNumber: receiptAllowed ? receipt?.documentNumber ?? null : null,
+      receiptFileId: receiptAllowed ? receiptId : null,
       receiptUnavailable:
-        Boolean(receiptId) && (!receipt || !receipt.include || !receipt.storagePath?.trim()),
+        receiptAllowed && (!receipt || !receipt.include || !receipt.storagePath?.trim()),
       childName: childNamesForExpense(
         String(row.id),
         typeof row.child_id === "string" ? row.child_id : null,
@@ -318,6 +331,13 @@ export async function loadExpenseReport(input: {
       if (!raw?.receipt_file_id) continue;
       const expenseLabel = formatExpenseNumber(expense.expenseNumber) || expense.id;
       const doc = receiptDocs.get(raw.receipt_file_id);
+      const allowed =
+        doc &&
+        documentAuthorizedForViewer(
+          { visibility: doc.visibility, uploadedBy: doc.uploadedBy },
+          { userId, role: viewerRole }
+        );
+      if (doc && !allowed) continue;
       const docLabel = doc ? formatDocumentNumber(doc.documentNumber) : "";
       pending.push({
         key: raw.receipt_file_id,

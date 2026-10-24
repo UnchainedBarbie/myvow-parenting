@@ -17,7 +17,7 @@ import {
   childNamedInInstruction,
   mentionsSeveralChildren,
 } from "@/lib/sage/attachment-role";
-import { composeAnalysisReply } from "@/lib/sage/document-analysis";
+import { answerDocumentQuestion, reasonWithModel } from "@/lib/sage/document-reason";
 import { extractDocument } from "@/lib/documents/extract-document";
 import type { KnownCoparent } from "@/lib/sage/chat-intent";
 import {
@@ -481,7 +481,13 @@ async function directedAttachmentResult(
   if (instruction === "summarize") {
     if (opts.bytes && opts.bytes.length > 0) {
       const extracted = await extractDocument(opts.bytes, fileName);
-      return explainAttachment(opts, composeAnalysisReply(fileName, extracted));
+      const reply = await answerDocumentQuestion({
+        question: opts.caption,
+        fileName,
+        extracted,
+        reason: reasonWithModel,
+      });
+      return explainAttachment(opts, reply);
     }
     return explainAttachment(opts, `${fileName} is attached. I haven't read its contents.`);
   }

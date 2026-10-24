@@ -208,8 +208,8 @@ export async function POST(request: NextRequest) {
               .from("messages")
               .update({
                 email_message_id: messageId,
-                delivery_status: "delivered",
-                delivered_at: new Date().toISOString(),
+                delivery_status: "email_accepted",
+                delivered_at: null,
               })
               .eq("id", (message as { id: string }).id);
             if (!emailThreadId) {

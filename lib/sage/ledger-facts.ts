@@ -11,6 +11,7 @@ import {
 import type { ConversationContext } from "@/lib/sage/conversation-context";
 import { soleFactLabel, type DetailQuestion } from "@/lib/sage/outbound-facts";
 import { getServiceRoleClient } from "@/lib/supabase/server";
+import { expenseVisibleToViewer, readExpenses, storedExpenseVisibility } from "@/lib/expenses-visibility";
 
 export type LedgerLookup = {
   caseId: string;
@@ -19,6 +20,9 @@ export type LedgerLookup = {
   childIds: string[];
   corpus: string;
   subject?: string | null;
+  /** When set, private expenses belonging to someone else are left out. */
+  viewerId?: string | null;
+  viewerRole?: string | null;
 };
 
 function sameSubject(asked: string | null, established: string | null): boolean {
@@ -62,20 +66,35 @@ function recordFromConversation(
 
 async function matchingMoney(
   caseId: string,
-  corpus: string
+  corpus: string,
+  viewerId: string | null,
+  viewerRole: string | null
 ): Promise<string | null> {
   const admin = getServiceRoleClient();
-  const { data, error } = await admin
-    .from("expenses")
-    .select("description, amount")
-    .eq("case_id", caseId)
-    .order("created_at", { ascending: false })
-    .limit(40);
-  if (error) {
-    console.error("[sage/outbound] expense lookup failed:", error.message);
+  const loaded = await readExpenses(
+    (columns) =>
+      admin
+        .from("expenses")
+        .select(columns)
+        .eq("case_id", caseId)
+        .is("deleted_at", null)
+        .order("created_at", { ascending: false })
+        .limit(40),
+    "description, amount"
+  );
+  if (loaded.error) {
+    console.error("[sage/outbound] expense lookup failed:", loaded.error.message);
     return null;
   }
-  const hits = ((data ?? []) as { description?: string | null; amount?: number | string | null }[])
+  const visible = loaded.rows.filter((row) => {
+    if (viewerId) {
+      return expenseVisibleToViewer(row, { userId: viewerId, role: viewerRole ?? "parent" });
+    }
+    const raw = typeof row.visibility === "string" ? row.visibility.trim() : "";
+    const stored = storedExpenseVisibility(raw);
+    return !raw || stored === "parents_only" || stored === "family";
+  });
+  const hits = (visible as { description?: string | null; amount?: number | string | null }[])
     .filter((row) => eventWordsOverlap(corpus, row.description ?? ""))
     .map((row) => {
       const amount = Number(row.amount);
@@ -128,7 +147,12 @@ export async function matchingLedgerText(input: LedgerLookup): Promise<string> {
   });
   const parts: string[] = [];
   if (events && events.length === 1) parts.push(calendarLine(events[0]));
-  const money = await matchingMoney(input.caseId, `${input.corpus} ${input.subject ?? ""}`);
+  const money = await matchingMoney(
+    input.caseId,
+    `${input.corpus} ${input.subject ?? ""}`,
+    input.viewerId ?? null,
+    input.viewerRole ?? null
+  );
   if (money) parts.push(money);
   const documentLine = await matchingDocumentLine(
     input.caseId,
@@ -170,7 +194,7 @@ export async function resolveAskedDetail(input: LedgerLookup & {
   }
 
   if (input.asked.kind === "amount") {
-    const money = await matchingMoney(input.caseId, input.corpus);
+    const money = await matchingMoney(input.caseId, input.corpus, input.viewerId ?? null, input.viewerRole ?? null);
     if (money) return { recordLine: money, ledgerText: money };
   }
 

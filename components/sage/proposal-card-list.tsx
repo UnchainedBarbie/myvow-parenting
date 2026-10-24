@@ -11,6 +11,7 @@ import {
 } from "@/lib/sage/proposal-kind";
 import type { SageItem, SageProposal } from "./proposal-types";
 import { isSupersededProposal } from "@/lib/sage/proposal-lifecycle";
+import { parentProposalStatusMark } from "@/lib/messages/parent-message-visibility";
 import {
   calendarCardDate,
   canUndo,
@@ -125,7 +126,12 @@ export function ProposalCardList({
           const approved = p.approved === true;
           const waived = isWaived(p);
           const executed = p.executed === true;
-          const done = isCalendarUpdateProposal(p.type) ? isCommitted(p) : executed;
+          const savedMessageId = (p.result_message_id ?? "").trim();
+          const done = isCalendarUpdateProposal(p.type)
+            ? isCommitted(p)
+            : p.type === "reply_coparent"
+              ? savedMessageId.length > 0
+              : executed;
           const noteOnly = p.type === "note_only";
           const actionable = isActionable(p);
           const showDate = !historical && actionable && needsDateField(p, item);
@@ -237,9 +243,10 @@ export function ProposalCardList({
                           : isLogDocumentProposal(p.type)
                             ? "✓ filed"
                             : p.type === "reply_coparent"
-                              ? p.delivery_status === "delivered"
-                                ? "✓ delivered"
-                                : "✓ sent"
+                              ? parentProposalStatusMark({
+                                  deliveryStatus: p.delivery_status,
+                                  deliveredAt: p.delivered_at,
+                                })
                               : "✓ done"}
                     </span>
                   ) : !historical && approved && !formPending ? (

@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { analysisAccess, type AnalysisFile, type AnalysisViewer } from "@/lib/sage/document-analysis";
-import { requestsDocumentAnalysis } from "@/lib/sage/document-read";
+import { requestsDocumentAnalysis, type AnalysisTurn } from "@/lib/sage/document-read";
 import { isMessageId } from "@/lib/sage/original-message";
 
 type Admin = SupabaseClient;
@@ -30,9 +30,10 @@ export async function prepareAnalysisRead(
     role: string | null;
     sessionId: string | null;
     currentDocumentId: string | null;
+    recentTurns?: AnalysisTurn[];
   }
 ): Promise<{ files: AnalysisFile[]; loadBytes: (file: AnalysisFile) => Promise<Buffer | null> } | null> {
-  if (!requestsDocumentAnalysis(input.message, true)) return null;
+  if (!requestsDocumentAnalysis(input.message, true, input.recentTurns ?? [])) return null;
   const viewer: AnalysisViewer = { userId: input.userId, role: input.role };
   const session = input.sessionId ? await sessionLinks(admin, input.sessionId, input.userId) : { messageIds: [], texts: [] };
   const linked = await linksForMessages(admin, session.messageIds);

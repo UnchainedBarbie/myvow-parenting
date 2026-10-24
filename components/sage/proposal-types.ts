@@ -29,8 +29,9 @@ export type SageProposal = {
   result_expense_id?: string;
   result_document_id?: string;
   result_message_id?: string;
-  /** sent until the mail service confirms; delivered only after that confirmation. */
+  /** saved in Messages, email_accepted after Postmark accepts, or delivered only with a delivery time. */
   delivery_status?: string | null;
+  delivered_at?: string | null;
   send_claim_at?: string | null;
   recipient_name?: string | null;
   recipient_email?: string | null;

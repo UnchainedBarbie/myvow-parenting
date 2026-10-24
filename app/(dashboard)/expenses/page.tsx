@@ -2,6 +2,8 @@ import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import { ExpenseForm } from "@/components/expenses/expense-form";
 import { ExpenseList, type ExpenseRow } from "@/components/expenses/expense-list";
+import { documentAuthorizedForViewer } from "@/lib/documents-tab";
+import { loadVisibleExpenses } from "@/lib/expenses-visibility";
 
 function compareChildrenByAge(
   a: { first_name?: string | null; date_of_birth?: string | null },
@@ -31,7 +33,7 @@ export default async function ExpensesPage() {
   const admin = getServiceRoleClient();
   const { data: membership } = await admin
     .from("case_members")
-    .select("case_id")
+    .select("case_id, role")
     .eq("user_id", user.id)
     .limit(1)
     .maybeSingle();
@@ -65,14 +67,18 @@ export default async function ExpensesPage() {
     .eq("case_id", caseId)
     .order("first_name");
 
-  const { data: expensesRaw } = await admin
-    .from("expenses")
-    .select(
-      "id, description, amount, category, category_description, child_id, amount_owed, other_parent_share, status, created_at, incurred_date, expense_number, submitted_by, receipt_file_id, dispute_reason, paid_at, payment_method, payment_reference, payment_notes, deleted_at, allocation_status, split_label"
-    )
-    .eq("case_id", caseId)
-    .is("deleted_at", null)
-    .order("created_at", { ascending: false });
+  const loadedExpenses = await loadVisibleExpenses(
+    (columns) =>
+      admin
+        .from("expenses")
+        .select(columns)
+        .eq("case_id", caseId)
+        .is("deleted_at", null)
+        .order("created_at", { ascending: false }),
+    "id, description, amount, category, category_description, child_id, amount_owed, other_parent_share, status, created_at, incurred_date, expense_number, submitted_by, receipt_file_id, dispute_reason, paid_at, payment_method, payment_reference, payment_notes, deleted_at, allocation_status, split_label",
+    { userId: user.id, role: membership?.role ?? null }
+  );
+  const expensesRaw = loadedExpenses.rows;
 
   const expenseIds = (expensesRaw ?? []).map((e) => e.id as string);
   const { data: expenseChildRows } =
@@ -115,14 +121,28 @@ export default async function ExpensesPage() {
     receiptIds.length > 0
       ? await admin
           .from("documents")
-          .select("id, file_name")
+          .select("id, file_name, visibility, uploaded_by")
           .in("id", receiptIds)
           .eq("status", "active")
           .is("deleted_at", null)
       : { data: [] };
+  const viewer = { userId: user.id, role: membership?.role ?? null };
   const receiptNameMap = (receiptDocs ?? []).reduce(
     (acc, row) => {
-      const r = row as { id: string; file_name: string | null };
+      const r = row as {
+        id: string;
+        file_name: string | null;
+        visibility?: string | null;
+        uploaded_by?: string | null;
+      };
+      if (
+        !documentAuthorizedForViewer(
+          { visibility: r.visibility, uploadedBy: r.uploaded_by },
+          viewer
+        )
+      ) {
+        return acc;
+      }
       acc[r.id] = r.file_name ?? null;
       return acc;
     },
@@ -169,8 +189,13 @@ export default async function ExpensesPage() {
     incurred_date: (e as { incurred_date?: string | null }).incurred_date ?? null,
     expense_number:
       (e as { expense_number?: number | null }).expense_number ?? null,
-    submitted_by: e.submitted_by,
-    receipt_file_id: e.receipt_file_id,
+    submitted_by: e.submitted_by ?? "",
+    receipt_file_id:
+      e.receipt_file_id &&
+      typeof e.receipt_file_id === "string" &&
+      Object.prototype.hasOwnProperty.call(receiptNameMap, e.receipt_file_id)
+        ? e.receipt_file_id
+        : null,
     receipt_file_name:
       e.receipt_file_id && typeof e.receipt_file_id === "string"
         ? receiptNameMap[e.receipt_file_id] ?? null
@@ -188,6 +213,10 @@ export default async function ExpensesPage() {
         | "pending"
         | null) ?? "pending",
     split_label: (e as { split_label?: string | null }).split_label ?? null,
+    visibility:
+      typeof (e as { visibility?: string | null }).visibility === "string"
+        ? (e as { visibility?: string | null }).visibility ?? null
+        : null,
   }));
 
   return (

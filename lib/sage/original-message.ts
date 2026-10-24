@@ -55,14 +55,22 @@ export function originalMessageAccess(input: {
   messageCaseId: string | null | undefined;
   direction: string | null | undefined;
   found: boolean;
+  viewerId?: string | null;
+  senderId?: string | null;
 }): "ok" | "unauthorized" | "forbidden" | "unavailable" {
   if (!input.signedIn) return "unauthorized";
   if (!input.found) return "unavailable";
-  if ((input.direction ?? "").trim().toLowerCase() !== "incoming") return "unavailable";
   const role = (input.role ?? "").trim().toLowerCase();
   if (role === "child") return "forbidden";
   if (!input.memberCaseId || input.memberCaseId !== input.messageCaseId) return "forbidden";
-  return "ok";
+  const direction = (input.direction ?? "").trim().toLowerCase();
+  if (direction === "incoming") return "ok";
+  const senderId = (input.senderId ?? "").trim();
+  const viewerId = (input.viewerId ?? "").trim();
+  if (direction === "outgoing" && senderId && viewerId && senderId !== viewerId && role === "parent") {
+    return "ok";
+  }
+  return "unavailable";
 }
 
 export function visibleOriginalAttachments(

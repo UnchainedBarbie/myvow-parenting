@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getServiceRoleClient } from "@/lib/supabase/server";
+import { readExpenses, visibleExpenseRows } from "@/lib/expenses-visibility";
 
 /**
  * POST /api/expenses/delete — soft delete expenses by ID (set deleted_at).
@@ -22,16 +23,34 @@ export async function POST(req: NextRequest) {
     const admin = getServiceRoleClient();
     const { data: membership } = await admin
       .from("case_members")
-      .select("case_id")
+      .select("case_id, role")
       .eq("user_id", user.id)
       .limit(1)
       .maybeSingle();
     if (!membership) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
+    const loaded = await readExpenses(
+      (columns) =>
+        admin.from("expenses").select(columns).in("id", ids).eq("case_id", membership.case_id).is("deleted_at", null),
+      "id"
+    );
+    if (loaded.error) {
+      return NextResponse.json({ error: loaded.error.message ?? "Could not load expenses" }, { status: 500 });
+    }
+    const allowedIds = visibleExpenseRows(loaded.rows, {
+      userId: user.id,
+      role: membership.role,
+    })
+      .map((row) => (row as { id?: string }).id)
+      .filter((id): id is string => Boolean(id));
+    if (allowedIds.length === 0) {
+      return NextResponse.json({ success: true });
+    }
+
     const { error } = await admin
       .from("expenses")
       .update({ deleted_at: new Date().toISOString() })
-      .in("id", ids)
+      .in("id", allowedIds)
       .eq("case_id", membership.case_id);
 
     if (error) {

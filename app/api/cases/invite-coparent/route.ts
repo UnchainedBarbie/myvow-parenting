@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { invitationFailureLog } from "@/lib/cases/coparent-invitation";
 import { saveAndInviteCoparent } from "@/lib/cases/send-coparent-invitation";
 import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
 
@@ -47,6 +48,18 @@ export async function POST(req: NextRequest) {
       origin: req.nextUrl.origin,
     });
     if (!saved.ok) return NextResponse.json({ error: saved.error }, { status: saved.status });
+    if (!saved.emailSent) {
+      console.error(
+        "[cases/invite-coparent] provider rejected",
+        invitationFailureLog({
+          failure: saved.failure,
+          publicError: saved.error,
+          messageStream: saved.messageStream,
+          from: saved.from,
+          serverTokenConfigured: Boolean(process.env.POSTMARK_SERVER_TOKEN?.trim()),
+        })
+      );
+    }
     return NextResponse.json({
       ok: true,
       emailSent: saved.emailSent,

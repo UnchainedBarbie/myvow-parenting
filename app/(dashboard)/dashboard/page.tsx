@@ -11,6 +11,10 @@ import { EventRequestsCard } from "@/components/dashboard/event-requests-card";
 import { OpenItemsSection } from "@/components/dashboard/open-items-section";
 import { CalendarNotices } from "@/components/dashboard/calendar-notices";
 import { loadCalendarNoticeCards } from "@/lib/calendar/load-calendar-notices";
+import { documentAuthorizedForViewer } from "@/lib/documents-tab";
+import { loadVisibleExpenses } from "@/lib/expenses-visibility";
+import { linkUnassignedParentMessages } from "@/lib/messages/deliver-parent-message";
+import { presentMessageForViewer } from "@/lib/messages/parent-message-visibility";
 type TodayEvent = {
   id: string;
   title: string;
@@ -99,7 +103,7 @@ export default async function DashboardPage() {
   const admin = getServiceRoleClient();
   const { data: membership } = await admin
     .from("case_members")
-    .select("case_id, is_primary")
+    .select("case_id, is_primary, role")
     .eq("user_id", user.id)
     .limit(1)
     .maybeSingle();
@@ -243,20 +247,26 @@ export default async function DashboardPage() {
 
   // Recent activity: calendar events, expenses, documents (and messages) merged by created_at DESC, limit 10
   const [
-    { data: recentExpensesRaw },
+    recentExpensesRaw,
     { data: recentDocumentsRaw },
     { data: recentEventsRaw },
     { data: recentMessagesRaw },
   ] = await Promise.all([
-    admin
-      .from("expenses")
-      .select("id, description, created_at")
-      .eq("case_id", caseId)
-      .order("created_at", { ascending: false })
-      .limit(10),
+    loadVisibleExpenses(
+      (columns) =>
+        admin
+          .from("expenses")
+          .select(columns)
+          .eq("case_id", caseId)
+          .is("deleted_at", null)
+          .order("created_at", { ascending: false })
+          .limit(40),
+      "id, description, created_at",
+      { userId: user.id, role: membership?.role ?? null }
+    ),
     admin
       .from("documents")
-      .select("id, title, created_at")
+      .select("id, title, created_at, visibility, uploaded_by")
       .eq("case_id", caseId)
       .eq("status", "active")
       .is("deleted_at", null)
@@ -286,14 +296,24 @@ export default async function DashboardPage() {
   };
 
   const recentActivity: RecentActivityItem[] = [
-    ...(recentExpensesRaw ?? []).map((e) => ({
+    ...(recentExpensesRaw.rows ?? []).slice(0, 10).map((e) => ({
       id: e.id as string,
       type: "expense" as const,
       label: "Expense added",
       description: (e.description as string) ?? "Expense",
       created_at: e.created_at as string,
     })),
-    ...(recentDocumentsRaw ?? []).map((d) => ({
+    ...(recentDocumentsRaw ?? [])
+      .filter((d) =>
+        documentAuthorizedForViewer(
+          {
+            visibility: (d as { visibility?: string | null }).visibility,
+            uploadedBy: (d as { uploaded_by?: string | null }).uploaded_by,
+          },
+          { userId: user.id, role: membership?.role ?? null }
+        )
+      )
+      .map((d) => ({
       id: d.id as string,
       type: "document" as const,
       label: "Document uploaded",
@@ -355,11 +375,17 @@ export default async function DashboardPage() {
   }));
 
   // Expenses: net balance + open items
-  const { data: expensesRaw } = await admin
-    .from("expenses")
-    .select("id, amount, amount_owed, other_parent_share, submitted_by, status, deleted_at")
-    .eq("case_id", caseId)
-    .is("deleted_at", null);
+  const balanceLoaded = await loadVisibleExpenses(
+    (columns) =>
+      admin
+        .from("expenses")
+        .select(columns)
+        .eq("case_id", caseId)
+        .is("deleted_at", null),
+    "id, amount, amount_owed, other_parent_share, submitted_by, status, deleted_at",
+    { userId: user.id, role: membership?.role ?? null }
+  );
+  const expensesRaw = balanceLoaded.rows;
 
   let totalOwedToYou = 0;
   let totalYouOwe = 0;
@@ -403,10 +429,11 @@ export default async function DashboardPage() {
   twoWeeksAgo.setDate(now.getDate() - 14);
   const oneWeekAgo = new Date(now);
   oneWeekAgo.setDate(now.getDate() - 7);
+  await linkUnassignedParentMessages(admin, caseId);
   const { data: messagesLast14Raw } = await admin
     .from("messages")
     .select(
-      "id, case_id, conversation_id, direction, read_at, created_at, ai_classification, emotional_intensity_score"
+      "id, case_id, conversation_id, sender_id, direction, delivery_status, delivered_at, read_at, created_at, ai_classification, emotional_intensity_score"
     )
     .eq("case_id", caseId)
     .gte("created_at", twoWeeksAgo.toISOString())
@@ -414,7 +441,10 @@ export default async function DashboardPage() {
   const messagesLast14 = (messagesLast14Raw ?? []) as {
     id: string;
     conversation_id: string | null;
+    sender_id?: string | null;
     direction: "incoming" | "outgoing";
+    delivery_status?: string | null;
+    delivered_at?: string | null;
     read_at: string | null;
     created_at: string;
     ai_classification: string | null;
@@ -475,10 +505,12 @@ export default async function DashboardPage() {
   > = {};
   for (const m of messagesLast14) {
     if (!m.conversation_id) continue;
+    const view = presentMessageForViewer(m, user.id);
+    if (!view.show) continue;
     const prev = lastMessageByConversation[m.conversation_id];
     if (!prev || new Date(m.created_at) > new Date(prev.created_at)) {
       lastMessageByConversation[m.conversation_id] = {
-        direction: m.direction,
+        direction: view.direction,
         read_at: m.read_at,
         created_at: m.created_at,
       };

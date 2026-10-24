@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
+import { linkUnassignedParentMessages } from "@/lib/messages/deliver-parent-message";
+import { presentMessageForViewer } from "@/lib/messages/parent-message-visibility";
 import { isMissingRelation, isRecordCategoryId } from "@/lib/record/record-categories";
 
 const ALLOWED_TOPICS = new Set([
@@ -66,6 +68,8 @@ export async function GET() {
       return NextResponse.json({ conversations: [] });
     }
 
+    await linkUnassignedParentMessages(admin, caseId);
+
     const { data: conversationsRaw, error: convError } = await admin
       .from("conversations")
       .select(
@@ -101,7 +105,7 @@ export async function GET() {
     const { data: messagesRaw, error: msgError } = await admin
       .from("messages")
       .select(
-        "id, conversation_id, original_content, ai_rewritten_content, direction, created_at, read_at, category, ai_classification, emotional_intensity_score, is_emergency"
+        "id, conversation_id, sender_id, original_content, ai_rewritten_content, direction, created_at, read_at, category, ai_classification, emotional_intensity_score, is_emergency, delivery_status, delivered_at"
       )
       .in("conversation_id", convIds);
 
@@ -118,7 +122,15 @@ export async function GET() {
       );
     }
 
-    const messages = (messagesRaw ?? []) as MessageRow[];
+    const messages = ((messagesRaw ?? []) as (MessageRow & {
+      sender_id?: string | null;
+      delivery_status?: string | null;
+      delivered_at?: string | null;
+    })[]).flatMap((row) => {
+      const view = presentMessageForViewer(row, user.id);
+      if (!view.show) return [];
+      return [{ ...row, direction: view.direction }];
+    });
 
     const byConversation: Record<string, MessageRow[]> = {};
     for (const m of messages) {

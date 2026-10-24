@@ -23,8 +23,6 @@ const CLOSED_STATUS = new Set([
   "completed",
 ]);
 
-const SENT_DELIVERY = new Set(["sent", "delivered"]);
-
 export type SentReplyLink = {
   proposalId: string;
   messageId: string;
@@ -54,7 +52,7 @@ export function storedMessageId(proposal: { result_message_id?: unknown }): stri
   return text(proposal.result_message_id);
 }
 
-/** The proposal itself records that this reply was sent. Approval is not enough. */
+/** The proposal records a saved message id. Approval, or a sent flag without that id, is not enough. */
 export function replyWasSent(
   proposal: {
     type?: string | null;
@@ -65,11 +63,10 @@ export function replyWasSent(
   sentMessageIds?: ReadonlySet<string>
 ): boolean {
   if (!isMessageReplyProposal(proposal)) return false;
-  if (proposal.executed === true) return true;
   const messageId = storedMessageId(proposal);
-  if (messageId && (!sentMessageIds || sentMessageIds.has(messageId))) return true;
-  const delivery = text(proposal.delivery_status).toLowerCase();
-  return SENT_DELIVERY.has(delivery);
+  if (!messageId) return false;
+  if (sentMessageIds && !sentMessageIds.has(messageId)) return false;
+  return true;
 }
 
 function resultId(proposal: ProposalRecord, key: string): string {

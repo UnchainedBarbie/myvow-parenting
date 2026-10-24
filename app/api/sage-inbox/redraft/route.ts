@@ -115,6 +115,8 @@ export async function POST(req: NextRequest) {
             childIds: Array.isArray(item.child_ids) ? item.child_ids : [],
             corpus: [item.evidence_excerpt ?? "", item.summary ?? "", guidance].join("\n"),
             subject: null,
+            viewerId: user.id,
+            viewerRole: "parent",
           })
         : "";
     const sources = [item.evidence_excerpt ?? "", guidance, ledger]

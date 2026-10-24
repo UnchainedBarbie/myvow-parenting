@@ -160,6 +160,10 @@ function deliveryStatusWords(status: string): string | null {
   switch (status.trim().toLowerCase()) {
     case "delivered":
       return "Delivered";
+    case "email_accepted":
+      return "Email accepted";
+    case "sent":
+      return "Saved in Messages";
     case "pending":
       return "Pending delivery";
     case "buffered":
@@ -181,13 +185,10 @@ export function deliveryEvidence(message: MessageRow, timezone: string): string[
   const status = message.delivery_status?.trim() ?? "";
   const deliveredAt = message.delivered_at?.trim() ?? "";
   const words = status ? deliveryStatusWords(status) : null;
-  if (deliveredAt) {
+  if (status.toLowerCase() === "delivered" && deliveredAt) {
     lines.push(`Delivered ${formatWhen(deliveredAt, timezone)}`);
-  } else if (words) {
+  } else if (words && status.toLowerCase() !== "delivered") {
     lines.push(words);
-  }
-  if (deliveredAt && words && status.toLowerCase() !== "delivered") {
-    lines.unshift(words);
   }
   return lines;
 }

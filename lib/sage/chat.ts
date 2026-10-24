@@ -27,6 +27,7 @@ import {
   performDocumentAnalysis,
   type AnalysisFile,
 } from "@/lib/sage/document-analysis";
+import { reasonWithModel, type ReasonPacket } from "@/lib/sage/document-reason";
 
 export type { ChatControl, PendingRevision };
 
@@ -65,6 +66,11 @@ export type ProcessChatMessageInput = {
   loadAnalysisBytes?: (file: AnalysisFile) => Promise<Buffer | null>;
   extractPdf?: (buffer: Buffer) => Promise<string>;
   recentTurns?: { role: "parent" | "sage"; text: string }[];
+  /**
+   * Answers a document question from extracted text.
+   * Undefined uses the model when configured. Null keeps the local answer.
+   */
+  reasonAboutDocument?: ((packet: ReasonPacket) => Promise<string | null>) | null;
   /** Attachment processing schedules its own shadow call for the same journal row. */
   shadow?: boolean;
 };
@@ -103,6 +109,8 @@ export async function processChatMessage(
     caseId: input.case_id,
     loadBytes: input.loadAnalysisBytes ?? (async () => null),
     extractPdf: input.extractPdf,
+    recentTurns: input.recentTurns,
+    reason: input.reasonAboutDocument === null ? undefined : (input.reasonAboutDocument ?? reasonWithModel),
   });
   if (read) {
     const result = analysisObservationResult(read.reply, read.fileName, input.source_id);

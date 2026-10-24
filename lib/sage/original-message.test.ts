@@ -112,6 +112,45 @@ assert.equal(
   }),
   "unavailable"
 );
+assert.equal(
+  originalMessageAccess({
+    signedIn: true,
+    role: "parent",
+    memberCaseId: "case-1",
+    messageCaseId: "case-1",
+    direction: "outgoing",
+    found: true,
+    viewerId: "parent-kevin",
+    senderId: "parent-ashley",
+  }),
+  "ok"
+);
+assert.equal(
+  originalMessageAccess({
+    signedIn: true,
+    role: "parent",
+    memberCaseId: "case-1",
+    messageCaseId: "case-1",
+    direction: "outgoing",
+    found: true,
+    viewerId: "parent-ashley",
+    senderId: "parent-ashley",
+  }),
+  "unavailable"
+);
+assert.equal(
+  originalMessageAccess({
+    signedIn: true,
+    role: "parent",
+    memberCaseId: "case-2",
+    messageCaseId: "case-1",
+    direction: "outgoing",
+    found: true,
+    viewerId: "parent-other",
+    senderId: "parent-ashley",
+  }),
+  "forbidden"
+);
 
 const rewritten = "Sage shortened this.";
 const original = "Line one\n\nLine two";

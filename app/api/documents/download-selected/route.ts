@@ -3,6 +3,8 @@ import { createClient } from "@/lib/supabase/server";
 import { getServiceRoleClient } from "@/lib/supabase/server";
 import archiver from "archiver";
 import { PassThrough, Readable } from "stream";
+import { documentAuthorizedForViewer } from "@/lib/documents-tab";
+import { expenseVisibleToViewer, readExpenses } from "@/lib/expenses-visibility";
 
 const BUCKET = "documents";
 
@@ -21,23 +23,46 @@ export async function POST(request: NextRequest) {
     if (ids.length === 0) return new Response(JSON.stringify({ error: "No ids" }), { status: 400 });
 
     const admin = getServiceRoleClient();
-    const { data: membership } = await admin.from("case_members").select("case_id").eq("user_id", user.id).limit(1).maybeSingle();
+    const { data: membership } = await admin.from("case_members").select("case_id, role").eq("user_id", user.id).limit(1).maybeSingle();
     if (!membership) return new Response("Forbidden", { status: 403 });
 
     const { data: docs, error } = await admin
       .from("documents")
-      .select("id, case_id, storage_path, file_name")
+      .select("id, case_id, storage_path, file_name, visibility, uploaded_by")
       .in("id", ids)
       .eq("case_id", membership.case_id)
       .eq("status", "active")
       .is("deleted_at", null);
-    if (error || !docs?.length) return new Response(JSON.stringify({ error: "No documents found" }), { status: 404 });
+    const allowedDocs = (docs ?? []).filter((doc) =>
+      documentAuthorizedForViewer(
+        { visibility: doc.visibility as string | null, uploadedBy: doc.uploaded_by as string | null },
+        { userId: user.id, role: membership.role }
+      )
+    );
+    const linked = await readExpenses(
+      (columns) =>
+        admin
+          .from("expenses")
+          .select(columns)
+          .eq("case_id", membership.case_id)
+          .in("receipt_file_id", ids)
+          .is("deleted_at", null),
+      "id, receipt_file_id"
+    );
+    const hiddenReceipts = new Set(
+      (linked.error ? [] : linked.rows)
+        .filter((row) => !expenseVisibleToViewer(row, { userId: user.id, role: membership.role }))
+        .map((row) => (row as { receipt_file_id?: string }).receipt_file_id)
+        .filter((id): id is string => Boolean(id))
+    );
+    const readableDocs = allowedDocs.filter((doc) => !hiddenReceipts.has(doc.id));
+    if (error || !readableDocs.length) return new Response(JSON.stringify({ error: "No documents found" }), { status: 404 });
 
     console.log("[download-selected] Bucket name (check for typos/case):", JSON.stringify(BUCKET));
     console.log("[download-selected] Method: Supabase SDK storage.download(path) — not getPublicUrl() or createSignedUrl(); path is relative to bucket.");
 
     const collected: { name: string; buffer: Buffer }[] = [];
-    for (const doc of docs) {
+    for (const doc of readableDocs) {
       const fileName = doc.file_name ?? "document";
       const storagePath = doc.storage_path;
       if (!storagePath || typeof storagePath !== "string") {

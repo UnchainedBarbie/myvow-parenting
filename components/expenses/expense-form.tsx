@@ -23,8 +23,9 @@ const EXPENSE_CATEGORIES = [
 ] as const;
 
 const VISIBILITY_OPTIONS = [
-  { value: "parents_only", label: "Parents only" },
   { value: "private", label: "Just me" },
+  { value: "parents_only", label: "Parents only" },
+  { value: "family", label: "Family" },
 ] as const;
 
 const ACCEPT = "image/*,.pdf,application/pdf";
@@ -427,6 +428,7 @@ export function ExpenseForm({
           receipt_file_id: receiptFileId,
           ...(notifyTouched ? { notify_coparent: notifyCoparent } : {}),
           paid_by: paidBy,
+          visibility,
           sharing_intent: sharingChoice ?? undefined,
           ...(statedPercent.trim() ? { stated_percent: Number(statedPercent) } : {}),
         }),

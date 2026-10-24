@@ -1,5 +1,6 @@
 import { getServiceRoleClient } from "@/lib/supabase/server";
 import { documentAuthorizedForViewer, formatDocumentNumber } from "@/lib/documents-tab";
+import { loadVisibleExpenses } from "@/lib/expenses-visibility";
 import {
   classifySupportingFile,
   supportingFileSentence,
@@ -318,14 +319,19 @@ export async function loadDocumentIndex(input: {
   const linkedExpenses = new Map<string, string[]>();
   const linkedMessages = new Map<string, string[]>();
   if (visibleIds.length > 0) {
-    const expenseLinks = await admin
-      .from("expenses")
-      .select("expense_number, receipt_file_id")
-      .eq("case_id", caseId)
-      .is("deleted_at", null)
-      .in("receipt_file_id", visibleIds);
+    const expenseLinks = await loadVisibleExpenses(
+      (columns) =>
+        admin
+          .from("expenses")
+          .select(columns)
+          .eq("case_id", caseId)
+          .is("deleted_at", null)
+          .in("receipt_file_id", visibleIds),
+      "expense_number, receipt_file_id",
+      { userId, role }
+    );
     if (!expenseLinks.error) {
-      for (const row of expenseLinks.data ?? []) {
+      for (const row of expenseLinks.rows) {
         const documentId = (row as { receipt_file_id?: string | null }).receipt_file_id;
         const number = (row as { expense_number?: number | null }).expense_number;
         if (!documentId || typeof number !== "number") continue;

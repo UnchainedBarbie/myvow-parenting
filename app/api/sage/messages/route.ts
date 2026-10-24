@@ -503,6 +503,7 @@ async function sourcesForOutboundRedraft(opts: {
   childIds: string[];
   conversation: ConversationContext | null;
   guidance: string;
+  viewerId: string;
 }): Promise<string> {
   const parts = [opts.guidance];
   if (opts.conversation) parts.push(formatConversationContext(opts.conversation));
@@ -514,6 +515,8 @@ async function sourcesForOutboundRedraft(opts: {
       childIds: opts.childIds,
       corpus: [opts.guidance, opts.conversation?.event.subject ?? ""].filter(Boolean).join(" "),
       subject: opts.conversation?.event.subject ?? null,
+      viewerId: opts.viewerId,
+      viewerRole: "parent",
     });
     if (ledger.trim()) parts.push(ledger);
   }
@@ -1304,6 +1307,9 @@ export async function POST(request: NextRequest) {
           );
           const coparents = await loadKnownCoparents(admin, caseId, user.id);
           const calendarContext = await loadCalendarContext(admin, caseId, user.id);
+          const recentTurns = sessionId
+            ? await loadShadowSessionTurns(admin, sessionId, user.id, trimmed)
+            : [];
           const analysis = await prepareAnalysisRead(admin, {
             message: trimmed,
             caseId,
@@ -1311,6 +1317,7 @@ export async function POST(request: NextRequest) {
             role: viewerRole,
             sessionId: sessionId ?? null,
             currentDocumentId: attachmentDocumentId,
+            recentTurns,
           });
           const { reply, result, control, revision } = await processChatMessage({
             message: trimmed,
@@ -1324,7 +1331,7 @@ export async function POST(request: NextRequest) {
             documents: savedDocuments,
             viewerId: user.id,
             viewerRole,
-            recentTurns: sessionId ? await loadShadowSessionTurns(admin, sessionId, user.id, trimmed) : [],
+            recentTurns,
             analysisFiles: analysis?.files,
             loadAnalysisBytes: analysis?.loadBytes,
           });
@@ -1391,6 +1398,7 @@ export async function POST(request: NextRequest) {
                 childIds: result.child_ids,
                 conversation,
                 guidance: trimmed,
+                viewerId: user.id,
               });
           let establishedReply = "";
           const eventName = preserveOpenWork

@@ -3,7 +3,18 @@ import { normalizeMemberEmail } from "@/lib/cases/register-member-email";
 
 export const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
-export type MailResult = { accepted: true } | { accepted: false; message: string };
+/** Postmark's default transactional stream on the production server. */
+export const INVITE_MESSAGE_STREAM = "outbound";
+
+export type ProviderFailure = {
+  httpStatus: number | null;
+  errorCode: number | null;
+  message: string;
+};
+
+export type MailResult =
+  | { accepted: true }
+  | { accepted: false; message: string; failure: ProviderFailure | null };
 
 export type ParentSlot = {
   id: string;
@@ -47,12 +58,73 @@ export function hashInvitationToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
 }
 
+export function invitationMessageStream(): string {
+  const configured = process.env.POSTMARK_MESSAGE_STREAM?.trim();
+  return configured || INVITE_MESSAGE_STREAM;
+}
+
+export function senderDomain(from: string | null | undefined): string | null {
+  const match = (from ?? "").match(/@([a-z0-9.-]+\.[a-z]{2,})/i);
+  return match ? match[1].toLowerCase() : null;
+}
+
+/** Parent-facing text. Credential wording stays generic. */
 export function publicDeliveryError(message: string): string {
-  const cleaned = message.replace(/https?:\/\/\S+/g, "").replace(/\s+/g, " ").trim();
-  if (!cleaned || /token|password|api[_-]?key|server token/i.test(cleaned)) {
+  const cleaned = safeProviderMessage(message);
+  if (!cleaned || /token|password|api[_-]?key|credential|secret/i.test(cleaned)) {
     return "The email provider did not accept the invitation.";
   }
   return cleaned.slice(0, 180);
+}
+
+/**
+ * Provider wording for server logs. Links, addresses, and long secrets are removed.
+ * Words such as "Server Token" stay, because they identify the rejection.
+ */
+export function safeProviderMessage(message: string): string {
+  return message
+    .replace(/https?:\/\/\S+/gi, "[link]")
+    .replace(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/gi, "[email]")
+    .replace(/\b[a-z0-9_-]{24,}\b/gi, "[redacted]")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 300);
+}
+
+export function providerFailure(error: unknown): ProviderFailure {
+  const record = error && typeof error === "object" ? (error as { message?: unknown; code?: unknown; statusCode?: unknown }) : {};
+  const message = typeof record.message === "string" && record.message.trim()
+    ? record.message
+    : "The email provider did not accept the invitation.";
+  return {
+    httpStatus: typeof record.statusCode === "number" ? record.statusCode : null,
+    errorCode: typeof record.code === "number" ? record.code : null,
+    message: safeProviderMessage(message),
+  };
+}
+
+export function invitationFailureLog(input: {
+  failure: ProviderFailure | null;
+  publicError: string | null;
+  messageStream: string;
+  from: string | null;
+  serverTokenConfigured: boolean;
+}): {
+  httpStatus: number | null;
+  errorCode: number | null;
+  message: string;
+  messageStream: string;
+  senderDomain: string | null;
+  serverTokenConfigured: boolean;
+} {
+  return {
+    httpStatus: input.failure?.httpStatus ?? null,
+    errorCode: input.failure?.errorCode ?? null,
+    message: input.failure?.message || input.publicError || "The email provider did not accept the invitation.",
+    messageStream: input.messageStream,
+    senderDomain: senderDomain(input.from),
+    serverTokenConfigured: input.serverTokenConfigured,
+  };
 }
 
 export function invitationBaseUrl(origin: string | null | undefined): string {

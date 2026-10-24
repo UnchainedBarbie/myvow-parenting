@@ -107,6 +107,8 @@ export async function GET(
       messageCaseId: (message.case_id as string | null) ?? null,
       direction: (message.direction as string | null) ?? null,
       found: true,
+      viewerId: user.id,
+      senderId: message.sender_id,
     });
     if (access === "forbidden") {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });

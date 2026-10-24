@@ -12,6 +12,7 @@ import {
   type PatternRecord,
 } from "@/lib/reports/build-pdf";
 import { randomUUID } from "crypto";
+import { loadVisibleExpenses } from "@/lib/expenses-visibility";
 
 const VALID_TYPES = ["messages", "expenses", "patterns", "full_report"] as const;
 
@@ -52,7 +53,7 @@ export async function POST(request: NextRequest) {
     const admin = getServiceRoleClient();
     const { data: membership } = await admin
       .from("case_members")
-      .select("case_id")
+      .select("case_id, role")
       .eq("case_id", case_id)
       .eq("user_id", user.id)
       .maybeSingle();
@@ -101,14 +102,21 @@ export async function POST(request: NextRequest) {
       buffer = result.buffer;
       verificationPayload = result.verificationPayload;
     } else if (export_type === "expenses") {
-      let query = admin
-        .from("expenses")
-        .select("id, created_at, description, amount, category, status, amount_owed")
-        .eq("case_id", case_id)
-        .order("created_at", { ascending: true });
-      if (start) query = query.gte("created_at", start);
-      if (end) query = query.lte("created_at", end);
-      const { data: expenses } = await query;
+      const expenseLoaded = await loadVisibleExpenses(
+        (columns) => {
+          let query = admin
+            .from("expenses")
+            .select(columns)
+            .eq("case_id", case_id)
+            .order("created_at", { ascending: true });
+          if (start) query = query.gte("created_at", start);
+          if (end) query = query.lte("created_at", end);
+          return query;
+        },
+        "id, created_at, description, amount, category, status, amount_owed",
+        { userId: user.id, role: membership.role }
+      );
+      const expenses = expenseLoaded.rows;
       const rows: ExpenseRecord[] = (expenses ?? []).map((e) => ({
         id: e.id,
         created_at: e.created_at,
@@ -142,22 +150,28 @@ export async function POST(request: NextRequest) {
       verificationPayload = result.verificationPayload;
     } else {
       let msgQuery = admin.from("messages").select("id, created_at, direction, original_content, ai_rewritten_content, ai_classification, category").eq("case_id", case_id).order("created_at", { ascending: true });
-      let expQuery = admin.from("expenses").select("id, created_at, description, amount, category, status, amount_owed").eq("case_id", case_id).order("created_at", { ascending: true });
-      if (start) {
-        msgQuery = msgQuery.gte("created_at", start);
-        expQuery = expQuery.gte("created_at", start);
-      }
-      if (end) {
-        msgQuery = msgQuery.lte("created_at", end);
-        expQuery = expQuery.lte("created_at", end);
-      }
+      if (start) msgQuery = msgQuery.gte("created_at", start);
+      if (end) msgQuery = msgQuery.lte("created_at", end);
       const [
         { data: messages },
-        { data: expenses },
+        expenseLoadedFull,
         { data: patterns },
       ] = await Promise.all([
         msgQuery,
-        expQuery,
+        loadVisibleExpenses(
+          (columns) => {
+            let query = admin
+              .from("expenses")
+              .select(columns)
+              .eq("case_id", case_id)
+              .order("created_at", { ascending: true });
+            if (start) query = query.gte("created_at", start);
+            if (end) query = query.lte("created_at", end);
+            return query;
+          },
+          "id, created_at, description, amount, category, status, amount_owed",
+          { userId: user.id, role: membership.role }
+        ),
         admin.from("pattern_summaries").select("id, flag_type, occurrence_count, first_detected_at, last_detected_at, trend, escalation_score").eq("case_id", case_id),
       ]);
       const msgIds = (messages ?? []).map((m) => m.id);
@@ -179,7 +193,7 @@ export async function POST(request: NextRequest) {
         category: m.category,
         flags: flagsByMsg[m.id] ?? [],
       }));
-      const expRows: ExpenseRecord[] = (expenses ?? []).map((e) => ({
+      const expRows: ExpenseRecord[] = expenseLoadedFull.rows.map((e) => ({
         id: e.id,
         created_at: e.created_at,
         description: e.description,

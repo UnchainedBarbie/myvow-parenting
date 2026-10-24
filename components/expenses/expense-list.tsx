@@ -23,6 +23,12 @@ import {
 } from "@/lib/expenses-tab";
 import { Label } from "@/components/ui/label";
 import { ChildMultiSelect } from "@/components/documents/child-multi-select";
+import {
+  EXPENSE_VISIBILITY_LABELS,
+  EXPENSE_VISIBILITY_UNSET_LABEL,
+  expenseVisibilityKey,
+  expenseVisibilityLabel,
+} from "@/lib/expenses-visibility";
 
 const STATUS_FILTER_OPTIONS = [
   { value: "submitted", label: "Pending" },
@@ -56,6 +62,7 @@ export type ExpenseRow = {
   payment_notes?: string | null;
   allocation_status?: "ALLOCATED" | "NONE" | "MANUAL_REQUIRED" | "pending" | null;
   split_label?: string | null;
+  visibility?: string | null;
 };
 
 type ExpenseSortKey =
@@ -281,6 +288,8 @@ export function ExpenseList({
   const [categoryFilterOpen, setCategoryFilterOpen] = useState(false);
   const [childFilterOpen, setChildFilterOpen] = useState(false);
   const [statusFilterOpen, setStatusFilterOpen] = useState(false);
+  const [filterVisibilities, setFilterVisibilities] = useState<string[]>([]);
+  const [visibilityFilterOpen, setVisibilityFilterOpen] = useState(false);
   const [sortKey, setSortKey] = useState<ExpenseSortKey>("date");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -311,6 +320,7 @@ export function ExpenseList({
     payment_method: "",
     payment_reference: "",
     payment_notes: "",
+    visibility: "",
   });
   const [savingEdit, setSavingEdit] = useState(false);
   const editLoadIdRef = useRef<string | null>(null);
@@ -343,6 +353,7 @@ export function ExpenseList({
       payment_method: (exp as { payment_method?: string | null }).payment_method ?? "",
       payment_reference: (exp as { payment_reference?: string | null }).payment_reference ?? "",
       payment_notes: (exp as { payment_notes?: string | null }).payment_notes ?? "",
+      visibility: expenseVisibilityKey(exp.visibility),
     });
     try {
       const res = await fetch(`/api/expenses/${exp.id}`);
@@ -401,6 +412,10 @@ export function ExpenseList({
           payment_method: editForm.payment_method.trim() || null,
           payment_reference: editForm.payment_reference.trim() || null,
           payment_notes: editForm.payment_notes.trim() || null,
+          ...(editExpense.submitted_by === currentUserId &&
+          editForm.visibility !== expenseVisibilityKey(editExpense.visibility)
+            ? { visibility: editForm.visibility || null }
+            : {}),
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -422,12 +437,14 @@ export function ExpenseList({
   const categoryFilterActive = filterCategories.length > 0;
   const childFilterActive = filterChildren.length > 0;
   const statusFilterActive = filterStatuses.length > 0;
+  const visibilityFilterActive = filterVisibilities.length > 0;
 
   const anyFilterActive =
     debouncedSearch.length > 0 ||
     categoryFilterActive ||
     childFilterActive ||
     statusFilterActive ||
+    visibilityFilterActive ||
     dateFilterActive;
 
   function handleSortClick(key: ExpenseSortKey) {
@@ -451,6 +468,7 @@ export function ExpenseList({
         exp.category ?? "",
         exp.child_name ?? "",
         exp.receipt_file_name ?? "",
+        expenseVisibilityLabel(exp.visibility),
       ]
         .join(" ")
         .toLowerCase();
@@ -467,6 +485,7 @@ export function ExpenseList({
         }
       }
       if (filterStatuses.length && !filterStatuses.includes(exp.status)) return false;
+      if (filterVisibilities.length && !filterVisibilities.includes(expenseVisibilityKey(exp.visibility))) return false;
 
       if (startDate || endDate) {
         const key = ledgerDateKey(exp);
@@ -505,7 +524,7 @@ export function ExpenseList({
         net,
       },
     };
-  }, [debouncedSearch, expenses, filterCategories, filterChildren, filterStatuses, startDate, endDate, currentUserId, sortKey, sortDir]);
+  }, [debouncedSearch, expenses, filterCategories, filterChildren, filterStatuses, filterVisibilities, startDate, endDate, currentUserId, sortKey, sortDir]);
 
   const allVisibleSelected = filtered.length > 0 && filtered.every((e) => selectedIds.has(e.id));
 
@@ -540,6 +559,7 @@ export function ExpenseList({
       "Total",
       "Split",
       "Their share",
+      "Visibility",
       "Status",
     ];
     const rows = filtered.map((exp) => {
@@ -557,6 +577,7 @@ export function ExpenseList({
         Number.isNaN(amountNum) ? "" : amountNum.toFixed(2),
         expenseTabSplitText(exp),
         theirShare.toFixed(2),
+        expenseVisibilityLabel(exp.visibility),
         statusLabel,
       ]
         .map(csvEscape)
@@ -587,6 +608,7 @@ export function ExpenseList({
         "Total",
         "Split",
         "Their share",
+        "Visibility",
         "Status",
         "Payment Method",
         "Payment Date",
@@ -612,6 +634,7 @@ export function ExpenseList({
           Number.isNaN(amountNum) ? "" : amountNum.toFixed(2),
           expenseTabSplitText(exp),
           theirShare.toFixed(2),
+          expenseVisibilityLabel(exp.visibility),
           statusLabel,
           paymentMethod,
           paidAt,
@@ -642,6 +665,7 @@ export function ExpenseList({
     setFilterCategories([]);
     setFilterChildren([]);
     setFilterStatuses([]);
+    setFilterVisibilities([]);
     setStartDate("");
     setEndDate("");
   }
@@ -1140,6 +1164,26 @@ const dateFilterValue: DateFilterValue = {
                   </th>
                   <th className="px-3 py-2 font-medium whitespace-nowrap">
                     <span className="inline-flex items-center gap-1">
+                      <span>Visibility</span>
+                      <ColumnFilterPopover
+                        title="Visibility"
+                        options={[
+                          { value: "private", label: EXPENSE_VISIBILITY_LABELS.private },
+                          { value: "parents_only", label: EXPENSE_VISIBILITY_LABELS.parents_only },
+                          { value: "family", label: EXPENSE_VISIBILITY_LABELS.family },
+                          { value: "", label: EXPENSE_VISIBILITY_UNSET_LABEL },
+                        ]}
+                        selected={filterVisibilities}
+                        onApply={setFilterVisibilities}
+                        onClear={() => setFilterVisibilities([])}
+                        open={visibilityFilterOpen}
+                        onOpenChange={setVisibilityFilterOpen}
+                        active={visibilityFilterActive}
+                      />
+                    </span>
+                  </th>
+                  <th className="px-3 py-2 font-medium whitespace-nowrap">
+                    <span className="inline-flex items-center gap-1">
                       <span>Status</span>
                       <ColumnFilterPopover
                         title="Co-Parent Status"
@@ -1273,6 +1317,9 @@ const dateFilterValue: DateFilterValue = {
                       </td>
                       <td className="px-2 py-1.5 align-middle whitespace-nowrap">
                         {expenseTabTheirShareText(exp, currentUserId)}
+                      </td>
+                      <td className="px-3 py-1.5 align-middle whitespace-nowrap text-foreground-secondary">
+                        {expenseVisibilityLabel(exp.visibility)}
                       </td>
                       <td className="px-3 py-1.5 align-middle whitespace-nowrap">
                         <div className="flex flex-col items-start gap-1">
@@ -1797,6 +1844,31 @@ const dateFilterValue: DateFilterValue = {
                 )}
               </div>
             )}
+
+            <div className="space-y-1">
+              <Label className="text-xs font-medium text-[#3D3D3D] flex items-center gap-1">
+                Who can see this?
+                {editExpense.submitted_by !== currentUserId && (
+                  <Lock className="h-3 w-3 text-foreground-secondary" aria-hidden />
+                )}
+              </Label>
+              {editExpense.submitted_by === currentUserId ? (
+                <select
+                  value={editForm.visibility}
+                  onChange={(e) => setEditForm((f) => ({ ...f, visibility: e.target.value }))}
+                  className="h-8 w-full rounded-md border border-[#E8E4DC] bg-white px-2 text-sm text-[#3D3D3D] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E]"
+                >
+                  <option value="">{EXPENSE_VISIBILITY_UNSET_LABEL}</option>
+                  <option value="private">{EXPENSE_VISIBILITY_LABELS.private}</option>
+                  <option value="parents_only">{EXPENSE_VISIBILITY_LABELS.parents_only}</option>
+                  <option value="family">{EXPENSE_VISIBILITY_LABELS.family}</option>
+                </select>
+              ) : (
+                <p className="text-sm text-foreground-secondary py-1.5">
+                  {expenseVisibilityLabel(editExpense.visibility)}
+                </p>
+              )}
+            </div>
 
             <div className="space-y-1">
               <Label className="text-xs font-medium text-[#3D3D3D] flex items-center gap-1">

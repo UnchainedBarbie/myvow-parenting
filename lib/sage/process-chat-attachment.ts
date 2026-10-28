@@ -548,6 +548,7 @@ async function directedAttachmentResult(
         recipient_name: recipient.coparent.name,
         recipient_email: email,
         subject: null,
+        draft_origin: "sage_wording",
         ...attachmentFields(opts.attachment),
       });
     }

@@ -42,6 +42,8 @@ export type SageProposal = {
   recipient_name?: string | null;
   recipient_email?: string | null;
   subject?: string | null;
+  /** Author of a message draft. Absent on cards saved before this field existed. */
+  draft_origin?: "parent_text" | "sage_wording";
   /**
    * Set when a destination save or the follow-up "mark done" write failed.
    * Stored on the same proposal so a retry can reuse result_* ids and not insert again.

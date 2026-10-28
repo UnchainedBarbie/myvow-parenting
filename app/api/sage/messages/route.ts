@@ -5,7 +5,7 @@ import { loadCalendarContext } from "@/lib/sage/calendar-chat";
 import { reconcileCalendarPlan } from "@/lib/sage/calendar-match";
 import { processChatMessage } from "@/lib/sage/chat";
 import { scheduleShadowComparison } from "@/lib/sage/shadow-interpreter";
-import { SHADOW_CONTEXT_TURNS, shadowTurnsFromJournal } from "@/lib/sage/shadow-context";
+import { loadSessionTurns } from "@/lib/sage/session-turns";
 import { pendingDocument, shouldPreserveOpenWork } from "@/lib/sage/chat-intent";
 import { prepareAnalysisRead } from "@/lib/sage/analysis-sources";
 import { requestsDocumentAnalysis } from "@/lib/sage/document-read";
@@ -297,24 +297,6 @@ async function previousFilingText(
     .filter(Boolean);
   const earlier = texts[0] === currentContent.trim() ? texts.slice(1) : texts;
   return earlier.find((text) => isDocumentFilingRequest(text.replace(/\n+Attached:[\s\S]*$/, ""))) ?? "";
-}
-
-async function loadShadowSessionTurns(
-  admin: AdminClient,
-  sessionId: string,
-  userId: string,
-  currentMessage: string
-) {
-  const { data, error } = await admin
-    .from("sage_journal_messages")
-    .select("role, content")
-    .eq("session_id", sessionId)
-    .eq("user_id", userId)
-    .order("created_at", { ascending: false })
-    .limit(SHADOW_CONTEXT_TURNS + 1);
-  if (error || !data) return [];
-  const rows = [...(data as { role?: string | null; content?: string | null }[])].reverse();
-  return shadowTurnsFromJournal(rows, currentMessage);
 }
 
 async function rememberPendingDocument(
@@ -1308,7 +1290,7 @@ export async function POST(request: NextRequest) {
           const coparents = await loadKnownCoparents(admin, caseId, user.id);
           const calendarContext = await loadCalendarContext(admin, caseId, user.id);
           const recentTurns = sessionId
-            ? await loadShadowSessionTurns(admin, sessionId, user.id, trimmed)
+            ? await loadSessionTurns(admin, sessionId, user.id, trimmed)
             : [];
           const analysis = await prepareAnalysisRead(admin, {
             message: trimmed,

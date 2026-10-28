@@ -229,6 +229,10 @@ export function TalkToSageDrawer({
       return;
     }
 
+    // A message to the co-parent is sent only after the shared outbound review, in Sage Chats.
+    // This drawer keeps turns on the screen only, so it cannot review or send one.
+    if (p.type === "reply_coparent" && (p.recipient_email ?? "").trim()) return;
+
     // Non-calendar: record-only locally (same as inbox — outbound not wired)
     setBusyKey(`${item.id}:${idx}`);
     updateItemProposals(item.id, (list) =>

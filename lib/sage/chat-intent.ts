@@ -5,6 +5,7 @@
  */
 
 import { bareCorrection, type ConversationContext } from "@/lib/sage/conversation-context";
+import { hasMessageSubstance } from "@/lib/messages/message-content";
 import type { Observation } from "@/lib/sage/observation-builder";
 import type { Plan, Proposal } from "@/lib/sage/planner";
 import { isInactiveProposal, reviseProposal } from "@/lib/sage/proposal-lifecycle";
@@ -105,6 +106,12 @@ export type RouteChatIntentInput = {
   timezone?: string;
   today?: Date;
   attachmentNames?: string[];
+  /**
+   * How the caller read this turn against an open question.
+   * "conversation" keeps free text from becoming the answer to that question.
+   * Omitted keeps the existing slot filling.
+   */
+  taskTurn?: "conversation";
 };
 
 const WEEKDAY =
@@ -655,10 +662,38 @@ function fieldText(fields: CollectedFields, key: string): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
+/**
+ * Free text that would be taken as the body of the message an open question asks for.
+ * Null when no message question is open or the turn is a request of another kind.
+ */
+export function messageAnswerCandidate(
+  message: string,
+  memory: WorkingMemory | null | undefined
+): { name: string; email: string; body: string } | null {
+  const clarification = memory?.clarification;
+  if (!clarification || clarification.kind !== "message" || isExplicitNoteRequest(message)) return null;
+  if (
+    wantsExpense(message) ||
+    wantsCalendar(message) ||
+    isDocumentQuestion(message) ||
+    isDocumentFilingRequest(message) ||
+    requestsDocumentAnalysis(message, false) ||
+    explicitSchedule(message)
+  ) {
+    return null;
+  }
+  const name = fieldText(clarification.collected, "recipient_name");
+  const email = fieldText(clarification.collected, "recipient_email");
+  const body = message.trim();
+  if (!name || !email || body.length < 2) return null;
+  return { name, email, body };
+}
+
 /** A short answer to an open question becomes one proposal. A new request does not. */
 function completeOpenDetail(
   message: string,
-  memory: WorkingMemory | null | undefined
+  memory: WorkingMemory | null | undefined,
+  taskTurn?: "conversation"
 ): RoutedTurn | null {
   const clarification = memory?.clarification;
   if (!clarification || isExplicitNoteRequest(message)) return null;
@@ -681,23 +716,29 @@ function completeOpenDetail(
     return expenseAnswer(message, description, amount, category, fields);
   }
   if (clarification.kind === "message") {
-    if (
-      wantsExpense(message) ||
-      wantsCalendar(message) ||
-      isDocumentQuestion(message) ||
-      isDocumentFilingRequest(message) ||
-      requestsDocumentAnalysis(message, false) ||
-      explicitSchedule(message)
-    ) {
-      return null;
+    // The caller read this turn as conversation. The question stays open.
+    if (taskTurn === "conversation") return null;
+    const candidate = messageAnswerCandidate(message, memory);
+    if (!candidate) return null;
+    const { name, email, body } = candidate;
+    // Text with nothing to say is not a message. The question stays open and the parent is asked again.
+    if (!hasMessageSubstance(body)) {
+      return turn({
+        handled: true,
+        reply: `That doesn't give me a message for ${name} yet, so I haven't drafted anything. What do you want ${name} to know or do?`,
+        message,
+        summary: `No message content for ${name}`,
+        itemType: "note",
+        proposals: [],
+        status: "no_action",
+        reasoning:
+          "The parent's text had no content for a message. The open question stays open and nothing was drafted.",
+      });
     }
-    const name = fieldText(fields, "recipient_name");
-    const email = fieldText(fields, "recipient_email");
-    const body = message.trim();
-    if (!name || !email || body.length < 2) return null;
+    // The parent's words are kept exactly as typed and are labeled as theirs.
     return turn({
       handled: true,
-      reply: `Here is a message to ${name}. Nothing is sent until you choose Send.`,
+      reply: `Here is your message to ${name}, in your own words. Nothing is sent until you review it and choose Send.`,
       message,
       summary: `Message to ${name}`,
       itemType: "message",
@@ -705,9 +746,10 @@ function completeOpenDetail(
         proposal("reply_coparent", body, {
           recipient_name: name,
           recipient_email: email,
+          draft_origin: "parent_text",
         }),
       ],
-      reasoning: "The parent supplied the message. It still needs approval before anything is sent.",
+      reasoning: "The parent supplied the message. It still needs review and approval before anything is sent.",
     });
   }
   return null;
@@ -786,7 +828,7 @@ export function routeChatIntent(input: RouteChatIntentInput): RoutedTurn {
     });
   }
 
-  const answered = completeOpenDetail(message, conversation?.memory);
+  const answered = completeOpenDetail(message, conversation?.memory, input.taskTurn);
   if (answered) return answered;
 
   if (named.length > 1 && (isCalendarQuestion(message) || wantsCalendar(message) || isEventDetailUpdate(message))) {
@@ -1215,6 +1257,7 @@ export function routeChatIntent(input: RouteChatIntentInput): RoutedTurn {
             recipient_name: notify.coparent.name,
             recipient_email: email,
             subject: subject,
+            draft_origin: "sage_wording",
           })
         );
       }

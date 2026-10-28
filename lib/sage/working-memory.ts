@@ -10,6 +10,7 @@
  */
 
 import { isSupersededProposal } from "@/lib/sage/proposal-lifecycle";
+import { conversationFallbackReply } from "@/lib/sage/conversation-reply";
 
 export type FocusKind = "calendar" | "expense" | "document" | "message" | "general";
 
@@ -119,17 +120,10 @@ export function interruptsClarification(
   return requested !== open;
 }
 
-export function unrecognizedChatReply(memory: WorkingMemory | null | undefined): string {
-  const question = memory?.clarification?.question?.trim();
-  if (question) {
-    return `I didn't take an action on that. Your earlier question is still open: ${question}`;
-  }
-  return "I didn't take an action on that. I can add a calendar event, log an expense, file a document, or draft a message. What should I do?";
-}
-
 /**
  * Parent chat only. An all-note plan from the model is a miss, not a Note.
  * Returns null when the plan already contains a real action.
+ * The reply is the safe fallback. Chat replaces it with a conversational reply when the model answers.
  */
 export function settleParentChatPlan(
   plan: { status?: string; proposals?: { type?: string }[]; reasoning?: string },
@@ -139,7 +133,7 @@ export function settleParentChatPlan(
   if (proposals.length === 0) return null;
   if (!proposals.every((proposal) => proposal.type === "note_only")) return null;
   return {
-    reply: unrecognizedChatReply(memory),
+    reply: conversationFallbackReply(memory?.clarification?.question),
     plan: {
       status: "no_action",
       proposals: [],

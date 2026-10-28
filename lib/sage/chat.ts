@@ -4,6 +4,12 @@
  */
 
 import {
+  anthropicConversationModel,
+  buildConversationPacket,
+  type ConversationModel,
+} from "@/lib/sage/conversation-reply";
+import {
+  messageAnswerCandidate,
   routeChatIntent,
   type ChatControl,
   type KnownCoparent,
@@ -73,6 +79,12 @@ export type ProcessChatMessageInput = {
   reasonAboutDocument?: ((packet: ReasonPacket) => Promise<string | null>) | null;
   /** Attachment processing schedules its own shadow call for the same journal row. */
   shadow?: boolean;
+  /**
+   * Writes the reply when a turn needs no structured action, and reads a turn against an open question.
+   * Undefined uses the model when configured. Null keeps the safe fallback and the existing slot filling.
+   * The model produces text only.
+   */
+  conversationModel?: ConversationModel | null;
 };
 
 function buildReply(result: ProcessObservationResult): string {
@@ -123,8 +135,25 @@ export async function processChatMessage(
       revision: null,
     };
   }
+  const chatTurn = (input.intake ?? "chat") === "chat";
+  const model = input.conversationModel === undefined ? anthropicConversationModel() : input.conversationModel;
+  const packet = () =>
+    buildConversationPacket({
+      message: input.message,
+      recentTurns: input.recentTurns,
+      conversation: input.conversation,
+      children: input.children,
+      coparents: input.coparents,
+    });
+  // Free text is the answer to an open message question only when the parent is answering it.
+  let taskTurn: "conversation" | undefined;
+  if (chatTurn && model && messageAnswerCandidate(input.message, input.conversation?.memory)) {
+    const reading = await model.readTurn(packet()).catch(() => null);
+    if (reading === "other") taskTurn = "conversation";
+  }
   const routed = routeChatIntent({
     message: input.message,
+    taskTurn,
     conversation: input.conversation ?? null,
     coparents: input.coparents ?? [],
     children: input.children ?? [],
@@ -188,8 +217,10 @@ export async function processChatMessage(
     const settled = settleParentChatPlan(result.plan, input.conversation?.memory ?? null);
     if (settled) {
       result.plan = settled.plan;
+      // No action fits this turn. Sage answers the parent in words. Nothing is proposed or saved.
+      const spoken = model ? await model.reply(packet()).catch(() => null) : null;
       return {
-        reply: settled.reply,
+        reply: spoken?.trim() ? spoken.trim() : settled.reply,
         actions: [],
         result,
         control: "none",

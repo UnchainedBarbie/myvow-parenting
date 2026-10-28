@@ -263,7 +263,8 @@ assert.ok(missed);
 assert.equal(missed.plan.proposals.length, 0);
 assert.equal(missed.plan.status, "no_action");
 assert.doesNotMatch(missed.reply, /noted|saved|sent|filed|logged/i);
-assert.match(missed.reply, /didn't take an action/i);
+assert.doesNotMatch(missed.reply, /calendar event|log an expense|file a document|draft a message/i, "no menu of features");
+assert.match(missed.reply, /still open/i);
 assert.match(missed.reply, /What time is Ashley's dentist appointment/);
 assert.equal(
   deriveOpenItems([

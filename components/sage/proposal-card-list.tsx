@@ -12,11 +12,12 @@ import {
 import {
   buildProposalSendRequest,
   isAttachmentBlock,
-  isSendableMessageProposal,
   proposalMessageText,
+  routeApprovals,
   type ProposalSendRequest,
   type SendOutcome,
 } from "@/lib/messages/proposal-send";
+import { draftOriginLabel, proposalListHeading } from "@/lib/messages/message-content";
 import { attachmentOutcomeLabel, pendingAttachmentNote } from "@/lib/messages/send-safety";
 import {
   isCalendarUpdateProposal,
@@ -139,14 +140,10 @@ export function ProposalCardList({
 
   /** Approving cards. Messages to the co-parent wait for the review. Every other card goes straight through. */
   function requestAgree(indexes: number[]) {
-    if (!reviewSends) {
-      void onAgree(indexes);
-      return;
-    }
-    const messages = indexes.filter((i) => isSendableMessageProposal(proposals[i]));
-    const others = indexes.filter((i) => !messages.includes(i));
-    if (others.length > 0) void onAgree(others);
-    if (messages.length > 0) void startReview(messages);
+    // A message never goes through onAgree without the review. Where no review can run, it is held.
+    const routed = routeApprovals(indexes, proposals, reviewSends);
+    if (routed.direct.length > 0) void onAgree(routed.direct);
+    if (routed.review.length > 0) void startReview(routed.review);
   }
 
   /** Text the parent changed after Sage's review gets its own review before it can be sent. */
@@ -229,7 +226,9 @@ export function ProposalCardList({
       )}
     >
       <div className="flex flex-wrap items-center gap-2">
-        <p className="text-[11px] font-medium text-[#5B7A52]">Sage suggests</p>
+        <p className="text-[11px] font-medium text-[#5B7A52]">
+          {proposalListHeading(visible.map(({ p }) => p))}
+        </p>
         {historical && (
           <span className="text-[10px] text-foreground-secondary">revised below</span>
         )}
@@ -268,6 +267,10 @@ export function ProposalCardList({
             isFormExecuteProposal(p.type) && !done && !waived && !blocked;
           const showUndoOnly = canUndo(p) && !formPending;
           const sendable = p.type === "reply_coparent" && Boolean((p.recipient_email ?? "").trim());
+          // A message on a surface that cannot run the review is shown, never approved or sent from here.
+          const heldMessage = sendable && !reviewSends && !done;
+          // Once a message is sent its text is whatever the parent approved, so no author is claimed.
+          const originLabel = p.type === "reply_coparent" && !done ? draftOriginLabel(p) : null;
 
           return (
             <li
@@ -291,6 +294,19 @@ export function ProposalCardList({
                 >
                   Undo
                 </button>
+              ) : heldMessage ? (
+                <div className="flex shrink-0 items-start gap-1">
+                  <button
+                    type="button"
+                    title="Cancel"
+                    aria-label="Cancel message"
+                    disabled={rowBusy}
+                    className="inline-flex h-6 items-center justify-center rounded-full border border-[#D5D0C6] bg-white px-2 text-[11px] text-foreground-secondary hover:bg-[#F2F5EF] disabled:cursor-not-allowed disabled:opacity-40"
+                    onClick={() => onDismiss([idx])}
+                  >
+                    Cancel
+                  </button>
+                </div>
               ) : multiSelect ? (
                 <input
                   type="checkbox"
@@ -425,6 +441,14 @@ export function ProposalCardList({
                     Attachment: {p.attached_file_name}
                   </p>
                 ) : null}
+                {originLabel ? (
+                  <p
+                    className="text-[10px] font-semibold uppercase tracking-wide text-[#8A8A8A]"
+                    data-testid="proposal-draft-origin"
+                  >
+                    {originLabel}
+                  </p>
+                ) : null}
                 <p
                   className={cn(
                     "text-[12px] leading-snug text-foreground",
@@ -433,6 +457,14 @@ export function ProposalCardList({
                 >
                   {historical ? (p.draft ?? "").trim() : displayDraft(p, showDate)}
                 </p>
+                {heldMessage && !historical ? (
+                  <p
+                    className="text-[11px] leading-snug text-foreground-secondary"
+                    data-testid="proposal-review-elsewhere"
+                  >
+                    Nothing is sent from here. Open Sage Chats to review this message and send it.
+                  </p>
+                ) : null}
                 {p.type === "log_expense" && p.split_review?.trim() ? (
                   <p className="text-[11px] leading-snug text-foreground-secondary">
                     {p.split_review.trim()}

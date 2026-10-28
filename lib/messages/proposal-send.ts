@@ -42,6 +42,33 @@ export function isSendableMessageProposal(p: MessageProposal | null | undefined)
   return p.executed !== true && !(p.result_message_id ?? "").trim();
 }
 
+/**
+ * How approving a set of cards is routed.
+ *   review   Messages that send. They wait for the shared outbound review.
+ *   direct   Every other card. Approval is the whole action.
+ *   held     Messages on a surface that cannot review and send them. They are never approved there.
+ * A message card never reaches the direct list, so no card sends without the review.
+ */
+export function routeApprovals(
+  indexes: number[],
+  proposals: (MessageProposal | undefined)[],
+  canReviewSends: boolean
+): { review: number[]; direct: number[]; held: number[] } {
+  const review: number[] = [];
+  const direct: number[] = [];
+  const held: number[] = [];
+  for (const index of indexes) {
+    const card = proposals[index];
+    if (card?.type === "reply_coparent" && (card.recipient_email ?? "").trim()) {
+      if (canReviewSends && isSendableMessageProposal(card)) review.push(index);
+      else held.push(index);
+    } else {
+      direct.push(index);
+    }
+  }
+  return { review, direct, held };
+}
+
 export function buildProposalSendRequest(input: {
   proposalIndex: number;
   finalText: string;

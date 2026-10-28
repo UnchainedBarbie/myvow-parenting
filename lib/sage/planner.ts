@@ -90,6 +90,8 @@ export type Proposal = {
   recipient_name?: string | null;
   recipient_email?: string | null;
   subject?: string | null;
+  /** Author of a reply_coparent draft: the parent's own text, or wording Sage composed. */
+  draft_origin?: "parent_text" | "sage_wording";
   /** Set when the approved save should change the event status, such as canceled. */
   event_status?: string | null;
   /** Dollar amount for an expense proposal. Absent when the user did not state one. */
@@ -173,7 +175,9 @@ function proposal(
   depends_on: string | null = null,
   extra?: Pick<Proposal, "audience">
 ): Proposal {
-  return { type, draft, depends_on, requires_approval: true, ...extra };
+  // Every message this planner writes is Sage's wording. A parent's own text never passes through here.
+  const origin = type === "reply_coparent" ? ({ draft_origin: "sage_wording" } as const) : {};
+  return { type, draft, depends_on, requires_approval: true, ...origin, ...extra };
 }
 
 function isInformational(ctx: PlanContext): boolean {

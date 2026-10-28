@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -8,6 +8,15 @@ import { Label } from "@/components/ui/label";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { showErrorToast, showSuccessToast } from "@/components/ui/toaster";
+import { OutboundReviewPanel } from "@/components/messages/outbound-review-panel";
+import {
+  originalForSend,
+  requestEditReview,
+  requestOutboundReviewWithReceipt,
+  reviewProofForSend,
+  type ReviewedDraft,
+} from "@/lib/messages/outbound-review";
+import { nextSendAttempt, type SendAttempt } from "@/lib/messages/send-attempt";
 
 const CARD_LINK_CLASS =
   "cursor-pointer transition-all hover:shadow-sm hover:border-[#C5CFBC] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#7C8B6E] focus-visible:ring-offset-1";
@@ -43,6 +52,8 @@ export function DashboardStatusCards({
   const [showReminderModal, setShowReminderModal] = useState(false);
   const [reminderText, setReminderText] = useState("");
   const [sendingReminder, setSendingReminder] = useState(false);
+  const [reviewingReminder, setReviewingReminder] = useState(false);
+  const [reminderReviewed, setReminderReviewed] = useState<ReviewedDraft | null>(null);
 
   useEffect(() => {
     const match = netLabel.match(/\$([0-9][0-9,]*\.\d{2})/);
@@ -51,45 +62,80 @@ export function DashboardStatusCards({
     setReminderText(template);
   }, [netLabel]);
 
-  async function handleSendReminder() {
+  async function handleReviewReminder() {
     const text = reminderText.trim();
-    if (!text) return;
+    if (!text || reviewingReminder || sendingReminder) return;
+    setReviewingReminder(true);
+    try {
+      // Review only. Nothing is sent until the parent approves the exact text.
+      setReminderReviewed(await requestOutboundReviewWithReceipt(text));
+    } finally {
+      setReviewingReminder(false);
+    }
+  }
+
+  // One approval of one final text is one send attempt. A retry keeps the attempt id and the
+  // conversation it created, so a retry never starts a second conversation or message.
+  const reminderAttempt = useRef<{ attempt: SendAttempt; conversationId: string | null } | null>(null);
+  const [reviewingReminderEdit, setReviewingReminderEdit] = useState(false);
+
+  async function handleReviewReminderEdit(text: string) {
+    if (!reminderReviewed || reviewingReminderEdit) return;
+    setReviewingReminderEdit(true);
+    try {
+      setReminderReviewed(await requestEditReview(reminderReviewed, text));
+    } finally {
+      setReviewingReminderEdit(false);
+    }
+  }
+
+  async function handleSendReminder(finalText: string, options?: { editUnreviewedAck?: boolean }) {
+    const reviewed = reminderReviewed;
+    const text = finalText.trim();
+    if (!text || !reviewed) return;
     setSendingReminder(true);
     try {
-      // Create conversation
-      const convRes = await fetch("/api/messages/conversations", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          subject: "Expense Reminder",
-          child_id: null,
-          category: "expense",
-        }),
-      });
-      const convData = await convRes.json().catch(() => ({}));
-      if (!convRes.ok) {
-        showErrorToast(
-          (convData as { error?: string }).error ??
-            "Could not start expense reminder conversation."
-        );
-        return;
+      const attempt = nextSendAttempt(reminderAttempt.current?.attempt ?? null, text);
+      const previous = reminderAttempt.current;
+      reminderAttempt.current = {
+        attempt,
+        conversationId: previous && previous.attempt.id === attempt.id ? previous.conversationId : null,
+      };
+      let convId = reminderAttempt.current.conversationId;
+      if (!convId) {
+        // Create conversation
+        const convRes = await fetch("/api/messages/conversations", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            subject: "Expense Reminder",
+            child_id: null,
+            category: "expense",
+          }),
+        });
+        const convData = await convRes.json().catch(() => ({}));
+        if (!convRes.ok) {
+          showErrorToast(
+            (convData as { error?: string }).error ??
+              "Could not start expense reminder conversation."
+          );
+          return;
+        }
+        convId = (convData as { conversation: { id: string } }).conversation.id;
+        reminderAttempt.current.conversationId = convId;
       }
-      const convId = (convData as { conversation: { id: string } }).conversation.id;
 
       // Send message through Sage pipeline (original == rewritten for now)
-      console.log("Sending expense reminder", {
-        case_id: caseId,
-        conversation_id: convId,
-        original_content: text,
-      });
       const msgRes = await fetch("/api/messages/approve", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           case_id: caseId,
           conversation_id: convId,
-          original_content: text,
+          original_content: originalForSend(reviewed),
           ai_rewritten_content: text,
+          send_attempt_id: attempt.id,
+          ...reviewProofForSend(reviewed, { editUnreviewedAck: options?.editUnreviewedAck }),
         }),
       });
       const msgData = await msgRes.json().catch(() => ({}));
@@ -100,7 +146,9 @@ export function DashboardStatusCards({
         );
         return;
       }
+      reminderAttempt.current = null;
       setShowReminderModal(false);
+      setReminderReviewed(null);
       showSuccessToast("Reminder sent");
     } finally {
       setSendingReminder(false);
@@ -248,6 +296,7 @@ export function DashboardStatusCards({
                 className={SUB_LINK_CLASS}
                 onClick={(e) => {
                   e.stopPropagation();
+                  setReminderReviewed(null);
                   setShowReminderModal(true);
                 }}
               >
@@ -274,6 +323,25 @@ export function DashboardStatusCards({
             <p className="mt-1 text-[11px] text-[#8A8A8A]">
               Send a friendly reminder to your co-parent about outstanding expenses.
             </p>
+            {reminderReviewed ? (
+              <div className="mt-3">
+                <OutboundReviewPanel
+                  key={`${reminderReviewed.review.status}:${reminderReviewed.review.original}:${reminderReviewed.receipt ?? ""}`}
+                  review={reminderReviewed.review}
+                  approveLabel="Send Reminder"
+                  busy={sendingReminder}
+                  busyLabel="Sending…"
+                  onApprove={(finalText, options) => void handleSendReminder(finalText, options)}
+                  onReviewEdit={reminderReviewed.receipt ? (text) => void handleReviewReminderEdit(text) : undefined}
+                  reviewingEdit={reviewingReminderEdit}
+                  onCancel={() => {
+                    reminderAttempt.current = null;
+                    setReminderReviewed(null);
+                  }}
+                />
+              </div>
+            ) : (
+            <>
             <div className="mt-3 space-y-2">
               <Label className="text-xs font-medium text-[#3D3D3D]">
                 Message
@@ -314,12 +382,14 @@ export function DashboardStatusCards({
                 type="button"
                 size="sm"
                 className="h-8 rounded-full bg-[#5B7A52] text-xs text-white hover:bg-[#476242]"
-                disabled={sendingReminder || !reminderText.trim()}
-                onClick={() => void handleSendReminder()}
+                disabled={reviewingReminder || !reminderText.trim()}
+                onClick={() => void handleReviewReminder()}
               >
-                {sendingReminder ? "Sending…" : "Send Reminder"}
+                {reviewingReminder ? "Reviewing…" : "Review message"}
               </Button>
             </div>
+            </>
+            )}
           </div>
         </div>
       )}

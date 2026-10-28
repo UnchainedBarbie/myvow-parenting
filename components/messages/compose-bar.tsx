@@ -1,62 +1,83 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { OutboundReviewPanel } from "./outbound-review-panel";
+import {
+  originalForSend,
+  requestEditReview,
+  requestOutboundReviewWithReceipt,
+  reviewProofForSend,
+  type ReviewedDraft,
+} from "@/lib/messages/outbound-review";
+import { nextSendAttempt, type SendAttempt } from "@/lib/messages/send-attempt";
 
 interface ComposeBarProps {
   caseId: string;
   onSent?: () => void;
 }
 
-type Step = "intent" | "draft" | "sending";
+type Step = "intent" | "review";
 
 export function ComposeBar({ caseId, onSent }: ComposeBarProps) {
   const [step, setStep] = useState<Step>("intent");
   const [intent, setIntent] = useState("");
-  const [draft, setDraft] = useState("");
+  const [reviewed, setReviewed] = useState<ReviewedDraft | null>(null);
+  const review = reviewed?.review ?? null;
   const [loading, setLoading] = useState(false);
+  const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isEmergency, setIsEmergency] = useState(false);
   const [emergencyReason, setEmergencyReason] = useState("");
   const [emergencyNote, setEmergencyNote] = useState("");
 
   async function handleGetDraft() {
-    if (!intent.trim()) return;
+    if (!intent.trim() || loading) return;
     setError(null);
     setLoading(true);
     try {
-      const res = await fetch("/api/messages/draft", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ intent: intent.trim() }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || "Failed to get draft");
-      setDraft(data.draft ?? intent);
-      setStep("draft");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Something went wrong");
+      setReviewed(await requestOutboundReviewWithReceipt(intent));
+      setStep("review");
     } finally {
       setLoading(false);
     }
   }
 
-  async function handleApproveAndSend() {
+  // One approval of one final text is one send attempt. A retry keeps the id.
+  const attemptRef = useRef<SendAttempt | null>(null);
+  const [reviewingEdit, setReviewingEdit] = useState(false);
+
+  async function handleReviewEdit(text: string) {
+    if (!reviewed || reviewingEdit) return;
+    setError(null);
+    setReviewingEdit(true);
+    try {
+      setReviewed(await requestEditReview(reviewed, text));
+    } finally {
+      setReviewingEdit(false);
+    }
+  }
+
+  async function handleApproveAndSend(finalText: string, options?: { editUnreviewedAck?: boolean }) {
+    if (!reviewed || !review || sending) return;
     setError(null);
     if (isEmergency && (!emergencyReason || !emergencyNote.trim())) {
       setError("For emergency messages, select a reason and add a brief description.");
       return;
     }
-    setLoading(true);
+    setSending(true);
     try {
+      attemptRef.current = nextSendAttempt(attemptRef.current, finalText);
       const res = await fetch("/api/messages/approve", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           case_id: caseId,
-          original_content: intent,
-          ai_rewritten_content: draft,
+          original_content: originalForSend(reviewed),
+          ai_rewritten_content: finalText,
+          send_attempt_id: attemptRef.current.id,
+          ...reviewProofForSend(reviewed, { editUnreviewedAck: options?.editUnreviewedAck }),
           is_emergency: isEmergency,
           emergency_type: isEmergency ? emergencyReason : null,
           emergency_note: isEmergency ? emergencyNote : null,
@@ -64,9 +85,10 @@ export function ComposeBar({ caseId, onSent }: ComposeBarProps) {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || "Failed to send");
+      attemptRef.current = null;
       setStep("intent");
       setIntent("");
-      setDraft("");
+      setReviewed(null);
       setIsEmergency(false);
       setEmergencyReason("");
       setEmergencyNote("");
@@ -74,30 +96,29 @@ export function ComposeBar({ caseId, onSent }: ComposeBarProps) {
     } catch (e) {
       setError(e instanceof Error ? e.message : "Something went wrong");
     } finally {
-      setLoading(false);
+      setSending(false);
     }
   }
 
-  if (step === "draft") {
+  if (step === "review" && review) {
     return (
-      <div className="border-t border-border bg-background-secondary p-4 space-y-3">
-        <p className="text-sm font-medium text-foreground-secondary">Draft (review before sending)</p>
-        <div className="rounded-card border border-border bg-background p-3 text-sm text-foreground">
-          {draft}
-        </div>
-        {error && <p className="text-sm text-alert">{error}</p>}
-        <div className="flex gap-2">
-          <Button
-            variant="outline"
-            onClick={() => setStep("intent")}
-            disabled={loading}
-          >
-            Edit intent
-          </Button>
-          <Button onClick={handleApproveAndSend} disabled={loading}>
-            {loading ? "Sending…" : "Approve & send"}
-          </Button>
-        </div>
+      <div className="border-t border-border bg-background-secondary p-4">
+        <OutboundReviewPanel
+          key={`${review.status}:${review.original}:${reviewed?.receipt ?? ""}`}
+          review={review}
+          approveLabel="Send"
+          busy={sending}
+          busyLabel="Sending…"
+          error={error}
+          onApprove={(finalText, options) => void handleApproveAndSend(finalText, options)}
+          onReviewEdit={reviewed?.receipt ? (text) => void handleReviewEdit(text) : undefined}
+          reviewingEdit={reviewingEdit}
+          onCancel={() => {
+            attemptRef.current = null;
+            setReviewed(null);
+            setStep("intent");
+          }}
+        />
       </div>
     );
   }
@@ -170,7 +191,7 @@ export function ComposeBar({ caseId, onSent }: ComposeBarProps) {
 
       <div className="flex justify-end">
         <Button onClick={handleGetDraft} disabled={loading || !intent.trim()}>
-          {loading ? "Getting draft…" : "Get draft"}
+          {loading ? "Reviewing…" : "Review message"}
         </Button>
       </div>
     </div>

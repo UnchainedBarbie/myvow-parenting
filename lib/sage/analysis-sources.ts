@@ -2,8 +2,43 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { analysisAccess, type AnalysisFile, type AnalysisViewer } from "@/lib/sage/document-analysis";
 import { requestsDocumentAnalysis, type AnalysisTurn } from "@/lib/sage/document-read";
 import { isMessageId } from "@/lib/sage/original-message";
+import { loadIncomingContext } from "@/lib/sage/incoming-context";
+import {
+  communicationBrief,
+  readIncomingCommunication,
+  readingFromStorage,
+  type CommunicationBrief,
+} from "@/lib/sage/communication-reading";
 
 type Admin = SupabaseClient;
+
+/**
+ * The message a file arrived with, seen from the receiving parent. Null when the viewer wrote
+ * the message or cannot be placed on its case. Reuses the stored reading when one exists.
+ */
+async function incomingBrief(
+  admin: Admin,
+  input: { messageId: string; userId: string }
+): Promise<CommunicationBrief | null> {
+  try {
+    const ctx = await loadIncomingContext(admin, { messageId: input.messageId, recipientId: input.userId });
+    if (!ctx) return null;
+    const { data } = await admin
+      .from("sage_items")
+      .select("tool_input")
+      .eq("source_type", "message")
+      .eq("source_id", input.messageId)
+      .eq("visible_to", input.userId)
+      .maybeSingle();
+    const stored = (data as { tool_input?: { communication_reading?: unknown } } | null)?.tool_input
+      ?.communication_reading;
+    const reading = readingFromStorage(stored, ctx) ?? (await readIncomingCommunication(ctx));
+    return communicationBrief(ctx, reading);
+  } catch {
+    console.error("[sage/analysis-sources] incoming brief failed");
+    return null;
+  }
+}
 
 type DocRow = {
   id: string;
@@ -42,10 +77,20 @@ export async function prepareAnalysisRead(
     ...(input.currentDocumentId ? [input.currentDocumentId] : []),
   ]);
   const files: AnalysisFile[] = [];
+  const briefs = new Map<string, Promise<CommunicationBrief | null>>();
   for (const doc of docs) {
     const messageId = linked.get(doc.id) ?? null;
     const origin = originFor(doc, input.currentDocumentId, messageId, session.texts);
+    const loadBrief = messageId
+      ? () => {
+          if (!briefs.has(messageId)) {
+            briefs.set(messageId, incomingBrief(admin, { messageId, userId: input.userId }));
+          }
+          return briefs.get(messageId) as Promise<CommunicationBrief | null>;
+        }
+      : undefined;
     const file: AnalysisFile = {
+      ...(loadBrief ? { loadBrief } : {}),
       id: doc.id,
       fileName: (doc.file_name || doc.title || "document").trim(),
       origin,

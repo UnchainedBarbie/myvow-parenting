@@ -1,3 +1,5 @@
+import type { AttachmentOutcome } from "@/lib/messages/send-safety";
+
 export type SageProposal = {
   type: string;
   draft: string;
@@ -33,6 +35,10 @@ export type SageProposal = {
   delivery_status?: string | null;
   delivered_at?: string | null;
   send_claim_at?: string | null;
+  /** How the shared outbound review ran for the text that was sent. */
+  review_status?: string | null;
+  /** Whether the file travelled with the sent message. Shared inside MyVow, never an email attachment. */
+  attachment_delivery?: AttachmentOutcome | null;
   recipient_name?: string | null;
   recipient_email?: string | null;
   subject?: string | null;

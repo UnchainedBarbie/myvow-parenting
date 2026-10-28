@@ -31,6 +31,15 @@ import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { AlertCircle } from "lucide-react";
 import { ConversationCategories } from "./conversation-categories";
 import { RECORD_CATEGORIES, type RecordCategoryId } from "@/lib/record/record-categories";
+import { OutboundReviewPanel } from "./outbound-review-panel";
+import {
+  originalForSend,
+  requestEditReview,
+  requestOutboundReviewWithReceipt,
+  reviewProofForSend,
+  type OutboundReview,
+} from "@/lib/messages/outbound-review";
+import { nextSendAttempt, type SendAttempt } from "@/lib/messages/send-attempt";
 
 type ChildSummary = { id: string; first_name: string };
 
@@ -108,17 +117,19 @@ export function MessagesSplitView({
   const [newRecordCategories, setNewRecordCategories] = useState<RecordCategoryId[]>([]);
   const [creating, setCreating] = useState(false);
   const [composeText, setComposeText] = useState("");
+  /** True only while the approved text is being saved and sent. */
   const [sending, setSending] = useState(false);
+  /** True only while Sage reviews the draft. Nothing is sent in this state. */
+  const [reviewing, setReviewing] = useState(false);
+  const [review, setReview] = useState<OutboundReview | null>(null);
+  /** Proof from the review route that this draft was reviewed. The send route requires it. */
+  const [reviewReceipt, setReviewReceipt] = useState<string | null>(null);
+  /** The parent's first draft, kept when an edit was reviewed again. */
+  const [reviewFirstOriginal, setReviewFirstOriginal] = useState<string | null>(null);
+  const [reviewingEdit, setReviewingEdit] = useState(false);
+  /** One approval of one final text is one send attempt. A retry keeps the id. */
+  const sendAttemptRef = useRef<SendAttempt | null>(null);
   const [composeError, setComposeError] = useState<string | null>(null);
-
-  type PreviewMode = "idle" | "preview" | "noChange";
-  const [previewMode, setPreviewMode] = useState<PreviewMode>("idle");
-  const [previewOriginal, setPreviewOriginal] = useState("");
-  const [previewSage, setPreviewSage] = useState("");
-  const [previewChoice, setPreviewChoice] = useState<"original" | "sage" | "edit">(
-    "sage"
-  );
-  const [previewEditable, setPreviewEditable] = useState("");
   const [dismissedSuggestions, setDismissedSuggestions] = useState<
     Record<string, { expense?: boolean; calendar?: boolean }>
   >({});
@@ -599,35 +610,79 @@ export function MessagesSplitView({
       );
       return;
     }
+    if (reviewing || sending || review) return;
+    setReviewing(true);
+    setComposeError(null);
+    try {
+      // Review only. Nothing is saved or sent until the parent approves the exact text.
+      const reviewed = await requestOutboundReviewWithReceipt(composeText);
+      sendAttemptRef.current = null;
+      setReviewFirstOriginal(null);
+      setReviewReceipt(reviewed.receipt);
+      setReview(reviewed.review);
+    } finally {
+      setReviewing(false);
+    }
+  }
+
+  /** Text the parent changed after Sage's review gets its own review. */
+  async function handleReviewEdit(text: string) {
+    if (!review || reviewingEdit || sending) return;
+    setComposeError(null);
+    setReviewingEdit(true);
+    try {
+      const next = await requestEditReview(
+        { review, receipt: reviewReceipt, firstOriginal: reviewFirstOriginal ?? undefined },
+        text
+      );
+      setReviewReceipt(next.receipt);
+      setReviewFirstOriginal(next.firstOriginal ?? null);
+      setReview(next.review);
+    } finally {
+      setReviewingEdit(false);
+    }
+  }
+
+  function clearReview() {
+    sendAttemptRef.current = null;
+    setReviewFirstOriginal(null);
+    setReview(null);
+  }
+
+  async function handleApproveReview(finalText: string, options?: { editUnreviewedAck?: boolean }) {
+    if (!selectedId || !review || sending) return;
     setSending(true);
     setComposeError(null);
     try {
-      const original = composeText.trim();
-      let draft = original;
-      try {
-        const draftRes = await fetch("/api/messages/draft", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ intent: original }),
-        });
-        const draftData = await draftRes.json().catch(() => ({}));
-        if (draftRes.ok && typeof (draftData as any).draft === "string") {
-          draft = (draftData as { draft: string }).draft;
-        }
-      } catch {
-        // fall back to original text
+      sendAttemptRef.current = nextSendAttempt(sendAttemptRef.current, finalText);
+      const reviewedDraft = { review, receipt: reviewReceipt, firstOriginal: reviewFirstOriginal ?? undefined };
+      const approveRes = await fetch("/api/messages/approve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          case_id: caseId,
+          conversation_id: selectedId,
+          original_content: originalForSend(reviewedDraft),
+          ai_rewritten_content: finalText,
+          send_attempt_id: sendAttemptRef.current.id,
+          ...reviewProofForSend(reviewedDraft, { editUnreviewedAck: options?.editUnreviewedAck }),
+        }),
+      });
+      const approveData = await approveRes.json().catch(() => ({}));
+      if (!approveRes.ok) {
+        setComposeError(
+          (approveData as { message?: string }).message ?? "Failed to send message."
+        );
+        return;
       }
-      setPreviewOriginal(original);
-      setPreviewSage(draft);
-      setPreviewEditable(draft);
-      setPreviewChoice("sage");
-      if (draft.trim() === original.trim()) {
-        setPreviewMode("noChange");
-      } else {
-        setPreviewMode("preview");
-      }
+      clearReview();
+      setComposeText("");
+      await loadMessages(selectedId);
+      await loadConversations();
+      router.refresh();
     } catch (e) {
-      setComposeError(e instanceof Error ? e.message : "Failed to prepare message.");
+      setComposeError(e instanceof Error ? e.message : "Failed to send message.");
+    } finally {
       setSending(false);
     }
   }
@@ -635,7 +690,7 @@ export function MessagesSplitView({
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      if (!sending && composeText.trim()) {
+      if (!sending && !reviewing && !review && composeText.trim()) {
         void handleSend();
       }
     }
@@ -1535,160 +1590,31 @@ export function MessagesSplitView({
                     </button>
                   </div>
                 )}
-                {previewMode !== "idle" && (
-                  <div className="mb-3 rounded-2xl border border-[#E8E4DC] bg-[#FDFBF7] px-3 py-2 text-[11px] text-[#3D3D3D]">
-                    {previewMode === "preview" ? (
-                      <>
-                        <div className="mb-2 grid gap-3 md:grid-cols-2">
-                          <div className="space-y-1">
-                            <p className="text-[10px] font-semibold uppercase tracking-wide text-[#8A8A8A]">
-                              Your draft
-                            </p>
-                            <div className="rounded-xl border border-[#E8E4DC] bg-white px-2.5 py-2 min-h-[64px] whitespace-pre-wrap">
-                              {previewOriginal}
-                            </div>
-                          </div>
-                          <div className="space-y-1">
-                            <p className="text-[10px] font-semibold uppercase tracking-wide text-[#8A8A8A]">
-                              Sage version
-                            </p>
-                            {previewChoice === "edit" ? (
-                              <Textarea
-                                value={previewEditable}
-                                onChange={(e) => setPreviewEditable(e.target.value)}
-                                rows={3}
-                                className="min-h-[64px] resize-none rounded-xl border border-[#E8E4DC] bg-[#F9F6F0] text-[11px] text-[#3D3D3D]"
-                              />
-                            ) : (
-                              <div className="rounded-xl border border-[#E8E4DC] bg-[#F9F6F0] px-2.5 py-2 min-h-[64px] whitespace-pre-wrap">
-                                {previewSage}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                        <div className="mb-2 space-y-1">
-                          <label className="flex items-center gap-1 text-[11px]">
-                            <input
-                              type="radio"
-                              className="h-3 w-3"
-                              checked={previewChoice === "original"}
-                              onChange={() => setPreviewChoice("original")}
-                            />
-                            <span>Keep my version</span>
-                          </label>
-                          <label className="flex items-center gap-1 text-[11px]">
-                            <input
-                              type="radio"
-                              className="h-3 w-3"
-                              checked={previewChoice === "sage"}
-                              onChange={() => setPreviewChoice("sage")}
-                            />
-                            <span>Use Sage version</span>
-                          </label>
-                          <label className="flex items-center gap-1 text-[11px]">
-                            <input
-                              type="radio"
-                              className="h-3 w-3"
-                              checked={previewChoice === "edit"}
-                              onChange={() => setPreviewChoice("edit")}
-                            />
-                            <span>Edit before sending</span>
-                          </label>
-                        </div>
-                      </>
-                    ) : (
-                      <p className="text-[11px] text-[#8A8A8A]">
-                        Sage reviewed your message — no changes needed. Send when ready?
-                      </p>
-                    )}
-                    <div className="mt-2 flex items-center justify-between gap-2">
-                      <button
-                        type="button"
-                        className="text-[11px] text-[#8A8A8A] hover:text-[#C7524A] hover:underline"
-                        onClick={() => {
-                          setDiscardDraftOpen(true);
-                        }}
-                        disabled={sending}
-                      >
-                        Discard
-                      </button>
-                      <div className="flex items-center gap-2">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="h-7 rounded-full text-[11px]"
-                          onClick={() => {
-                            setPreviewMode("idle");
-                            setComposeText(previewOriginal);
-                            setSending(false);
-                          }}
-                          disabled={sending}
-                        >
-                          Cancel
-                        </Button>
-                        <Button
-                          type="button"
-                          size="sm"
-                          className="h-7 rounded-full bg-[#5B7A52] text-[11px] text-white hover:bg-[#476242]"
-                          disabled={sending}
-                          onClick={async () => {
-                            if (!selectedId) return;
-                            setSending(true);
-                            setComposeError(null);
-                            try {
-                              let finalContent = previewSage;
-                              if (previewMode === "noChange") {
-                                finalContent = previewOriginal;
-                              } else if (previewChoice === "original") {
-                                finalContent = previewOriginal;
-                              } else if (previewChoice === "edit") {
-                                finalContent =
-                                  previewEditable.trim() || previewSage || previewOriginal;
-                              }
-                              const approveRes = await fetch("/api/messages/approve", {
-                                method: "POST",
-                                headers: { "Content-Type": "application/json" },
-                                body: JSON.stringify({
-                                  case_id: caseId,
-                                  conversation_id: selectedId,
-                                  original_content: previewOriginal,
-                                  ai_rewritten_content: finalContent,
-                                }),
-                              });
-                              const approveData = await approveRes
-                                .json()
-                                .catch(() => ({}));
-                              if (!approveRes.ok) {
-                                setComposeError(
-                                  (approveData as { message?: string }).message ??
-                                    "Failed to send message."
-                                );
-                                setSending(false);
-                                return;
-                              }
-                              setPreviewMode("idle");
-                              setPreviewOriginal("");
-                              setPreviewSage("");
-                              setPreviewEditable("");
-                              setComposeText("");
-                              await loadMessages(selectedId);
-                              await loadConversations();
-                              router.refresh();
-                            } catch (e) {
-                              setComposeError(
-                                e instanceof Error ? e.message : "Failed to send message."
-                              );
-                            } finally {
-                              setSending(false);
-                            }
-                          }}
-                        >
-                          {sending ? "Sending…" : "Send"}
-                        </Button>
-                      </div>
-                    </div>
+                {reviewing && (
+                  <div
+                    className="mb-3 rounded-2xl border border-[#E8E4DC] bg-[#FDFBF7] px-3 py-2 text-[11px] text-[#8A8A8A]"
+                    role="status"
+                  >
+                    Sage is reviewing your message. Nothing has been sent.
                   </div>
+                )}
+                {review && (
+                  <OutboundReviewPanel
+                    key={`${review.status}:${review.original}:${reviewReceipt ?? ""}`}
+                    review={review}
+                    approveLabel="Send"
+                    busy={sending}
+                    busyLabel="Sending…"
+                    error={composeError}
+                    onApprove={(finalText, options) => void handleApproveReview(finalText, options)}
+                    onReviewEdit={reviewReceipt ? (text) => void handleReviewEdit(text) : undefined}
+                    reviewingEdit={reviewingEdit}
+                    onCancel={() => {
+                      clearReview();
+                      setComposeText(review.original);
+                    }}
+                    onDiscard={() => setDiscardDraftOpen(true)}
+                  />
                 )}
 
                 <div className="flex items-end gap-2">
@@ -1734,20 +1660,20 @@ export function MessagesSplitView({
                     placeholder="Type your message..."
                     rows={2}
                     className="min-h-[52px] flex-1 resize-none rounded-[10px] border border-[#E8E4DC] bg-[#F9F6F0] text-sm text-[#3D3D3D] placeholder:text-[#B0A899] focus-visible:ring-[#7C8B6E]"
-                    disabled={sending}
+                    disabled={sending || reviewing || review !== null}
                   />
                   <div className="flex flex-col items-end gap-1">
                     <button
                       type="button"
                       onClick={() => void handleSend()}
-                      disabled={sending || !composeText.trim() || blockSend}
+                      disabled={sending || reviewing || review !== null || !composeText.trim() || blockSend}
                       className={cn(
                         "flex h-[42px] w-[42px] items-center justify-center rounded-full text-white shadow-sm transition-colors",
                         composeText.trim()
                           ? "bg-[#5B7A52] hover:bg-[#476242]"
                           : "bg-[#E0E4DC] cursor-not-allowed"
                       )}
-                      aria-label="Send message"
+                      aria-label={reviewing ? "Reviewing message" : "Review message before sending"}
                     >
                       <svg
                         xmlns="http://www.w3.org/2000/svg"
@@ -1774,7 +1700,7 @@ export function MessagesSplitView({
                     )}
                   </div>
                 </div>
-                {composeError && (
+                {composeError && !review && (
                   <p className="text-[11px] text-[#C7524A]">{composeError}</p>
                 )}
                 <div className="space-y-1">
@@ -2808,12 +2734,13 @@ export function MessagesSplitView({
         confirmTone="danger"
         onCancel={() => setDiscardDraftOpen(false)}
         onConfirm={() => {
-          setPreviewMode("idle");
-          setPreviewOriginal("");
-          setPreviewSage("");
-          setPreviewEditable("");
+          if (sending) {
+            setDiscardDraftOpen(false);
+            return;
+          }
+          clearReview();
           setComposeText("");
-          setSending(false);
+          setComposeError(null);
           setDiscardDraftOpen(false);
         }}
       />

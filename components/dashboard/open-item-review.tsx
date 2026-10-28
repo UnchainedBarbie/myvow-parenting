@@ -6,6 +6,12 @@ import { DocumentDetailModal, type DocumentRow } from "@/components/documents/do
 import { ExpenseForm, type ExpenseFormInitialValues } from "@/components/expenses/expense-form";
 import { ProposalCardList } from "@/components/sage/proposal-card-list";
 import {
+  sendOutcomeFromResponse,
+  sendRequestFields,
+  type ProposalSendRequest,
+  type SendOutcome,
+} from "@/lib/messages/proposal-send";
+import {
   buildCalendarInitialValues,
   buildDocumentReviewRow,
   buildExpenseInitialValues,
@@ -94,7 +100,11 @@ export function OpenItemReview({
     onChanged();
   }
 
-  async function postAction(action: "agree" | "dismiss" | "undo", indexes: number[]) {
+  async function postAction(
+    action: "agree" | "dismiss" | "undo",
+    indexes: number[],
+    send?: ProposalSendRequest
+  ): Promise<SendOutcome | void> {
     if (!item || indexes.length === 0) return;
     setBusyKey(indexes.length === 1 ? `${item.id}:${indexes[0]}` : `${item.id}:multi`);
     try {
@@ -107,17 +117,21 @@ export function OpenItemReview({
           action,
           proposal_indexes: indexes,
           ...(datesPayload ? { dates: datesPayload } : {}),
+          ...sendRequestFields(send),
         }),
       });
-      const data = (await res.json().catch(() => ({}))) as { plan?: SagePlan; error?: string };
+      const data = (await res.json().catch(() => ({}))) as { plan?: SagePlan; error?: string; code?: string };
       if (!res.ok) {
-        showErrorToast(data.error || "Couldn't update that item.");
-        return;
+        // A reviewed send reports its problem inside the review panel.
+        if (!send) showErrorToast(data.error || "Couldn't update that item.");
+        return sendOutcomeFromResponse(res, data);
       }
       if (data.plan) patchPlan(data.plan);
       else onChanged();
+      return { ok: true };
     } catch {
-      showErrorToast("Couldn't update that item.");
+      if (!send) showErrorToast("Couldn't update that item.");
+      return { ok: false, error: "The message was not sent. Check your connection and try again." };
     } finally {
       setBusyKey(null);
     }
@@ -248,18 +262,19 @@ export function OpenItemReview({
         onDateChange={(key, value) => setDates((prev) => ({ ...prev, [key]: value }))}
         busyKey={busyKey}
         emphasisIndex={focus}
-        onAgree={(indexes) => {
+        reviewSends
+        onAgree={(indexes, send) => {
           const formIdxs = indexes.filter((index) =>
             isFormExecuteProposal(proposals[index]?.type)
           );
           const otherIdxs = indexes.filter(
             (index) => !isFormExecuteProposal(proposals[index]?.type)
           );
-          if (otherIdxs.length > 0) void postAction("agree", otherIdxs);
           if (formIdxs.length > 0) {
             const [first, ...rest] = formIdxs;
             void openForm(first, rest);
           }
+          if (otherIdxs.length > 0) return postAction("agree", otherIdxs, send);
         }}
         onDismiss={(indexes) => void postAction("dismiss", indexes)}
         onUndo={(index) => void postAction("undo", [index])}

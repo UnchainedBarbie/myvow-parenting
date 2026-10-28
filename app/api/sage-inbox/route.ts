@@ -23,6 +23,18 @@ import {
   deliverParentMessage,
   messageSendDecision,
 } from "@/lib/messages/deliver-parent-message";
+import { reviewGate, reviewGateFailure } from "@/lib/messages/review-receipt";
+import { attachmentIntent, type AttachmentOutcome } from "@/lib/messages/send-safety";
+import { waitUntil } from "@vercel/functions";
+
+/** The exact text the parent approved after the shared outbound review, and proof of that review. */
+type ReviewedMessage = {
+  proposal_index?: unknown;
+  text?: unknown;
+  receipt?: unknown;
+  unavailable_ack?: unknown;
+  edit_unreviewed_ack?: unknown;
+};
 
 export const runtime = "nodejs";
 
@@ -50,6 +62,10 @@ type PlanProposal = {
   result_message_id?: string;
   delivery_status?: string;
   send_claim_at?: string;
+  /** How the shared outbound review ran for the exact text that was sent. */
+  review_status?: string;
+  /** Whether the file travelled with the message, recorded at send. */
+  attachment_delivery?: AttachmentOutcome;
   recipient_name?: string | null;
   recipient_email?: string | null;
   subject?: string | null;
@@ -260,6 +276,8 @@ export async function POST(req: NextRequest) {
       filed_title?: unknown;
       save_error?: unknown;
       dates?: Record<string, string> | null;
+      reviewed_message?: unknown;
+      acknowledge_attachment_omission?: unknown;
     } | null;
 
     const id = body?.id ? String(body.id) : "";
@@ -651,9 +669,9 @@ export async function POST(req: NextRequest) {
           };
           continue;
         }
-        const body = approvedMessageBody(p);
+        const draftBody = approvedMessageBody(p);
         const recipientEmail = (p.recipient_email ?? "").trim();
-        if (!body || !recipientEmail) {
+        if (!draftBody || !recipientEmail) {
           return NextResponse.json(
             {
               success: false,
@@ -671,7 +689,40 @@ export async function POST(req: NextRequest) {
             { status: 400 }
           );
         }
-        proposals[idx] = { ...p, send_claim_at: now };
+        // The draft goes through the shared outbound review. The parent approves the exact final text.
+        const reviewedSend = body?.reviewed_message;
+        const reviewedFor =
+          reviewedSend && typeof reviewedSend === "object" && !Array.isArray(reviewedSend)
+            ? (reviewedSend as ReviewedMessage)
+            : null;
+        const reviewedText = typeof reviewedFor?.text === "string" ? reviewedFor.text.trim() : "";
+        const gate =
+          reviewedFor && reviewedFor.proposal_index === idx && reviewedText
+            ? reviewGate({
+                receipt: reviewedFor.receipt,
+                unavailableAcknowledged: reviewedFor.unavailable_ack === true,
+                editUnreviewedAcknowledged: reviewedFor.edit_unreviewed_ack === true,
+                userId: user.id,
+                text: reviewedText,
+              })
+            : null;
+        if (!gate || !gate.ok) {
+          const failure = reviewGateFailure(gate && !gate.ok ? gate.reason : "missing");
+          return NextResponse.json(
+            { success: false, error: failure.message, code: failure.code },
+            { status: 409 }
+          );
+        }
+        if (gate.status === "edited_unreviewed_acknowledged") {
+          console.warn(`[sage-inbox] sent edited text without another review user_id=${user.id}`);
+        }
+        const sendBody = reviewedText;
+        const withExactText: PlanProposal = {
+          ...p,
+          ...(sendBody !== draftBody ? { revised_text: sendBody } : {}),
+          review_status: gate.status,
+        };
+        proposals[idx] = { ...withExactText, send_claim_at: now };
         const claimPlan: SagePlan = { ...plan, proposals };
         const { error: claimError } = await admin
           .from("sage_items")
@@ -716,11 +767,13 @@ export async function POST(req: NextRequest) {
         const sent = await deliverParentMessage(admin, {
           caseId,
           senderId: user.id,
-          body,
+          body: sendBody,
           recipientEmail,
           subject: p.subject ?? null,
           proposalId: (p.id ?? "").trim() || null,
-          attachmentDocumentId: (p.attached_document_id ?? "").trim() || null,
+          attachment: attachmentIntent(p),
+          acknowledgeAttachmentOmission: body?.acknowledge_attachment_omission === true,
+          runInBackground: (task) => waitUntil(task),
         });
         if (!sent.ok) {
           proposals[idx] = { ...p };
@@ -731,12 +784,12 @@ export async function POST(req: NextRequest) {
             .eq("id", id)
             .eq("visible_to", user.id);
           return NextResponse.json(
-            { success: false, error: sent.message },
+            { success: false, error: sent.message, ...(sent.code ? { code: sent.code } : {}) },
             { status: sent.status }
           );
         }
         proposals[idx] = {
-          ...p,
+          ...withExactText,
           approved: true,
           approved_at: now,
           executed: true,
@@ -744,6 +797,7 @@ export async function POST(req: NextRequest) {
           result_message_id: sent.messageId,
           delivery_status: sent.deliveryStatus,
           recipient_email: sent.recipientEmail,
+          attachment_delivery: sent.attachment,
         };
         delete proposals[idx].send_claim_at;
         continue;

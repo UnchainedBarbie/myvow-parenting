@@ -14,6 +14,12 @@ import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { cn } from "@/lib/utils";
 import { ReviseProposalModal } from "@/components/sage/revise-proposal-modal";
 import { ProposalCardList } from "@/components/sage/proposal-card-list";
+import {
+  sendOutcomeFromResponse,
+  sendRequestFields,
+  type ProposalSendRequest,
+  type SendOutcome,
+} from "@/lib/messages/proposal-send";
 import { TalkToSageDrawer } from "@/components/sage/talk-to-sage-drawer";
 import {
   buildCalendarInitialValues,
@@ -318,8 +324,9 @@ export function SageInbox({
     item: SageItem,
     action: "agree" | "dismiss" | "undo",
     proposal_indexes: number[],
-    busyId: string
-  ) {
+    busyId: string,
+    send?: ProposalSendRequest
+  ): Promise<SendOutcome | void> {
     if (proposal_indexes.length === 0) return;
     if (action === "agree" && missingRequiredDates(item, proposal_indexes)) return;
 
@@ -334,17 +341,23 @@ export function SageInbox({
           action,
           proposal_indexes,
           ...(datesPayload ? { dates: datesPayload } : {}),
+          ...sendRequestFields(send),
         }),
       });
-      if (!res.ok) return;
+      if (!res.ok) {
+        const data = (await res.json().catch(() => null)) as { error?: string; code?: string } | null;
+        return sendOutcomeFromResponse(res, data);
+      }
       setSelected((prev) => {
         const next = { ...prev };
         delete next[item.id];
         return next;
       });
       await fetchInbox();
+      return { ok: true };
     } catch (e) {
       console.error("[SageInbox] proposal action failed:", e);
+      return { ok: false, error: "The message was not sent. Check your connection and try again." };
     } finally {
       setBusyKey(null);
     }
@@ -437,8 +450,9 @@ export function SageInbox({
   async function handleAgree(
     item: SageItem,
     proposal_indexes: number[],
-    busyId: string
-  ) {
+    busyId: string,
+    send?: ProposalSendRequest
+  ): Promise<SendOutcome | void> {
     if (proposal_indexes.length === 0) return;
     if (missingRequiredDates(item, proposal_indexes)) return;
 
@@ -450,8 +464,9 @@ export function SageInbox({
       (i) => !isFormExecuteProposal(proposals[i]?.type)
     );
 
+    let outcome: SendOutcome | void = undefined;
     if (otherIdxs.length > 0) {
-      await postProposalAction(item, "agree", otherIdxs, busyId);
+      outcome = await postProposalAction(item, "agree", otherIdxs, busyId, send);
     } else {
       setSelected((prev) => {
         const next = { ...prev };
@@ -464,6 +479,7 @@ export function SageInbox({
       const [first, ...rest] = formIdxs;
       openFormAgree(item, first, rest);
     }
+    return outcome;
   }
 
   async function handleCalendarEventCreated(eventId: string) {
@@ -807,12 +823,13 @@ export function SageInbox({
                         }
                         busyKey={busyKey}
                         itemBusy={itemBusy}
-                        onAgree={(indexes) => {
+                        reviewSends
+                        onAgree={(indexes, send) => {
                           const busyId =
                             indexes.length === 1
                               ? `${item.id}:${indexes[0]}`
                               : `${item.id}:multi`;
-                          void handleAgree(item, indexes, busyId);
+                          return handleAgree(item, indexes, busyId, send);
                         }}
                         onDismiss={(indexes) => {
                           const busyId =

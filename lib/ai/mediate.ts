@@ -3,6 +3,8 @@
  * Uses Anthropic API; set ANTHROPIC_API_KEY in env.
  */
 
+import { outboundReviewUserMessage } from "@/lib/messages/outbound-review";
+
 export type AiClassification =
   | "neutral"
   | "escalatory"
@@ -21,41 +23,34 @@ export type MediationResult = {
 };
 
 /**
- * Rewrite user intent into calm, neutral, child-focused text.
- * Returns only the rewritten string for outbound draft flow.
+ * Ask the model to review one outgoing draft. The exact draft is wrapped in tags as the user turn.
+ * Returns the model's raw text. Throws when the call fails, is not configured, or returns no text,
+ * so the caller reports a failed review and never substitutes the draft as a suggestion.
  */
-export async function rewriteOutboundIntent(intent: string): Promise<string> {
+export async function completeOutboundReview(draft: string): Promise<string> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
-    return intent;
-  }
+  if (!apiKey) throw new Error("Outbound review is not configured.");
   const { REWRITE_OUTBOUND_SYSTEM_PROMPT } = await import("./prompts");
-  const res = await fetch(
-    "https://api.anthropic.com/v1/messages",
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-6",
-        max_tokens: 1024,
-        system: REWRITE_OUTBOUND_SYSTEM_PROMPT,
-        messages: [{ role: "user", content: intent }],
-      }),
-    }
-  );
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(err || "Anthropic API error");
-  }
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+    },
+    body: JSON.stringify({
+      model: "claude-sonnet-4-6",
+      max_tokens: 1024,
+      system: REWRITE_OUTBOUND_SYSTEM_PROMPT,
+      messages: [{ role: "user", content: outboundReviewUserMessage(draft) }],
+    }),
+  });
+  if (!res.ok) throw new Error(`Outbound review failed with status ${res.status}.`);
   const data = (await res.json()) as {
     content?: Array<{ type: string; text?: string }>;
   };
-  const text =
-    data.content?.find((c) => c.type === "text")?.text?.trim() ?? intent;
+  const text = data.content?.find((c) => c.type === "text")?.text?.trim();
+  if (!text) throw new Error("Outbound review returned no text.");
   return text;
 }
 

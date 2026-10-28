@@ -19,6 +19,7 @@ import {
 import { originalDocumentName } from "@/lib/documents-files";
 import {
   processInboundMessageForSage,
+  resolveCaseReceiver,
   resolveVisibleTo,
 } from "@/lib/sage/process-inbox-item";
 
@@ -636,25 +637,30 @@ export async function POST(req: NextRequest) {
         console.log("[ingest-attach] skipped no conversation");
       }
     } else {
+      // The receiving parent is the parent this message is addressed to, not the primary account.
       let recipientUserId: string | null = null;
-      if (attachments.length > 0) {
-        const attachmentRecipient = await resolveVisibleTo(caseId);
-        if (typeof attachmentRecipient !== "string") {
-          console.error(
-            `[ingest-attach] skipped no recipient error=${attachmentRecipient.error}`
-          );
+      {
+        const receiver = await resolveCaseReceiver(admin, {
+          caseId,
+          senderId: decision.userId ?? null,
+          recipientEmails: (
+            mailboxList(headerValue(body.Headers, "To") ?? body.To, toAddress) ?? ""
+          ).split(/[,;]/),
+        });
+        if (typeof receiver === "string") {
+          recipientUserId = receiver;
+        } else {
+          console.error(`[ingest-attach] no receiving parent error=${receiver.error}`);
           for (const att of attachments) {
             failedAttachments.push({
               filename: originalDocumentName(att.Name ?? "") || "attachment",
               reason: "The file could not be saved because this case has no parent to attach it to.",
             });
           }
-        } else {
-          recipientUserId = attachmentRecipient;
         }
       }
 
-      if (recipientUserId) {
+      if (recipientUserId && attachments.length > 0) {
         const saved = await storePendingDocuments({
           admin,
           caseId,
@@ -726,7 +732,9 @@ export async function POST(req: NextRequest) {
         waitUntil(
           (async () => {
             try {
-              await processInboundMessageForSage(createdMessageId, failedAttachments);
+              await processInboundMessageForSage(createdMessageId, failedAttachments, {
+                recipientUserId,
+              });
             } catch (e) {
               console.error("[msg-sage]", e);
             }

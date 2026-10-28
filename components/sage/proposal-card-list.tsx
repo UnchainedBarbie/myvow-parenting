@@ -1,7 +1,23 @@
 "use client";
 
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { OutboundReviewPanel } from "@/components/messages/outbound-review-panel";
+import {
+  requestEditReview,
+  requestOutboundReviewWithReceipt,
+  type ReviewedDraft,
+} from "@/lib/messages/outbound-review";
+import {
+  buildProposalSendRequest,
+  isAttachmentBlock,
+  isSendableMessageProposal,
+  proposalMessageText,
+  type ProposalSendRequest,
+  type SendOutcome,
+} from "@/lib/messages/proposal-send";
+import { attachmentOutcomeLabel, pendingAttachmentNote } from "@/lib/messages/send-safety";
 import {
   isCalendarUpdateProposal,
   isFormExecuteProposal,
@@ -48,7 +64,13 @@ export type ProposalCardListProps = {
   onDateChange: (key: string, value: string) => void;
   busyKey: string | null;
   itemBusy?: boolean;
-  onAgree: (indexes: number[]) => void;
+  /**
+   * A card that sends a message to the co-parent is reviewed first. `send` then carries the exact
+   * approved text and the review proof. The result tells the card whether the message went out.
+   */
+  onAgree: (indexes: number[], send?: ProposalSendRequest) => Promise<SendOutcome | void> | void;
+  /** True where Agree really sends. Sends then wait for the shared outbound review. */
+  reviewSends?: boolean;
   onDismiss: (indexes: number[]) => void;
   onUndo: (index: number) => void;
   onRevise?: (index: number, proposal: SageProposal) => void;
@@ -74,6 +96,7 @@ export function ProposalCardList({
   busyKey,
   itemBusy = false,
   onAgree,
+  reviewSends = false,
   onDismiss,
   onUndo,
   onRevise,
@@ -81,6 +104,108 @@ export function ProposalCardList({
   emphasisIndex = null,
   className,
 }: ProposalCardListProps) {
+  type SendReview = {
+    index: number;
+    queue: number[];
+    reviewed: ReviewedDraft | null;
+    sending: boolean;
+    error: string | null;
+    /** The file cannot be shared. The parent may choose to send the message without it. */
+    attachmentBlocked: string | null;
+    lastText: string;
+    lastEditUnreviewedAck: boolean;
+    reviewingEdit: boolean;
+  };
+  const [sendReview, setSendReview] = useState<SendReview | null>(null);
+
+  async function startReview(queue: number[]) {
+    const [index, ...rest] = queue;
+    const proposal = proposals[index];
+    if (!proposal) return;
+    setSendReview({
+      index,
+      queue: rest,
+      reviewed: null,
+      sending: false,
+      error: null,
+      attachmentBlocked: null,
+      lastText: "",
+      lastEditUnreviewedAck: false,
+      reviewingEdit: false,
+    });
+    const reviewed = await requestOutboundReviewWithReceipt(proposalMessageText(proposal));
+    setSendReview((current) => (current && current.index === index ? { ...current, reviewed } : current));
+  }
+
+  /** Approving cards. Messages to the co-parent wait for the review. Every other card goes straight through. */
+  function requestAgree(indexes: number[]) {
+    if (!reviewSends) {
+      void onAgree(indexes);
+      return;
+    }
+    const messages = indexes.filter((i) => isSendableMessageProposal(proposals[i]));
+    const others = indexes.filter((i) => !messages.includes(i));
+    if (others.length > 0) void onAgree(others);
+    if (messages.length > 0) void startReview(messages);
+  }
+
+  /** Text the parent changed after Sage's review gets its own review before it can be sent. */
+  async function reviewEdit(text: string) {
+    const current = sendReview;
+    if (!current?.reviewed || current.sending || current.reviewingEdit) return;
+    const index = current.index;
+    setSendReview({ ...current, reviewingEdit: true, error: null });
+    const reviewed = await requestEditReview(current.reviewed, text);
+    setSendReview((latest) =>
+      latest && latest.index === index
+        ? { ...latest, reviewed, reviewingEdit: false, attachmentBlocked: null }
+        : latest
+    );
+  }
+
+  async function sendReviewed(
+    finalText: string,
+    acknowledgeAttachmentOmission: boolean,
+    editUnreviewedAck = false
+  ) {
+    const current = sendReview;
+    if (!current?.reviewed || current.sending) return;
+    setSendReview({
+      ...current,
+      sending: true,
+      error: null,
+      attachmentBlocked: null,
+      lastText: finalText,
+      lastEditUnreviewedAck: editUnreviewedAck,
+    });
+    const outcome = await onAgree(
+      [current.index],
+      buildProposalSendRequest({
+        proposalIndex: current.index,
+        finalText,
+        reviewed: current.reviewed,
+        acknowledgeAttachmentOmission,
+        editUnreviewedAck,
+      })
+    );
+    if (outcome && outcome.ok === false) {
+      setSendReview({
+        ...current,
+        sending: false,
+        lastText: finalText,
+        lastEditUnreviewedAck: editUnreviewedAck,
+        error: isAttachmentBlock(outcome) ? null : outcome.error,
+        attachmentBlocked: isAttachmentBlock(outcome) ? outcome.error : null,
+      });
+      return;
+    }
+    if (current.queue.length > 0) {
+      await startReview(current.queue);
+      return;
+    }
+    setSendReview(null);
+  }
+
   if (proposals.length === 0) return null;
 
   const visible = proposals
@@ -190,7 +315,7 @@ export function ProposalCardList({
                       "bg-[#7B9E87] text-white hover:bg-[#6A8A78]",
                       "disabled:opacity-40 disabled:cursor-not-allowed"
                     )}
-                    onClick={() => onAgree([idx])}
+                    onClick={() => requestAgree([idx])}
                   >
                     {sendable ? "Send" : "✓"}
                   </button>
@@ -287,7 +412,15 @@ export function ProposalCardList({
                     {p.subject ? ` · ${p.subject}` : ""}
                   </p>
                 ) : null}
-                {p.attached_file_name ? (
+                {p.type === "reply_coparent" && p.attached_file_name ? (
+                  <p
+                    className="text-[11px] leading-snug text-foreground-secondary break-words"
+                    data-testid="proposal-attachment-note"
+                  >
+                    {attachmentOutcomeLabel(p.attachment_delivery) ??
+                      pendingAttachmentNote(p.attached_file_name)}
+                  </p>
+                ) : p.attached_file_name ? (
                   <p className="text-[11px] leading-snug text-foreground-secondary break-words">
                     Attachment: {p.attached_file_name}
                   </p>
@@ -325,6 +458,50 @@ export function ProposalCardList({
         })}
       </ul>
 
+      {sendReview ? (
+        <div className="space-y-1" data-testid="proposal-send-review">
+          {sendReview.reviewed ? (
+            <OutboundReviewPanel
+              key={`${sendReview.index}:${sendReview.reviewed.review.status}:${sendReview.reviewed.review.original}:${sendReview.reviewed.receipt ?? ""}`}
+              review={sendReview.reviewed.review}
+              approveLabel="Send"
+              busy={sendReview.sending}
+              busyLabel="Sending…"
+              error={sendReview.error}
+              onApprove={(text, options) => void sendReviewed(text, false, options?.editUnreviewedAck === true)}
+              onReviewEdit={sendReview.reviewed.receipt ? (text) => void reviewEdit(text) : undefined}
+              reviewingEdit={sendReview.reviewingEdit}
+              onCancel={() => setSendReview(null)}
+            >
+              {proposals[sendReview.index]?.attached_file_name ? (
+                <p className="mb-1 text-[11px] text-[#3D3D3D]">
+                  {pendingAttachmentNote(proposals[sendReview.index].attached_file_name as string)}
+                </p>
+              ) : null}
+              {sendReview.attachmentBlocked ? (
+                <div className="mb-1 space-y-1 rounded-xl border border-[#E8D9B5] bg-[#FDF6E3] px-2.5 py-2 text-[11px]">
+                  <p>{sendReview.attachmentBlocked}</p>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-7 rounded-full text-[11px]"
+                    disabled={sendReview.sending}
+                    onClick={() => void sendReviewed(sendReview.lastText, true, sendReview.lastEditUnreviewedAck)}
+                  >
+                    Send without the file
+                  </Button>
+                </div>
+              ) : null}
+            </OutboundReviewPanel>
+          ) : (
+            <p className="text-[11px] text-foreground-secondary">
+              Sage is reviewing your message. Nothing has been sent.
+            </p>
+          )}
+        </div>
+      ) : null}
+
       {!suppressActions && multiSelect && actionableCount > 1 && (
         <div className="flex flex-wrap items-center gap-2 pt-1">
           <Button
@@ -336,7 +513,7 @@ export function ProposalCardList({
               itemBusy ||
               (missingRequiredDates?.(checked) ?? false)
             }
-            onClick={() => onAgree(checked)}
+            onClick={() => requestAgree(checked)}
           >
             Agree
           </Button>

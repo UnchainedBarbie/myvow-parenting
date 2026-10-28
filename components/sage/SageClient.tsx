@@ -10,6 +10,12 @@ import { cn } from "@/lib/utils";
 import { showErrorToast } from "@/components/ui/toaster";
 import { Paperclip, Camera, X, FileText } from "lucide-react";
 import { ProposalCardList } from "@/components/sage/proposal-card-list";
+import {
+  sendOutcomeFromResponse,
+  sendRequestFields,
+  type ProposalSendRequest,
+  type SendOutcome,
+} from "@/lib/messages/proposal-send";
 import { ReviseProposalModal } from "@/components/sage/revise-proposal-modal";
 import {
   buildCalendarInitialValues,
@@ -349,8 +355,9 @@ export function SageClient({
     item: SageItem,
     action: "agree" | "dismiss" | "undo",
     proposal_indexes: number[],
-    busyId: string
-  ) {
+    busyId: string,
+    send?: ProposalSendRequest
+  ): Promise<SendOutcome | void> {
     if (proposal_indexes.length === 0) return;
     if (action === "agree" && missingRequiredDates(item, proposal_indexes)) return;
 
@@ -366,19 +373,22 @@ export function SageClient({
           action,
           proposal_indexes,
           ...(datesPayload ? { dates: datesPayload } : {}),
+          ...sendRequestFields(send),
         }),
       });
       const data = (await res.json().catch(() => ({}))) as {
         success?: boolean;
         error?: string;
+        code?: string;
         plan?: SagePlan;
         sage_message?: SageMessage;
         sage_messages?: SageMessage[];
       };
       if (!res.ok) {
-        if (data.error) showErrorToast(data.error);
+        // A reviewed send reports its problem inside the review panel.
+        if (data.error && !send) showErrorToast(data.error);
         if (isReplacedProposalError(data.error)) notifySageProposalsChanged();
-        return;
+        return sendOutcomeFromResponse(res, data);
       }
       setSelected((prev) => {
         const next = { ...prev };
@@ -401,8 +411,10 @@ export function SageClient({
         ]);
       }
       notifySageProposalsChanged();
+      return { ok: true };
     } catch (e) {
       console.error("[SageClient] proposal action failed:", e);
+      return { ok: false, error: "The message was not sent. Check your connection and try again." };
     } finally {
       setBusyKey(null);
     }
@@ -607,8 +619,9 @@ export function SageClient({
   async function handleAgree(
     item: SageItem,
     proposal_indexes: number[],
-    busyId: string
-  ) {
+    busyId: string,
+    send?: ProposalSendRequest
+  ): Promise<SendOutcome | void> {
     if (proposal_indexes.length === 0) return;
     if (missingRequiredDates(item, proposal_indexes)) return;
 
@@ -635,8 +648,9 @@ export function SageClient({
       (i) => !isFormExecuteProposal(proposals[i]?.type)
     );
 
+    let outcome: SendOutcome | void = undefined;
     if (otherIdxs.length > 0) {
-      await postProposalAction(item, "agree", otherIdxs, busyId);
+      outcome = await postProposalAction(item, "agree", otherIdxs, busyId, send);
     } else {
       setSelected((prev) => {
         const next = { ...prev };
@@ -668,6 +682,7 @@ export function SageClient({
       const [first, ...rest] = formIdxs;
       openFormAgree(item, first, rest, formCaseId);
     }
+    return outcome;
   }
 
   async function handleCalendarEventCreated(eventId: string) {
@@ -1243,12 +1258,13 @@ export function SageClient({
                             }
                             busyKey={busyKey}
                             itemBusy={itemBusy}
-                            onAgree={(indexes) => {
+                            reviewSends
+                            onAgree={(indexes, send) => {
                               const busyId =
                                 indexes.length === 1
                                   ? `${item.id}:${indexes[0]}`
                                   : `${item.id}:multi`;
-                              void handleAgree(item, indexes, busyId);
+                              return handleAgree(item, indexes, busyId, send);
                             }}
                             onDismiss={(indexes) => {
                               const busyId =

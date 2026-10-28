@@ -5,9 +5,6 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import {
   Plus,
-  Send,
-  PenLine,
-  Trash2,
   Flag,
   Search,
   FileText,
@@ -32,6 +29,8 @@ import {
   type SageSessionRow,
 } from "@/lib/sage-sessions-client";
 import { SageSessionOverflowMenu } from "@/components/sage/sage-session-overflow-menu";
+import { OutboundReviewPanel } from "@/components/messages/outbound-review-panel";
+import { requestOutboundReview, type OutboundReview } from "@/lib/messages/outbound-review";
 
 type ListFilter = "all" | "incident" | "flagged" | "archived";
 
@@ -64,9 +63,8 @@ export function SageSplitView() {
   const [creatingSession, setCreatingSession] = useState(false);
   const [showDraftAssistant, setShowDraftAssistant] = useState(false);
   const [draftAssistantInput, setDraftAssistantInput] = useState("");
-  const [draftAssistantRewritten, setDraftAssistantRewritten] = useState<
-    string | null
-  >(null);
+  const [draftAssistantReview, setDraftAssistantReview] =
+    useState<OutboundReview | null>(null);
   const [draftAssistantLoading, setDraftAssistantLoading] = useState(false);
   const [initialDraftForSage, setInitialDraftForSage] = useState<string | null>(
     null
@@ -284,28 +282,12 @@ export function SageSplitView() {
   }
 
   async function handleRewriteMessage() {
-    const text = draftAssistantInput.trim();
-    if (!text) return;
+    const draft = draftAssistantInput.trim();
+    if (!draft || draftAssistantLoading) return;
     setDraftAssistantLoading(true);
-    setDraftAssistantRewritten(null);
+    setDraftAssistantReview(null);
     try {
-      const res = await fetch("/api/sage/rewrite-message", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        showErrorToast(
-          (data as { message?: string }).message ?? "Could not rewrite message."
-        );
-        return;
-      }
-      setDraftAssistantRewritten(
-        (data as { rewritten?: string }).rewritten ?? text
-      );
-    } catch {
-      showErrorToast("Something went wrong. Try again.");
+      setDraftAssistantReview(await requestOutboundReview(draft));
     } finally {
       setDraftAssistantLoading(false);
     }
@@ -316,7 +298,7 @@ export function SageSplitView() {
       `/messages?new=1&subject=${encodeURIComponent("From Sage")}&body=${encodeURIComponent(body)}`
     );
     setShowDraftAssistant(false);
-    setDraftAssistantRewritten(null);
+    setDraftAssistantReview(null);
     setDraftAssistantInput("");
   }
 
@@ -650,7 +632,12 @@ export function SageSplitView() {
                 placeholder="Paste or type your draft here..."
                 className="min-h-[120px] rounded-card border-border bg-background text-sm"
               />
-              {!draftAssistantRewritten ? (
+              {draftAssistantLoading ? (
+                <p className="text-xs text-[#8A8A8A]" role="status">
+                  Sage is reviewing your message. Nothing has been sent.
+                </p>
+              ) : null}
+              {!draftAssistantReview ? (
                 <Button
                   type="button"
                   size="sm"
@@ -660,56 +647,23 @@ export function SageSplitView() {
                   }
                   onClick={() => void handleRewriteMessage()}
                 >
-                  {draftAssistantLoading ? "Rewriting…" : "Get calmer version"}
+                  {draftAssistantLoading ? "Reviewing…" : "Review my message"}
                 </Button>
               ) : (
-                <div className="rounded-card border border-[#E8E4DC] bg-[#FDFBF7] p-4 space-y-3">
-                  <p className="text-xs font-medium text-[#8A8A8A]">
-                    Suggested version
-                  </p>
-                  <p className="text-sm text-foreground whitespace-pre-wrap">
-                    {draftAssistantRewritten}
-                  </p>
-                  <div className="flex flex-wrap gap-2">
-                    <Button
-                      type="button"
-                      size="sm"
-                      className="rounded-full h-8 px-3 bg-[#5B7A52] text-white hover:bg-[#476242] text-xs"
-                      onClick={() =>
-                        openNewConversationWithBody(draftAssistantRewritten)
-                      }
-                    >
-                      <Send className="h-3 w-3 mr-1" /> Send
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      className="rounded-full h-8 px-3 border-[#7C8B6E] text-[#5B7A52] hover:bg-[#F2F5EF] text-xs"
-                      onClick={() => {
-                        setInitialDraftForSage(draftAssistantRewritten);
-                        setShowDraftAssistant(false);
-                        setDraftAssistantRewritten(null);
-                        setDraftAssistantInput("");
-                      }}
-                    >
-                      <PenLine className="h-3 w-3 mr-1" /> Edit
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      className="rounded-full h-8 px-3 border-[#E8E4DC] text-[#6B6B6B] hover:bg-[#F5F5F5] text-xs"
-                      onClick={() => {
-                        setShowDraftAssistant(false);
-                        setDraftAssistantRewritten(null);
-                        setDraftAssistantInput("");
-                      }}
-                    >
-                      <Trash2 className="h-3 w-3 mr-1" /> Discard
-                    </Button>
-                  </div>
-                </div>
+                <OutboundReviewPanel
+                  key={`${draftAssistantReview.status}:${draftAssistantReview.original}`}
+                  review={draftAssistantReview}
+                  approveLabel="Continue in Messages"
+                  busy={false}
+                  busyLabel="Opening…"
+                  onApprove={(finalText) => openNewConversationWithBody(finalText)}
+                  onCancel={() => setDraftAssistantReview(null)}
+                  onDiscard={() => {
+                    setShowDraftAssistant(false);
+                    setDraftAssistantReview(null);
+                    setDraftAssistantInput("");
+                  }}
+                />
               )}
               <Button
                 type="button"
@@ -718,7 +672,7 @@ export function SageSplitView() {
                 className="rounded-full h-8 text-xs text-[#8A8A8A] w-fit"
                 onClick={() => {
                   setShowDraftAssistant(false);
-                  setDraftAssistantRewritten(null);
+                  setDraftAssistantReview(null);
                   setDraftAssistantInput("");
                 }}
               >

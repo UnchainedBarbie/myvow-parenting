@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
 import { calendarNoticeLink, readCalendarEventRef } from "@/lib/calendar/coparent-notice";
+import { messageNoticeHref, readMessageRef } from "@/lib/messages/incoming-notice";
 
 type ParentNotificationRow = {
   id: string;
@@ -80,8 +81,40 @@ export async function GET(request: NextRequest) {
       })
     );
 
+    // A message notice carries a reference to its message. The reader sees the plain text and a link.
+    const messageIds = Array.from(
+      new Set(
+        notifications
+          .filter((notice) => notice.type === "coparent_message")
+          .map((notice) => readMessageRef(notice.message).messageId)
+          .filter((id): id is string => Boolean(id))
+      )
+    );
+    const { data: messageRows } = messageIds.length
+      ? await admin.from("messages").select("id, case_id, conversation_id").in("id", messageIds)
+      : { data: [] as { id: string; case_id: string | null; conversation_id: string | null }[] };
+    const conversationByMessage = new Map(
+      ((messageRows ?? []) as { id: string; case_id: string | null; conversation_id: string | null }[])
+        .filter((row) => row.case_id && memberCaseIds.includes(row.case_id))
+        .map((row) => [row.id, row.conversation_id] as const)
+    );
+
     return NextResponse.json({
       notifications: notifications.map((n) => {
+        if (n.type === "coparent_message") {
+          const ref = readMessageRef(n.message);
+          const href = ref.messageId ? messageNoticeHref(conversationByMessage.get(ref.messageId)) : null;
+          return {
+            id: n.id,
+            type: n.type,
+            title: n.title,
+            message: ref.text,
+            ...(href ? { href } : {}),
+            priority: n.priority === "high" || n.priority === "urgent" ? n.priority : "normal",
+            read: n.read,
+            created_at: n.created_at,
+          };
+        }
         const stored = eventsById.get(readCalendarEventRef(n.message).eventId ?? "");
         const linked = n.type === "calendar_event"
           ? calendarNoticeLink({

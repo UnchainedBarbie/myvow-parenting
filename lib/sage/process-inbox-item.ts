@@ -18,6 +18,14 @@ import {
   type RawItem,
 } from "@/lib/sage/observation-builder";
 import { processObservation } from "@/lib/sage/process-observation";
+import { loadIncomingContext } from "@/lib/sage/incoming-context";
+import { parentDirectory } from "@/lib/messages/case-parents";
+import { resolveReceivingParent } from "@/lib/messages/receiving-parent";
+import {
+  inboundNarration,
+  readIncomingCommunication,
+  readingNeedsAttention,
+} from "@/lib/sage/communication-reading";
 import type { Plan } from "@/lib/sage/planner";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -429,15 +437,18 @@ function coparentLabel(text: string): string {
  * Sage speaking to the parent. Never the outbound draft: reply_coparent and the
  * clarification this path asks Co-Parent are the parent's message to send.
  */
-function narrationFor(plan: Plan, summary: string): string {
-  const about = asSentence(coparentLabel(summary));
-  const topic = about || "Co-Parent sent a message.";
-  const hasOutboundDraft = plan.proposals.some((p) => {
+function hasOutboundDraft(plan: Plan): boolean {
+  return plan.proposals.some((p) => {
     const status = ((p as { status?: string }).status ?? "").toLowerCase();
     if (status === "dismissed" || status === "superseded") return false;
     return p.type === "reply_coparent" || p.type === "ask_clarification";
   });
-  if (hasOutboundDraft) {
+}
+
+function narrationFor(plan: Plan, summary: string): string {
+  const about = asSentence(coparentLabel(summary));
+  const topic = about || "Co-Parent sent a message.";
+  if (hasOutboundDraft(plan)) {
     return `${topic} A reply is ready for you to review.`;
   }
   return about || "Co-Parent sent something that needs a look.";
@@ -463,6 +474,40 @@ async function findActiveConversationSession(
   if (error) return { id: null, error: error.message };
   const id = ((data ?? [])[0] as { id?: string } | undefined)?.id ?? null;
   return { id };
+}
+
+/**
+ * The receiving parent's private Sage session for one conversation. Created once per parent and
+ * conversation. Each parent has their own session, so one parent's Sage never reads the other's.
+ */
+export async function ensureConversationSession(
+  admin: SupabaseClient,
+  input: { userId: string; conversationId: string; title: string }
+): Promise<{ id: string | null; error?: string }> {
+  const active = await findActiveConversationSession(admin, input.userId, input.conversationId);
+  if (active.error) return { id: null, error: `session_lookup_failed error=${active.error}` };
+  if (active.id) return { id: active.id };
+
+  const { data: created, error } = await admin
+    .from("sage_sessions")
+    .insert({
+      user_id: input.userId,
+      session_type: "private",
+      conversation_id: input.conversationId,
+      title: input.title,
+      category: "general",
+    })
+    .select("id")
+    .single();
+  if (!error && created) return { id: (created as { id: string }).id };
+  if (isUniqueViolation(error)) {
+    const raced = await findActiveConversationSession(admin, input.userId, input.conversationId);
+    if (raced.error || !raced.id) {
+      return { id: null, error: `session_race error=${raced.error ?? "active session not found"}` };
+    }
+    return { id: raced.id };
+  }
+  return { id: null, error: `session_create_failed error=${error?.message ?? "insert failed"}` };
 }
 
 async function loadMessagePdfAttachments(
@@ -570,15 +615,90 @@ async function loadMessagePdfAttachments(
  * Co-Parent inbound message → Sage. Propose only.
  * Does not write a role:'user' journal row.
  */
+export type InboundSageOptions = {
+  /** The parent the sender addressed. Verified against the case. Resolved from the message when omitted. */
+  recipientUserId?: string | null;
+};
+
+async function loadMessageRouting(
+  admin: SupabaseClient,
+  messageId: string
+): Promise<{ senderId: string | null; recipientEmails: string[] }> {
+  const { data, error } = await admin
+    .from("messages")
+    .select("sender_id, recipient_email")
+    .eq("id", messageId)
+    .maybeSingle();
+  if (!error && data) {
+    const row = data as { sender_id?: string | null; recipient_email?: string | null };
+    return {
+      senderId: (row.sender_id ?? "").trim() || null,
+      recipientEmails: (row.recipient_email ?? "")
+        .split(/[,;]/)
+        .map((email) => email.trim())
+        .filter(Boolean),
+    };
+  }
+  const slim = await admin.from("messages").select("sender_id").eq("id", messageId).maybeSingle();
+  const row = (slim.data ?? null) as { sender_id?: string | null } | null;
+  return { senderId: (row?.sender_id ?? "").trim() || null, recipientEmails: [] };
+}
+
+/**
+ * The parent whose Sage reads this message: the parent the message was addressed to.
+ * A message the case cannot attribute to one receiving parent is left unread, not handed to the
+ * primary account.
+ */
+export async function resolveReceivingUserId(
+  admin: SupabaseClient,
+  message: { id: string; case_id: string },
+  explicitRecipientId?: string | null
+): Promise<string | { error: string }> {
+  const routing = await loadMessageRouting(admin, message.id);
+  return resolveCaseReceiver(admin, {
+    caseId: message.case_id,
+    senderId: routing.senderId,
+    recipientEmails: routing.recipientEmails,
+    explicitRecipientId,
+  });
+}
+
+/** The receiving parent for a message before or after it is saved. Shared by ingest and in-app sends. */
+export async function resolveCaseReceiver(
+  admin: SupabaseClient,
+  input: {
+    caseId: string;
+    senderId: string | null;
+    recipientEmails: (string | null | undefined)[];
+    explicitRecipientId?: string | null;
+  }
+): Promise<string | { error: string }> {
+  const directory = await parentDirectory(admin as never, input.caseId, input.senderId ?? "");
+  const explicit = (input.explicitRecipientId ?? "").trim();
+  if (explicit) {
+    const onCase = directory.parents.some((parent) => parent.userId === explicit);
+    if (!onCase) return { error: "The addressed parent is not on this case." };
+    if (explicit === (input.senderId ?? "").trim()) return { error: "The sender cannot be the receiving parent." };
+    return explicit;
+  }
+  const resolved = resolveReceivingParent({
+    senderId: input.senderId,
+    recipientEmails: input.recipientEmails,
+    parents: directory.parents,
+  });
+  return resolved.ok ? resolved.userId : { error: resolved.error };
+}
+
 export async function processInboundMessageForSage(
   messageId: string,
-  failedAttachments: AttachmentNotice[] = []
+  failedAttachments: AttachmentNotice[] = [],
+  options: InboundSageOptions = {}
 ): Promise<void> {
   const admin = getServiceRoleClient();
   try {
     const { data: messageRow, error: messageErr } = await admin
       .from("messages")
-      .select("id, case_id, conversation_id, original_content, created_at")
+      .select("id, case_id, conversation_id, original_content, ai_rewritten_content, created_at")
       .eq("id", messageId)
       .maybeSingle();
     if (messageErr) {
@@ -590,6 +710,7 @@ export async function processInboundMessageForSage(
       case_id: string;
       conversation_id: string | null;
       original_content: string | null;
+      ai_rewritten_content: string | null;
       created_at: string | null;
     } | null;
     if (!message) {
@@ -626,7 +747,8 @@ export async function processInboundMessageForSage(
       return;
     }
 
-    const bodyText = (message.original_content ?? "").trim();
+    // The receiving parent reads what the sender approved, never the sender's first draft.
+    const bodyText = (message.ai_rewritten_content ?? "").trim() || (message.original_content ?? "").trim();
     const { extracted: pdfAttachments, unreadable } =
       await loadMessagePdfAttachments(admin, message.id);
     const storedFiles = [
@@ -646,7 +768,7 @@ export async function processInboundMessageForSage(
       return;
     }
 
-    const visibleTo = await resolveVisibleTo(message.case_id);
+    const visibleTo = await resolveReceivingUserId(admin, message, options.recipientUserId);
     if (typeof visibleTo !== "string") {
       logMsgSage(messageId, `skipped=no_recipient error=${visibleTo.error}`);
       return;
@@ -673,16 +795,20 @@ export async function processInboundMessageForSage(
       ...(pdfAttachments.length > 0 ? { attachments: pdfAttachments } : {}),
     };
     const observation = buildObservation(message.id, [rawItem]);
-    const processed = await processObservation(observation, {
-      case_id: message.case_id,
-      timezone,
-      source_type: "message",
-      source_id: message.id,
-      sender: "Co-Parent",
-      plan_sender: "Co-Parent",
-    });
+    const incoming = await loadIncomingContext(admin, { messageId: message.id, recipientId: visibleTo });
+    const [processed, reading] = await Promise.all([
+      processObservation(observation, {
+        case_id: message.case_id,
+        timezone,
+        source_type: "message",
+        source_id: message.id,
+        sender: "Co-Parent",
+        plan_sender: "Co-Parent",
+      }),
+      incoming ? readIncomingCommunication(incoming) : Promise.resolve(null),
+    ]);
 
-    if (!needsAttention(processed.plan)) {
+    if (!needsAttention(processed.plan) && !readingNeedsAttention(reading)) {
       const intent = processed.interpretation.intent;
       const plan = processed.plan;
       console.log(
@@ -708,57 +834,16 @@ export async function processInboundMessageForSage(
       return;
     }
 
-    let sessionId: string | null = null;
-    const active = await findActiveConversationSession(
-      admin,
-      visibleTo,
-      conversation.id
-    );
-    if (active.error) {
-      logMsgSage(messageId, `skipped=session_lookup_failed error=${active.error}`);
+    const ensured = await ensureConversationSession(admin, {
+      userId: visibleTo,
+      conversationId: conversation.id,
+      title: (conversation.subject ?? "").trim() || "(no subject)",
+    });
+    if (!ensured.id) {
+      logMsgSage(messageId, `skipped=${ensured.error ?? "session_create_failed"}`);
       return;
     }
-    sessionId = active.id;
-
-    if (!sessionId) {
-      const title = (conversation.subject ?? "").trim() || "(no subject)";
-      const { data: createdSession, error: sessionErr } = await admin
-        .from("sage_sessions")
-        .insert({
-          user_id: visibleTo,
-          session_type: "private",
-          conversation_id: conversation.id,
-          title,
-          category: "general",
-        })
-        .select("id")
-        .single();
-      if (sessionErr || !createdSession) {
-        if (isUniqueViolation(sessionErr)) {
-          const raced = await findActiveConversationSession(
-            admin,
-            visibleTo,
-            conversation.id
-          );
-          if (raced.error || !raced.id) {
-            logMsgSage(
-              messageId,
-              `skipped=session_race error=${raced.error ?? "active session not found"}`
-            );
-            return;
-          }
-          sessionId = raced.id;
-        } else {
-          logMsgSage(
-            messageId,
-            `skipped=session_create_failed error=${sessionErr?.message ?? "insert failed"}`
-          );
-          return;
-        }
-      } else {
-        sessionId = (createdSession as { id: string }).id;
-      }
-    }
+    const sessionId: string = ensured.id;
 
     const { intent, entities } = processed.interpretation;
     const { child_ids, resolved_dates } = processed;
@@ -794,6 +879,7 @@ export async function processInboundMessageForSage(
           ...(processed.expense_category
             ? { expense_category: processed.expense_category }
             : {}),
+          ...(reading ? { communication_reading: reading } : {}),
         },
         child_ids,
         plan: itemPlan,
@@ -819,11 +905,15 @@ export async function processInboundMessageForSage(
     }
 
     const sageItemId = (sageRow as { id: string }).id;
-    const content = correctIntakeText(narrationFor(itemPlan, summary), {
-      stored: storedFiles,
-      failed: failedAttachments,
-      ownMessage: false,
-    });
+    const content = correctIntakeText(
+      inboundNarration({
+        reading,
+        ctx: incoming,
+        replyReady: hasOutboundDraft(itemPlan),
+        fallback: narrationFor(itemPlan, summary),
+      }),
+      { stored: storedFiles, failed: failedAttachments, ownMessage: false }
+    );
     const journalRow = {
       user_id: visibleTo,
       role: "sage" as const,

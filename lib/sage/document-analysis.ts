@@ -5,6 +5,7 @@ import { buildObservationFromChat } from "@/lib/sage/observation-builder";
 import type { ProcessObservationResult } from "@/lib/sage/process-observation";
 import { requestsDocumentAnalysis, type AnalysisTurn } from "@/lib/sage/document-read";
 import { answerDocumentQuestion, localDocumentReply, type ReasonPacket } from "@/lib/sage/document-reason";
+import type { CommunicationBrief } from "@/lib/sage/communication-reading";
 
 export type AnalysisOrigin = "current" | "incoming" | "session" | "library";
 
@@ -18,6 +19,8 @@ export type AnalysisFile = {
   uploadedBy: string | null;
   status: string | null;
   linkedOnCase: boolean;
+  /** Loads the message this file arrived with, seen from the receiving parent. Called for the chosen file only. */
+  loadBrief?: () => Promise<CommunicationBrief | null>;
 };
 
 export type AnalysisViewer = { userId: string; role: string | null | undefined };
@@ -106,11 +109,13 @@ export async function performDocumentAnalysis(input: {
     };
   }
   const extracted = await extractDocument(bytes, file.fileName, { extractPdf: input.extractPdf });
+  const communication = file.loadBrief ? await file.loadBrief().catch(() => null) : null;
   const reply = await answerDocumentQuestion({
     question: input.message,
     fileName: file.fileName,
     extracted,
     reason: input.reason,
+    communication: communication ?? undefined,
   });
   return { reply, fileName: file.fileName };
 }

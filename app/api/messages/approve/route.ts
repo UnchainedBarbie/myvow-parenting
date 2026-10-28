@@ -2,10 +2,25 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
 import { estimateIntensity, type IntensityResult } from "@/lib/sage/intensity";
 import { ServerClient, Message, Header } from "postmark";
+import { waitUntil } from "@vercel/functions";
+import { parentDirectory } from "@/lib/messages/case-parents";
+import { receivingAddress, resolveReceivingParent } from "@/lib/messages/receiving-parent";
+import { announceIncomingMessage, announceSavedMessage } from "@/lib/messages/deliver-parent-message";
+import { reviewGate, reviewGateFailure } from "@/lib/messages/review-receipt";
+import {
+  SEND_ATTEMPT_CONFLICT_MESSAGE,
+  decideSendAttempt,
+  insertOutgoingMessage,
+} from "@/lib/messages/send-attempt-store";
+import { validSendAttemptId } from "@/lib/messages/send-attempt";
 
 /**
  * Approve draft and send: insert message (outgoing). Checks cool-off and structured pause.
  * Writes intensity_score/intensity_flag, delivery_status, delivered_at.
+ * The final text needs proof of the shared outbound review (or an explicit acknowledgement).
+ * Each approval carries a send-attempt id. A retry of that approval returns the saved message,
+ * and two separate approvals of identical text are two messages.
+ * The receiving parent is announced once.
  */
 export async function POST(request: NextRequest) {
   try {
@@ -25,6 +40,10 @@ export async function POST(request: NextRequest) {
       is_emergency,
       emergency_type,
       emergency_note,
+      review_receipt,
+      review_unavailable_ack,
+      edit_unreviewed_ack,
+      send_attempt_id,
     } = body as {
       case_id?: string;
       conversation_id?: string | null;
@@ -33,6 +52,10 @@ export async function POST(request: NextRequest) {
       is_emergency?: boolean;
       emergency_type?: string | null;
       emergency_note?: string | null;
+      review_receipt?: string | null;
+      review_unavailable_ack?: boolean;
+      edit_unreviewed_ack?: boolean;
+      send_attempt_id?: string | null;
     };
     if (!case_id || !original_content || !ai_rewritten_content) {
       return NextResponse.json(
@@ -42,6 +65,85 @@ export async function POST(request: NextRequest) {
     }
 
     const admin = getServiceRoleClient();
+
+    const { data: membership } = await admin
+      .from("case_members")
+      .select("id")
+      .eq("case_id", case_id)
+      .eq("user_id", user.id)
+      .limit(1);
+    if (!membership || membership.length === 0) {
+      return NextResponse.json({ message: "You are not a member of this case." }, { status: 403 });
+    }
+    if (conversation_id) {
+      const { data: owned } = await admin
+        .from("conversations")
+        .select("id")
+        .eq("id", conversation_id)
+        .eq("case_id", case_id)
+        .maybeSingle();
+      if (!owned) {
+        return NextResponse.json({ message: "That conversation is not on this case." }, { status: 403 });
+      }
+    }
+
+    // Each approval is one send attempt. A retry of that attempt returns the saved message.
+    const attemptId = validSendAttemptId(send_attempt_id);
+    if (!attemptId) {
+      return NextResponse.json(
+        { message: "This send is missing its attempt id. Refresh the page and send again.", code: "send_attempt_required" },
+        { status: 400 }
+      );
+    }
+    const attempt = await decideSendAttempt(admin, {
+      senderId: user.id,
+      attemptId,
+      text: ai_rewritten_content,
+    });
+    if (attempt.kind === "conflict") {
+      return NextResponse.json(
+        { message: SEND_ATTEMPT_CONFLICT_MESSAGE, code: "send_attempt_conflict" },
+        { status: 409 }
+      );
+    }
+    if (attempt.kind === "duplicate") {
+      // A retry of a saved send. Announcing again is safe, and it covers an attempt that stopped early.
+      try {
+        await announceSavedMessage(admin, {
+          caseId: case_id,
+          senderId: user.id,
+          messageId: attempt.messageId,
+          conversationId: attempt.conversationId,
+          runInBackground: (task) => waitUntil(task),
+        });
+      } catch (error) {
+        console.error("[messages/approve] announce on retry:", error);
+      }
+      return NextResponse.json({ ok: true, message_id: attempt.messageId, duplicate: true });
+    }
+    const attemptStored = attempt.stored;
+    if (!attemptStored) {
+      console.warn(`[messages/approve] send_attempt_id column unavailable; idempotency off user_id=${user.id}`);
+    }
+
+    // Every outgoing co-parent message is reviewed first. The receipt covers the draft and the
+    // Sage suggestion. Any other final text needs a new review or an explicit acknowledgement.
+    const gate = reviewGate({
+      receipt: review_receipt,
+      unavailableAcknowledged: review_unavailable_ack === true,
+      editUnreviewedAcknowledged: edit_unreviewed_ack === true,
+      userId: user.id,
+      text: ai_rewritten_content,
+    });
+    if (!gate.ok) {
+      return NextResponse.json(reviewGateFailure(gate.reason), { status: 409 });
+    }
+    if (gate.status === "unavailable_acknowledged") {
+      console.warn(`[messages/approve] sent after review was unavailable user_id=${user.id}`);
+    }
+    if (gate.status === "edited_unreviewed_acknowledged") {
+      console.warn(`[messages/approve] sent edited text without another review user_id=${user.id}`);
+    }
 
     const allowEmergency =
       typeof is_emergency === "boolean" &&
@@ -123,7 +225,7 @@ export async function POST(request: NextRequest) {
       sender_id: user.id,
       original_content,
       ai_rewritten_content,
-      ai_rewritten: true,
+      ai_rewritten: ai_rewritten_content.trim() !== original_content.trim(),
       current_status: "sent",
       delivery_status: "sent",
       delivered_at: null,
@@ -134,17 +236,21 @@ export async function POST(request: NextRequest) {
       emergency_note: emergencyAllowed ? emergency_note?.trim() ?? null : null,
     };
 
-    const { data: message, error: msgError } = await admin
-      .from("messages")
-      .insert(insertPayload)
-      .select("id")
-      .single();
-    if (msgError) {
-      return NextResponse.json(
-        { message: msgError.message },
-        { status: 500 }
-      );
+    const saved = await insertOutgoingMessage(admin, {
+      row: insertPayload,
+      senderId: user.id,
+      attemptId,
+      stored: attemptStored,
+      text: ai_rewritten_content,
+    });
+    if (!saved.ok) {
+      return NextResponse.json({ message: saved.message }, { status: 500 });
     }
+    if (saved.duplicate) {
+      // A parallel request of the same attempt saved first. That message is the send.
+      return NextResponse.json({ ok: true, message_id: saved.messageId, duplicate: true });
+    }
+    const message = { id: saved.messageId };
 
     if (conversation_id) {
       const { data: conv } = await admin
@@ -158,7 +264,24 @@ export async function POST(request: NextRequest) {
         .eq("id", case_id)
         .single();
       const ingestEmail = (caseRow as { ingest_email?: string | null } | null)?.ingest_email ?? null;
-      const coparentEmail = (conv as { coparent_email?: string | null; subject?: string; email_thread_id?: string | null } | null)?.coparent_email ?? null;
+      const storedCoparentEmail = (conv as { coparent_email?: string | null; subject?: string; email_thread_id?: string | null } | null)?.coparent_email ?? null;
+
+      // The receiving parent is the other parent on the case. The conversation keeps one
+      // co-parent address, which can be the sender's own, so the email goes to the receiver's.
+      const directory = await parentDirectory(admin, case_id, user.id);
+      const receiverCheck = resolveReceivingParent({
+        senderId: user.id,
+        recipientEmails: [storedCoparentEmail],
+        parents: directory.parents,
+      });
+      const receiver = receiverCheck.ok
+        ? directory.parents.find((parent) => parent.userId === receiverCheck.userId) ?? null
+        : null;
+      const coparentEmail = receivingAddress({
+        conversationEmail: storedCoparentEmail,
+        receiver,
+        sender: directory.parents.find((parent) => parent.userId === user.id) ?? null,
+      });
       const convSubject = (conv as { subject?: string } | null)?.subject ?? "";
       const emailThreadId = (conv as { email_thread_id?: string | null } | null)?.email_thread_id ?? null;
 
@@ -222,6 +345,24 @@ export async function POST(request: NextRequest) {
             console.error("[messages/approve] Postmark send failed:", err);
           }
         }
+      }
+
+      if (receiverCheck.ok) {
+        try {
+          await announceIncomingMessage(admin, {
+            caseId: case_id,
+            conversationId: conversation_id,
+            messageId: (message as { id: string }).id,
+            recipientUserId: receiverCheck.userId,
+            senderName: directory.senderName,
+            runInBackground: (task) => waitUntil(task),
+          });
+        } catch (error) {
+          // The message is saved. A retry of this attempt announces it again.
+          console.error("[messages/approve] announce:", error);
+        }
+      } else {
+        console.error(`[messages/approve] no receiving parent: ${receiverCheck.error}`);
       }
 
       const now = new Date();

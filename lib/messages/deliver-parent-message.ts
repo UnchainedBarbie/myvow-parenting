@@ -7,9 +7,19 @@ import {
   incomingNoticeCopy,
   resolveCaseRecipient,
   unassignedParentRepair,
-  type CaseParentAddress,
   type RepairConversation,
 } from "@/lib/messages/parent-message-visibility";
+import { parentDirectory, type ParentDirectory } from "@/lib/messages/case-parents";
+import { messageRefPattern, withMessageRef } from "@/lib/messages/incoming-notice";
+import { resolveReceivingParent } from "@/lib/messages/receiving-parent";
+import {
+  ATTACHMENT_NOT_SHAREABLE_CODE,
+  attachmentBlockedMessage,
+  attachmentPreflight,
+  type AttachmentIntent,
+  type AttachmentOutcome,
+} from "@/lib/messages/send-safety";
+import { ensureConversationSession, processInboundMessageForSage } from "@/lib/sage/process-inbox-item";
 
 type Admin = ReturnType<typeof getServiceRoleClient>;
 
@@ -97,82 +107,6 @@ async function sendingPaused(admin: Admin, userId: string): Promise<string | nul
   return null;
 }
 
-type ParentDirectory = {
-  parents: (CaseParentAddress & { name: string })[];
-  senderEmails: string[];
-  senderName: string;
-};
-
-async function parentDirectory(admin: Admin, caseId: string, senderId: string): Promise<ParentDirectory> {
-  const { data: members } = await admin
-    .from("case_members")
-    .select("id, user_id, role, display_name, external_email, invited_email, invited_name")
-    .eq("case_id", caseId)
-    .eq("role", "parent");
-  const rows = (members ?? []) as {
-    id?: string | null;
-    user_id?: string | null;
-    display_name?: string | null;
-    external_email?: string | null;
-    invited_email?: string | null;
-    invited_name?: string | null;
-  }[];
-  const memberIds = rows.map((row) => (row.id ?? "").trim()).filter(Boolean);
-  const userIds = rows.map((row) => (row.user_id ?? "").trim()).filter(Boolean);
-  const registered = memberIds.length
-    ? (
-        await admin
-          .from("case_member_emails")
-          .select("case_member_id, email")
-          .eq("case_id", caseId)
-          .in("case_member_id", memberIds)
-      ).data
-    : [];
-  const users = userIds.length
-    ? (await admin.from("users").select("id, email, full_name").in("id", userIds)).data
-    : [];
-  const emailByMember = new Map<string, string[]>();
-  for (const row of (registered ?? []) as { case_member_id?: string | null; email?: string | null }[]) {
-    const memberId = (row.case_member_id ?? "").trim();
-    const email = (row.email ?? "").trim();
-    if (!memberId || !email) continue;
-    const list = emailByMember.get(memberId) ?? [];
-    list.push(email);
-    emailByMember.set(memberId, list);
-  }
-  const userById = new Map(
-    ((users ?? []) as { id?: string; email?: string | null; full_name?: string | null }[]).map((user) => [
-      (user.id ?? "").trim(),
-      user,
-    ])
-  );
-  const parents = rows
-    .map((row) => {
-      const userId = (row.user_id ?? "").trim();
-      if (!userId) return null;
-      const user = userById.get(userId);
-      const emails = [
-        ...(emailByMember.get((row.id ?? "").trim()) ?? []),
-        row.external_email ?? "",
-        row.invited_email ?? "",
-        user?.email ?? "",
-      ].filter((email) => email.trim());
-      const name =
-        (row.display_name ?? "").trim() ||
-        (row.invited_name ?? "").trim() ||
-        (user?.full_name ?? "").trim() ||
-        "Your co-parent";
-      return { userId, emails, name };
-    })
-    .filter((parent): parent is CaseParentAddress & { name: string } => Boolean(parent));
-  const sender = parents.find((parent) => parent.userId === senderId);
-  return {
-    parents,
-    senderEmails: sender?.emails ?? [],
-    senderName: sender?.name ?? "Your co-parent",
-  };
-}
-
 async function conversationForParents(
   admin: Admin,
   input: {
@@ -239,10 +173,14 @@ async function savedProposalMessage(
   admin: Admin,
   caseId: string,
   proposalId: string
-): Promise<{ id: string; deliveryStatus: "sent" | "email_accepted" | "delivered" } | null> {
+): Promise<{
+  id: string;
+  conversationId: string | null;
+  deliveryStatus: "sent" | "email_accepted" | "delivered";
+} | null> {
   const { data, error } = await admin
     .from("messages")
-    .select("id, delivery_status")
+    .select("id, delivery_status, conversation_id")
     .eq("case_id", caseId)
     .eq("sage_proposal_id", proposalId)
     .order("created_at", { ascending: true })
@@ -251,10 +189,11 @@ async function savedProposalMessage(
     if (/sage_proposal_id/i.test(error.message ?? "")) return null;
     return null;
   }
-  const row = ((data ?? []) as { id?: string; delivery_status?: string | null }[])[0];
+  const row = ((data ?? []) as { id?: string; delivery_status?: string | null; conversation_id?: string | null }[])[0];
   if (!row?.id) return null;
   return {
     id: row.id,
+    conversationId: (row.conversation_id ?? "").trim() || null,
     deliveryStatus:
       row.delivery_status === "email_accepted"
         ? "email_accepted"
@@ -264,76 +203,212 @@ async function savedProposalMessage(
   };
 }
 
-async function notifyRecipient(
-  admin: Admin,
-  input: { caseId: string; recipientUserId: string; senderName: string; messageId: string }
-): Promise<void> {
-  const { error } = await admin.from("parent_notifications").insert({
-    case_id: input.caseId,
-    user_id: input.recipientUserId,
-    type: "coparent_message",
-    title: "New message",
-    message: incomingNoticeCopy(input.senderName),
-    priority: "normal",
-  });
-  if (error) console.error("[deliver-parent-message] notification:", error.message);
-
-  const existing = await admin
+/** True when this parent's Sage already has a row for the message. Null when that cannot be told. */
+async function sageHeardAboutMessage(admin: Admin, userId: string, messageId: string): Promise<boolean | null> {
+  const found = await admin
     .from("sage_journal_messages")
     .select("id")
-    .eq("user_id", input.recipientUserId)
-    .eq("source_message_id", input.messageId)
+    .eq("user_id", userId)
+    .eq("source_message_id", messageId)
     .limit(1);
-  if (existing.error) {
-    if (/source_message_id/i.test(existing.error.message ?? "")) return;
-    console.error("[deliver-parent-message] sage lookup:", existing.error.message);
+  if (found.error) {
+    if (!/source_message_id/i.test(found.error.message ?? "")) {
+      console.error("[deliver-parent-message] sage lookup:", found.error.message);
+    }
+    return null;
+  }
+  return (found.data ?? []).length > 0;
+}
+
+/**
+ * The receiving parent's Sage session for this conversation gets one plain notice.
+ * It is that parent's own session, so the sender's private Sage conversations stay out of reach.
+ */
+async function noteIncomingInConversationSession(
+  admin: Admin,
+  input: { recipientUserId: string; conversationId: string; senderName: string; messageId: string }
+): Promise<void> {
+  const { data: conversation } = await admin
+    .from("conversations")
+    .select("subject")
+    .eq("id", input.conversationId)
+    .maybeSingle();
+  const subject = ((conversation as { subject?: string | null } | null)?.subject ?? "").trim() || "(no subject)";
+  const session = await ensureConversationSession(admin, {
+    userId: input.recipientUserId,
+    conversationId: input.conversationId,
+    title: subject,
+  });
+  if (!session.id) {
+    console.error("[deliver-parent-message] sage session:", session.error ?? "missing session");
     return;
   }
-  if ((existing.data ?? []).length > 0) return;
-
-  const sessions = await admin
-    .from("sage_sessions")
-    .select("id")
-    .eq("user_id", input.recipientUserId)
-    .order("updated_at", { ascending: false })
-    .limit(1);
-  let sessionId = ((sessions.data ?? []) as { id?: string }[])[0]?.id ?? "";
-  if (!sessionId) {
-    const created = await admin
-      .from("sage_sessions")
-      .insert({
-        user_id: input.recipientUserId,
-        session_type: "private",
-        title: "Messages",
-        category: "general",
-      })
-      .select("id")
-      .single();
-    sessionId = (created.data as { id?: string } | null)?.id ?? "";
-    if (!sessionId) {
-      console.error("[deliver-parent-message] sage session:", created.error?.message ?? "missing session");
-      return;
-    }
-  }
+  const content = incomingNoticeCopy(input.senderName);
   const journal = await admin.from("sage_journal_messages").insert({
     user_id: input.recipientUserId,
     role: "sage",
-    session_id: sessionId,
+    session_id: session.id,
     source_message_id: input.messageId,
-    content: incomingNoticeCopy(input.senderName),
+    content,
   });
   if (journal.error && /source_message_id/i.test(journal.error.message ?? "")) {
-    await admin.from("sage_journal_messages").insert({
-      user_id: input.recipientUserId,
-      role: "sage",
-      session_id: sessionId,
-      content: incomingNoticeCopy(input.senderName),
-    });
+    await admin
+      .from("sage_journal_messages")
+      .insert({ user_id: input.recipientUserId, role: "sage", session_id: session.id, content });
   } else if (journal.error) {
     console.error("[deliver-parent-message] sage journal:", journal.error.message);
-  } else {
-    await admin.from("sage_sessions").update({ updated_at: new Date().toISOString() }).eq("id", sessionId);
+    return;
   }
+  await admin.from("sage_sessions").update({ updated_at: new Date().toISOString() }).eq("id", session.id);
+}
+
+export type AnnounceResult = {
+  /** The receiving parent has a notice for this message, whether it was added now or earlier. */
+  notified: boolean;
+  /** This call added the notice. */
+  createdNotice: boolean;
+  /** This call started Sage's reading. */
+  startedReading: boolean;
+};
+
+/**
+ * The basic notice, saved before any AI work. It is found by its message reference, so a retry
+ * returns the existing notice. One more attempt covers a momentary database error.
+ */
+async function ensureIncomingNotice(
+  admin: Admin,
+  input: { caseId: string; messageId: string; recipientUserId: string; senderName: string }
+): Promise<{ notified: boolean; created: boolean }> {
+  const pattern = messageRefPattern(input.messageId);
+  if (!pattern) return { notified: false, created: false };
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const existing = await admin
+      .from("parent_notifications")
+      .select("id")
+      .eq("user_id", input.recipientUserId)
+      .eq("type", "coparent_message")
+      .like("message", pattern)
+      .limit(1);
+    if (!existing.error && ((existing.data ?? []) as unknown[]).length > 0) {
+      return { notified: true, created: false };
+    }
+    const inserted = await admin.from("parent_notifications").insert({
+      case_id: input.caseId,
+      user_id: input.recipientUserId,
+      type: "coparent_message",
+      title: "New message",
+      message: withMessageRef(incomingNoticeCopy(input.senderName), input.messageId),
+      priority: "normal",
+    });
+    if (!inserted.error) return { notified: true, created: true };
+    console.error(`[deliver-parent-message] notification attempt ${attempt + 1}:`, inserted.error.message);
+  }
+  console.error(`[deliver-parent-message] notification_failed message_id=${input.messageId}`);
+  return { notified: false, created: false };
+}
+
+/**
+ * One incoming-message announcement for the receiving parent, shared by every send path.
+ *  1. The basic notice in the receiving parent's own list. It is saved first and stands on its own.
+ *  2. Sage reads the message for that parent through the same inbound pipeline email uses.
+ *  3. A plain notice in that parent's conversation session when Sage had nothing to add.
+ * Safe to call again for the same message. The notice is never added twice, and a reading that
+ * did not finish is attempted again. A failed or interrupted reading never removes the notice.
+ */
+export async function announceIncomingMessage(
+  admin: Admin,
+  input: {
+    caseId: string;
+    conversationId: string | null;
+    messageId: string;
+    recipientUserId: string;
+    senderName: string;
+    /** Runs the Sage reading after the response is sent. Omit to wait for it. */
+    runInBackground?: (task: Promise<unknown>) => void;
+    /** Test seam for the Sage reading. */
+    readMessage?: typeof processInboundMessageForSage;
+  }
+): Promise<AnnounceResult> {
+  const notice = await ensureIncomingNotice(admin, input);
+  const base = { notified: notice.notified, createdNotice: notice.created };
+
+  const heard = await sageHeardAboutMessage(admin, input.recipientUserId, input.messageId);
+  const conversationId = (input.conversationId ?? "").trim();
+  if (heard === true || !conversationId) return { ...base, startedReading: false };
+
+  const read = input.readMessage ?? processInboundMessageForSage;
+  const task = (async () => {
+    try {
+      await read(input.messageId, [], { recipientUserId: input.recipientUserId });
+    } catch (readError) {
+      console.error("[deliver-parent-message] sage reading:", readError);
+    }
+    try {
+      const heardNow = await sageHeardAboutMessage(admin, input.recipientUserId, input.messageId);
+      if (heardNow === false) {
+        await noteIncomingInConversationSession(admin, {
+          recipientUserId: input.recipientUserId,
+          conversationId,
+          senderName: input.senderName,
+          messageId: input.messageId,
+        });
+      }
+    } catch (noteError) {
+      // The basic notice is already saved. The session note is an addition.
+      console.error("[deliver-parent-message] session note:", noteError);
+    }
+  })();
+  if (input.runInBackground) input.runInBackground(task);
+  else await task;
+  return { ...base, startedReading: true };
+}
+
+/**
+ * Announce a message that is already saved. Used when a send is retried, so a message saved by an
+ * attempt that stopped before its notice was written still reaches the receiving parent.
+ * The receiving parent comes from the case, not from the primary account.
+ */
+export async function announceSavedMessage(
+  admin: Admin,
+  input: {
+    caseId: string;
+    senderId: string;
+    messageId: string;
+    conversationId: string | null;
+    runInBackground?: (task: Promise<unknown>) => void;
+    readMessage?: typeof processInboundMessageForSage;
+  }
+): Promise<AnnounceResult | null> {
+  const conversationId = (input.conversationId ?? "").trim();
+  const directory = await parentDirectory(admin, input.caseId, input.senderId);
+  let conversationEmail: string | null = null;
+  if (conversationId) {
+    const { data } = await admin
+      .from("conversations")
+      .select("coparent_email")
+      .eq("id", conversationId)
+      .eq("case_id", input.caseId)
+      .maybeSingle();
+    conversationEmail = (data as { coparent_email?: string | null } | null)?.coparent_email ?? null;
+  }
+  const receiver = resolveReceivingParent({
+    senderId: input.senderId,
+    recipientEmails: [conversationEmail],
+    parents: directory.parents,
+  });
+  if (!receiver.ok) {
+    console.error(`[deliver-parent-message] no receiving parent message_id=${input.messageId}: ${receiver.error}`);
+    return null;
+  }
+  return announceIncomingMessage(admin, {
+    caseId: input.caseId,
+    conversationId: conversationId || null,
+    messageId: input.messageId,
+    recipientUserId: receiver.userId,
+    senderName: directory.senderName,
+    runInBackground: input.runInBackground,
+    readMessage: input.readMessage,
+  });
 }
 
 type UnassignedRow = {
@@ -440,11 +515,12 @@ export async function linkUnassignedParentMessages(admin: Admin, caseId: string)
       .is("conversation_id", null)
       .select("id");
     if (linked.error || !(linked.data ?? []).length) continue;
-    await notifyRecipient(admin, {
+    await announceIncomingMessage(admin, {
       caseId,
+      conversationId: repair.conversationId,
+      messageId,
       recipientUserId: repair.recipientUserId,
       senderName: directory.senderName,
-      messageId,
     });
   }
 }
@@ -458,11 +534,26 @@ export async function deliverParentMessage(
     recipientEmail: string;
     subject?: string | null;
     proposalId?: string | null;
-    attachmentDocumentId?: string | null;
+    /** The file the parent expects to share with this message. */
+    attachment?: AttachmentIntent | null;
+    /** The parent chose to send without a file that cannot be shared. */
+    acknowledgeAttachmentOmission?: boolean;
+    runInBackground?: (task: Promise<unknown>) => void;
+    /** Test seam for the Sage reading of the new message. */
+    readMessage?: typeof processInboundMessageForSage;
   }
 ): Promise<
-  | { ok: true; messageId: string; deliveryStatus: "sent" | "email_accepted" | "delivered"; recipientEmail: string }
-  | { ok: false; status: number; message: string }
+  | {
+      ok: true;
+      messageId: string;
+      deliveryStatus: "sent" | "email_accepted" | "delivered";
+      recipientEmail: string;
+      recipientUserId: string | null;
+      /** False when this call found the message already saved. */
+      created: boolean;
+      attachment: AttachmentOutcome;
+    }
+  | { ok: false; status: number; message: string; code?: string }
 > {
   const body = input.body.trim();
   const recipientEmail = input.recipientEmail.trim();
@@ -477,16 +568,35 @@ export async function deliverParentMessage(
   if (proposalId) {
     const existing = await savedProposalMessage(admin, input.caseId, proposalId);
     if (existing) {
+      // The saved message may predate its notice if the first attempt stopped early. Announcing is idempotent.
+      try {
+        await announceSavedMessage(admin, {
+          caseId: input.caseId,
+          senderId: input.senderId,
+          messageId: existing.id,
+          conversationId: existing.conversationId,
+          runInBackground: input.runInBackground,
+          readMessage: input.readMessage,
+        });
+      } catch (error) {
+        console.error("[deliver-parent-message] announce on retry:", error);
+      }
       return {
         ok: true,
         messageId: existing.id,
         deliveryStatus: existing.deliveryStatus,
         recipientEmail,
+        recipientUserId: null,
+        created: false,
+        attachment: await savedAttachmentOutcome(admin, existing.id, input.attachment ?? null),
       };
     }
   }
 
   const directory = await parentDirectory(admin, input.caseId, input.senderId);
+  if (!directory.parents.some((parent) => parent.userId === input.senderId)) {
+    return { ok: false, status: 403, message: "You are not a parent on this case." };
+  }
   const recipient = resolveCaseRecipient({
     senderId: input.senderId,
     recipientEmail,
@@ -496,6 +606,28 @@ export async function deliverParentMessage(
   const recipientParent = directory.parents.find((parent) => parent.userId === recipient.userId);
   if (!recipientParent) {
     return { ok: false, status: 403, message: "That address is not a parent on this case." };
+  }
+
+  const intent = input.attachment ?? { expected: false, documentId: null, fileName: null };
+  const preflight = attachmentPreflight({
+    intent,
+    eligibility: intent.documentId
+      ? await attachmentEligibility(admin, {
+          documentId: intent.documentId,
+          caseId: input.caseId,
+          senderId: input.senderId,
+          recipientUserId: recipient.userId,
+        })
+      : null,
+    acknowledgedOmission: input.acknowledgeAttachmentOmission === true,
+  });
+  if (preflight.action === "block") {
+    return {
+      ok: false,
+      status: 409,
+      code: ATTACHMENT_NOT_SHAREABLE_CODE,
+      message: attachmentBlockedMessage({ fileName: preflight.fileName, reason: preflight.reason }),
+    };
   }
 
   const conversation = await conversationForParents(admin, {
@@ -537,20 +669,34 @@ export async function deliverParentMessage(
     };
   }
   const messageId = (inserted.data as { id: string }).id;
-  await linkApprovedAttachment(admin, {
-    messageId,
-    caseId: input.caseId,
-    senderId: input.senderId,
-    recipientEmail,
-    documentId: input.attachmentDocumentId ?? null,
-    conversationId: conversation.id,
-  });
-  await notifyRecipient(admin, {
-    caseId: input.caseId,
-    recipientUserId: recipient.userId,
-    senderName: directory.senderName,
-    messageId,
-  });
+  let attachment: AttachmentOutcome = { status: "none" };
+  if (preflight.action === "send_with_file") {
+    const linked = await linkMessageAttachment(admin, {
+      messageId,
+      documentId: preflight.documentId,
+      senderId: input.senderId,
+      conversationId: conversation.id,
+    });
+    attachment = linked.ok
+      ? { status: "shared_in_myvow", documentId: preflight.documentId, fileName: preflight.fileName }
+      : { status: "share_failed", fileName: preflight.fileName, reason: linked.reason };
+  } else if (preflight.action === "send_without_file_acknowledged") {
+    attachment = { status: "omitted_acknowledged", fileName: preflight.fileName, reason: preflight.reason };
+  }
+  try {
+    await announceIncomingMessage(admin, {
+      caseId: input.caseId,
+      conversationId: conversation.id,
+      messageId,
+      recipientUserId: recipient.userId,
+      senderName: directory.senderName,
+      runInBackground: input.runInBackground,
+      readMessage: input.readMessage,
+    });
+  } catch (error) {
+    // The message is saved. A retry announces it again.
+    console.error("[deliver-parent-message] announce:", error);
+  }
   let deliveryStatus: "sent" | "email_accepted" | "delivered" = "sent";
 
   const { data: caseRow } = await admin
@@ -605,56 +751,51 @@ export async function deliverParentMessage(
     }
   }
 
-  return { ok: true, messageId, deliveryStatus, recipientEmail };
+  return {
+    ok: true,
+    messageId,
+    deliveryStatus,
+    recipientEmail,
+    recipientUserId: recipient.userId,
+    created: true,
+    attachment,
+  };
 }
 
-async function linkApprovedAttachment(
+/**
+ * Can this document travel with a message from the sender to the resolved recipient?
+ * The recipient is the parent the address resolved to, so any address on file works.
+ * Null means the document could not be found.
+ */
+async function attachmentEligibility(
   admin: Admin,
-  input: {
-    messageId: string;
-    caseId: string;
-    senderId: string;
-    recipientEmail: string;
-    documentId: string | null;
-    conversationId: string | null;
-  }
-): Promise<void> {
-  const documentId = (input.documentId ?? "").trim();
-  if (!documentId) return;
+  input: { documentId: string; caseId: string; senderId: string; recipientUserId: string }
+): Promise<{ link: boolean; fileName: string; reason: string | null } | null> {
   const { data: doc } = await admin
     .from("documents")
     .select("id, case_id, uploaded_by, visibility, status, file_name, deleted_at")
-    .eq("id", documentId)
+    .eq("id", input.documentId)
     .maybeSingle();
-  if (!doc || (doc as { deleted_at?: string | null }).deleted_at) return;
+  if (!doc) return { link: false, fileName: "", reason: "The file could not be found." };
   const row = doc as {
     case_id?: string | null;
     uploaded_by?: string | null;
     visibility?: string | null;
     status?: string | null;
     file_name?: string | null;
+    deleted_at?: string | null;
   };
-  const { data: members } = await admin
+  if (row.deleted_at) {
+    return { link: false, fileName: (row.file_name ?? "").trim(), reason: "That file is no longer available." };
+  }
+  const { data: member } = await admin
     .from("case_members")
     .select("user_id, role")
     .eq("case_id", input.caseId)
-    .eq("role", "parent");
-  const recipientEmail = input.recipientEmail.trim().toLowerCase();
-  const memberIds = ((members ?? []) as { user_id?: string | null; role?: string | null }[])
-    .map((member) => (member.user_id ?? "").trim())
-    .filter((id) => id && id !== input.senderId);
-  const users = memberIds.length
-    ? (
-        await admin.from("users").select("id, email").in("id", memberIds)
-      ).data
-    : [];
-  const recipient = ((users ?? []) as { id?: string; email?: string | null }[]).find(
-    (user) => (user.email ?? "").trim().toLowerCase() === recipientEmail
-  );
-  const member = ((members ?? []) as { user_id?: string | null; role?: string | null }[]).find(
-    (item) => (item.user_id ?? "").trim() === (recipient?.id ?? "")
-  );
-  const decision = messageAttachmentDecision({
+    .eq("user_id", input.recipientUserId)
+    .maybeSingle();
+  const recipientRole = ((member as { role?: string | null } | null)?.role ?? "").trim() || null;
+  return messageAttachmentDecision({
     documentCaseId: row.case_id ?? "",
     messageCaseId: input.caseId,
     uploadedBy: row.uploaded_by ?? "",
@@ -662,26 +803,46 @@ async function linkApprovedAttachment(
     visibility: row.visibility ?? null,
     status: row.status ?? null,
     fileName: row.file_name ?? "",
-    recipientUserId: recipient?.id ?? null,
-    recipientRole: member?.role ?? null,
-    recipientOnCase: Boolean(recipient?.id),
+    recipientUserId: input.recipientUserId,
+    recipientRole,
+    recipientOnCase: Boolean(member),
   });
-  if (!decision.link) return;
+}
+
+async function linkMessageAttachment(
+  admin: Admin,
+  input: { messageId: string; documentId: string; senderId: string; conversationId: string | null }
+): Promise<{ ok: true } | { ok: false; reason: string }> {
   const { error } = await admin.from("message_documents").insert({
     message_id: input.messageId,
-    document_id: documentId,
+    document_id: input.documentId,
   });
   if (error) {
     console.error("[deliver-parent-message] message_documents", error.message);
-    return;
+    return { ok: false, reason: "The file could not be linked to the message." };
   }
   await admin.from("messages").update({ has_attachments: true }).eq("id", input.messageId);
   if (input.conversationId) {
     await admin.from("conversation_attachments").insert({
       conversation_id: input.conversationId,
-      attachment_id: documentId,
+      attachment_id: input.documentId,
       attachment_type: "document",
       created_by: input.senderId,
     });
   }
+  return { ok: true };
+}
+
+/** A message found already saved reports the file it actually carries. */
+async function savedAttachmentOutcome(
+  admin: Admin,
+  messageId: string,
+  intent: AttachmentIntent | null
+): Promise<AttachmentOutcome> {
+  const { data } = await admin.from("message_documents").select("document_id").eq("message_id", messageId).limit(1);
+  const documentId = ((data ?? []) as { document_id?: string }[])[0]?.document_id ?? "";
+  if (documentId) {
+    return { status: "shared_in_myvow", documentId, fileName: intent?.fileName ?? "attachment" };
+  }
+  return { status: "none" };
 }

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
 import { loadVisibleExpenses } from "@/lib/expenses-visibility";
+import { resolveActiveCase } from "@/lib/cases/resolve-active-case";
 
 type SuggestedVow = { vow: string; reason: string };
 
@@ -17,15 +18,9 @@ export async function POST(_request: NextRequest) {
 
     const admin = getServiceRoleClient();
 
-    // Resolve active case for this user
-    const { data: membership } = await admin
-      .from("case_members")
-      .select("case_id, role")
-      .eq("user_id", user.id)
-      .limit(1)
-      .maybeSingle();
-
-    const caseId = (membership?.case_id as string | null) ?? null;
+    // Resolve the case from the signed-in parent's memberships. More than one case with no choice yields no suggestions.
+    const activeCase = await resolveActiveCase(admin, user.id);
+    const caseId = activeCase.caseId;
     if (!caseId) {
       return NextResponse.json({ suggestions: [] });
     }
@@ -66,7 +61,7 @@ export async function POST(_request: NextRequest) {
           .order("created_at", { ascending: false })
           .limit(100),
       "description, status, dispute_reason, created_at",
-      { userId: user.id, role: membership?.role ?? null }
+      { userId: user.id, role: activeCase.role }
     );
     const expenses = expenseLoaded.rows;
 

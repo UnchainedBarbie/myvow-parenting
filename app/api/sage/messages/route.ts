@@ -25,12 +25,17 @@ import {
   type ConversationContext,
 } from "@/lib/sage/conversation-context";
 import { matchingLedgerText } from "@/lib/sage/ledger-facts";
-import { redraftMessage } from "@/lib/sage/planner";
 import {
-  isInactiveProposal,
-  reviseProposal,
-  withProposalIds,
-} from "@/lib/sage/proposal-lifecycle";
+  isClosedProposal,
+  latestRevisableDraft,
+  revisePendingDraft,
+  revisionReply,
+  unsatisfiedDependsOn,
+  type RevisableDraft,
+} from "@/lib/sage/open-drafts";
+import { closeAnsweredQuestions, turnRepeatsOpenQuestions } from "@/lib/sage/clarification-lifecycle";
+import { AMBIGUOUS_CASE_MESSAGE, resolveActiveCase } from "@/lib/cases/resolve-active-case";
+import { reviseProposal, withProposalIds } from "@/lib/sage/proposal-lifecycle";
 import {
   forcedTypeFromProposal,
   loadAndClassifyDocument,
@@ -184,18 +189,6 @@ async function persistProcessedPlan(opts: {
   return (itemRow as Record<string, unknown> | null) ?? null;
 }
 
-type RevisableDraft = {
-  itemId: string;
-  summary: string;
-  proposalType: "reply_coparent" | "ask_clarification" | "calendar_update";
-  proposalIndex: number;
-  currentDraft: string;
-  sourceType: string | null;
-  audience: "parent" | "coparent" | null;
-  plan: Record<string, unknown>;
-  proposals: Record<string, unknown>[];
-};
-
 function observeAttachmentTurn(input: {
   message: string;
   reply: string;
@@ -326,158 +319,6 @@ async function rememberPendingDocument(
   });
 }
 
-function revisionReply(
-  proposalType: "reply_coparent" | "ask_clarification" | "calendar_update"
-): string {
-  if (proposalType === "calendar_update") return "Updated that calendar suggestion.";
-  return proposalType === "ask_clarification"
-    ? "Added that to your question to Co-Parent."
-    : "Added that to your reply to Co-Parent.";
-}
-
-function isClosedProposal(raw: unknown): boolean {
-  return isInactiveProposal(raw);
-}
-
-function openCalendarProposal(raw: unknown): {
-  draft?: string;
-  revised_text?: string;
-  date?: string;
-} | null {
-  if (!raw || typeof raw !== "object") return null;
-  const proposal = raw as {
-    type?: string;
-    draft?: string;
-    revised_text?: string;
-    date?: string;
-    executed?: boolean;
-    approved?: boolean;
-    status?: string;
-  };
-  if (proposal.type !== "calendar_update") return null;
-  if (isClosedProposal(proposal)) return null;
-  return {
-    draft: proposal.draft,
-    revised_text: proposal.revised_text,
-    date: proposal.date,
-  };
-}
-
-function openReplyProposal(raw: unknown): {
-  type: "reply_coparent" | "ask_clarification";
-  draft?: string;
-  revised_text?: string;
-} | null {
-  if (!raw || typeof raw !== "object") return null;
-  const proposal = raw as {
-    type?: string;
-    draft?: string;
-    revised_text?: string;
-    executed?: boolean;
-    approved?: boolean;
-    status?: string;
-  };
-  if (isClosedProposal(proposal)) return null;
-  if (proposal.type !== "reply_coparent" && proposal.type !== "ask_clarification") {
-    return null;
-  }
-  return {
-    type: proposal.type,
-    draft: proposal.draft,
-    revised_text: proposal.revised_text,
-  };
-}
-
-/** depends_on is free text. Unsatisfied means that text is set and unblocked is not. */
-function unsatisfiedDependsOn(raw: unknown): boolean {
-  if (!raw || typeof raw !== "object") return false;
-  const proposal = raw as { depends_on?: unknown; unblocked?: boolean };
-  if (proposal.unblocked === true) return false;
-  return typeof proposal.depends_on === "string" && proposal.depends_on.trim() !== "";
-}
-
-/**
- * The reply or clarification most recently added in this session that is still waiting.
- * Item status is ignored: approving one proposal marks the whole item in_progress.
- * blockedOnly limits that to a proposal whose depends_on is set and not yet unblocked.
- */
-async function latestRevisableDraft(
-  admin: AdminClient,
-  sessionId: string,
-  userId: string,
-  opts?: { blockedOnly?: boolean; calendarOnly?: boolean; includeCalendar?: boolean }
-): Promise<RevisableDraft | null> {
-  const { data: journals, error: journalErr } = await admin
-    .from("sage_journal_messages")
-    .select("sage_item_id")
-    .eq("session_id", sessionId)
-    .eq("user_id", userId)
-    .not("sage_item_id", "is", null);
-  if (journalErr || !journals) return null;
-
-  const itemIds = [
-    ...new Set(
-      (journals as { sage_item_id?: string | null }[])
-        .map((row) => row.sage_item_id)
-        .filter((id): id is string => typeof id === "string" && id.length > 0)
-    ),
-  ];
-  if (itemIds.length === 0) return null;
-
-  const { data: items, error: itemErr } = await admin
-    .from("sage_items")
-    .select("id, summary, plan, created_at, source_type")
-    .in("id", itemIds)
-    .eq("visible_to", userId)
-    .order("created_at", { ascending: false });
-  if (itemErr || !items) return null;
-
-  for (const row of items as {
-    id?: string;
-    summary?: string | null;
-    source_type?: string | null;
-    plan?: { proposals?: unknown[] } | null;
-  }[]) {
-    if (!row.id || !row.plan || typeof row.plan !== "object") continue;
-    const proposals = Array.isArray(row.plan.proposals) ? row.plan.proposals : [];
-    let chosen: RevisableDraft | null = null;
-    proposals.forEach((raw, proposalIndex) => {
-      const calendar = opts?.calendarOnly || opts?.includeCalendar
-        ? openCalendarProposal(raw)
-        : null;
-      const reply = opts?.calendarOnly ? null : openReplyProposal(raw);
-      const proposal = calendar ?? reply;
-      if (!proposal) return;
-      if (opts?.blockedOnly && !unsatisfiedDependsOn(raw)) return;
-      const currentDraft =
-        typeof proposal.revised_text === "string" && proposal.revised_text.trim()
-          ? proposal.revised_text.trim()
-          : typeof proposal.draft === "string"
-            ? proposal.draft.trim()
-            : "";
-      const audienceRaw =
-        raw && typeof raw === "object" ? (raw as { audience?: unknown }).audience : null;
-      chosen = {
-        itemId: row.id as string,
-        summary: (row.summary ?? "").trim(),
-        proposalType: calendar
-          ? "calendar_update"
-          : (proposal as { type: "reply_coparent" | "ask_clarification" }).type,
-        proposalIndex,
-        currentDraft,
-        sourceType: typeof row.source_type === "string" ? row.source_type : null,
-        audience: audienceRaw === "parent" || audienceRaw === "coparent" ? audienceRaw : null,
-        plan: row.plan as Record<string, unknown>,
-        proposals: proposals.map((p) =>
-          p && typeof p === "object" ? { ...(p as Record<string, unknown>) } : {}
-        ),
-      };
-    });
-    if (chosen) return chosen;
-  }
-  return null;
-}
-
 async function sourcesForOutboundRedraft(opts: {
   caseId: string | null;
   timezone: string;
@@ -503,104 +344,6 @@ async function sourcesForOutboundRedraft(opts: {
     if (ledger.trim()) parts.push(ledger);
   }
   return parts.map((part) => part.trim()).filter(Boolean).join("\n");
-}
-
-async function revisePendingDraft(opts: {
-  admin: AdminClient;
-  userId: string;
-  guidance: string;
-  target: RevisableDraft;
-  clearDependsOn?: boolean;
-  sources?: string;
-  event?: string | null;
-  child?: string | null;
-}): Promise<{ reply: string; item: { id: string; plan: Record<string, unknown> } } | null> {
-  if (opts.target.proposalType === "calendar_update") return null;
-  const { data: fresh } = await opts.admin
-    .from("sage_items")
-    .select("plan")
-    .eq("id", opts.target.itemId)
-    .eq("visible_to", opts.userId)
-    .maybeSingle();
-  const freshPlan =
-    fresh &&
-    typeof (fresh as { plan?: unknown }).plan === "object" &&
-    (fresh as { plan?: unknown }).plan
-      ? (fresh as { plan: { proposals?: unknown[] } }).plan
-      : null;
-  const live = Array.isArray(freshPlan?.proposals)
-    ? freshPlan.proposals[opts.target.proposalIndex]
-    : opts.target.proposals[opts.target.proposalIndex];
-  if (isClosedProposal(live)) return null;
-  const redraft = await redraftMessage({
-    summary: opts.target.summary,
-    proposalType: opts.target.proposalType,
-    currentDraft: opts.target.currentDraft,
-    guidance: opts.guidance,
-    sourceType: opts.target.sourceType,
-    audience: opts.target.audience,
-    sources: opts.sources,
-    event: opts.event,
-    child: opts.child,
-  });
-  const revisedText = redraft?.trim() ?? "";
-  if (!revisedText) return null;
-
-  const proposals = (Array.isArray(freshPlan?.proposals) ? freshPlan.proposals : opts.target.proposals).map(
-    (p) => (p && typeof p === "object" ? { ...(p as Record<string, unknown>) } : {})
-  );
-  const revised = reviseProposal(proposals, opts.target.proposalIndex, {
-    revised_text: revisedText,
-    ...(opts.clearDependsOn ? { depends_on: null, date_supplied: true } : {}),
-  });
-  if (!revised) return null;
-  const updatedPlan = { ...(freshPlan ?? opts.target.plan), proposals: revised.proposals };
-  const { data, error } = await opts.admin
-    .from("sage_items")
-    .update({ plan: updatedPlan })
-    .eq("id", opts.target.itemId)
-    .eq("visible_to", opts.userId)
-    .select("id");
-  if (error || !data?.length) {
-    console.error(
-      "[sage/messages] revise pending draft failed:",
-      error?.message ?? "no row updated"
-    );
-    return null;
-  }
-  return {
-    reply: revisionReply(opts.target.proposalType),
-    item: { id: opts.target.itemId, plan: updatedPlan },
-  };
-}
-
-/** The time answer completed the question, so the clarification is no longer an open item. */
-async function closeAnsweredClarification(
-  admin: AdminClient,
-  userId: string,
-  target: RevisableDraft
-): Promise<void> {
-  const { data: fresh } = await admin
-    .from("sage_items")
-    .select("plan")
-    .eq("id", target.itemId)
-    .eq("visible_to", userId)
-    .maybeSingle();
-  const plan =
-    fresh && typeof (fresh as { plan?: unknown }).plan === "object" && (fresh as { plan?: unknown }).plan
-      ? (fresh as { plan: { proposals?: unknown[] } }).plan
-      : null;
-  if (!plan || !Array.isArray(plan.proposals)) return;
-  const proposals = plan.proposals.map((raw, index) => {
-    if (index !== target.proposalIndex || !raw || typeof raw !== "object") return raw;
-    return { ...(raw as Record<string, unknown>), status: "completed" };
-  });
-  const { error } = await admin
-    .from("sage_items")
-    .update({ plan: { ...plan, proposals } })
-    .eq("id", target.itemId)
-    .eq("visible_to", userId);
-  if (error) console.error("[sage/messages] close clarification failed:", error.message);
 }
 
 async function reviseOpenCalendar(opts: {
@@ -837,14 +580,11 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    const { data: membership } = await admin
-      .from("case_members")
-      .select("case_id, role")
-      .eq("user_id", user.id)
-      .limit(1)
-      .maybeSingle();
+    // The messages above belong to this session and parent. Case-level extras load only when the case is unambiguous.
+    const activeCase = await resolveActiveCase(admin, user.id, { sessionId: sessionId ?? null });
+    const membership = activeCase.caseId ? { case_id: activeCase.caseId, role: activeCase.role } : null;
 
-    const caseId = (membership?.case_id as string | undefined) ?? null;
+    const caseId = activeCase.caseId;
     let children: { id: string; first_name: string }[] = [];
     if (caseId) {
       const { data: childrenData } = await admin
@@ -946,22 +686,20 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const { data: membership, error: membershipError } = await admin
-      .from("case_members")
-      .select("case_id, role")
-      .eq("user_id", user.id)
-      .limit(1)
-      .maybeSingle();
-
-    if (membershipError) {
-      console.error("[sage/messages] membership error:", membershipError);
+    const activeCase = await resolveActiveCase(admin, user.id, { sessionId });
+    if (activeCase.status === "error") {
+      console.error("[sage/messages] membership error:", activeCase.message);
       return NextResponse.json(
         { message: "Failed to load case." },
         { status: 500 }
       );
     }
+    if (activeCase.status === "ambiguous") {
+      return NextResponse.json({ message: AMBIGUOUS_CASE_MESSAGE, code: "case_ambiguous" }, { status: 409 });
+    }
+    const membership = activeCase.caseId ? { case_id: activeCase.caseId, role: activeCase.role } : null;
 
-    const caseId = (membership?.case_id as string | undefined) ?? null;
+    const caseId = activeCase.caseId;
 
     const { data: profile } = await admin
       .from("users")
@@ -992,7 +730,7 @@ export async function POST(request: NextRequest) {
       ? await loadVisibleDocuments(admin, caseId, { userId: user.id, role: viewerRole })
       : [];
     const latestOpenDocument = caseId
-      ? await loadLatestOpenDocument(admin, caseId, user.id)
+      ? await loadLatestOpenDocument(admin, caseId, user.id, sessionId)
       : null;
     const attachmentContext = withOpenDocument(attachmentConversation, latestOpenDocument);
 
@@ -1264,7 +1002,7 @@ export async function POST(request: NextRequest) {
               fileName: proposal?.attached_file_name ?? attachment.file_name,
               documentId: proposal?.attached_document_id ?? attachment.document_id,
               updatesExisting: proposal?.updatesExisting === true,
-            });
+            }, sessionId);
             if (applied) revisedItem = applied;
           }
           const filingProposal = processed.result?.plan.proposals.find(
@@ -1301,7 +1039,7 @@ export async function POST(request: NextRequest) {
             currentDocumentId: attachmentDocumentId,
             recentTurns,
           });
-          const { reply, result, control, revision } = await processChatMessage({
+          const { reply, result, control, revision, answers } = await processChatMessage({
             message: trimmed,
             case_id: caseId,
             timezone,
@@ -1386,18 +1124,24 @@ export async function POST(request: NextRequest) {
           const eventName = preserveOpenWork
             ? result.event_subject ?? null
             : result.event_subject ?? conversation?.event.subject ?? null;
+          // A turn that completes work, or names the question it answers, closes that question.
+          // The match is by id or by kind of work. Recency never chooses which question closes.
+          const answersQuestionId = answers ?? null;
+          const answeredQuestions =
+            (!preserveOpenWork || answersQuestionId) && result.plan.proposals.length > 0
+              ? await closeAnsweredQuestions(admin, {
+                  sessionId: sessionId ?? null,
+                  userId: user.id,
+                  turnProposals: result.plan.proposals,
+                  answersProposalId: answersQuestionId,
+                  itemType: result.interpretation.intent.item_type,
+                })
+              : [];
           if (!preserveOpenWork && sessionId && (noteOnly || turnHasCalendar)) {
+            // Only an outgoing draft is revisable. A question addressed to the parent never is.
             const openReply = await latestRevisableDraft(admin, sessionId, user.id);
-            const answeredClarification =
-              openReply?.proposalType === "ask_clarification" &&
-              result.plan.proposals.some((proposal) =>
-                proposal.type === "calendar_update" ||
-                proposal.type === "log_expense" ||
-                proposal.type === "log_document" ||
-                proposal.type === "reply_coparent"
-              );
-            if (answeredClarification && openReply) {
-              await closeAnsweredClarification(admin, user.id, openReply);
+            if (answeredQuestions.length > 0) {
+              // The turn answered a question. It is not wording guidance for an outgoing draft.
             } else if (openReply && openReply.proposalType !== "calendar_update") {
               establishedReply = openReply.currentDraft;
               const revisedReply = await revisePendingDraft({
@@ -1503,7 +1247,24 @@ export async function POST(request: NextRequest) {
             revisionNarration = null;
           }
 
-          if (!(noteOnly && foldedReply) && !foldedCalendar && result.plan.proposals.length > 0) {
+          const repeatsOpenQuestion =
+            !foldedReply &&
+            !foldedCalendar &&
+            result.plan.proposals.length > 0 &&
+            (await turnRepeatsOpenQuestions(admin, {
+              sessionId: sessionId ?? null,
+              userId: user.id,
+              turnProposals: result.plan.proposals,
+              itemType: result.interpretation.intent.item_type,
+              sourceType: "chat",
+            }));
+
+          if (
+            !(noteOnly && foldedReply) &&
+            !foldedCalendar &&
+            !repeatsOpenQuestion &&
+            result.plan.proposals.length > 0
+          ) {
             const { intent, entities } = result.interpretation;
             const { data: itemRow, error: insertItemError } = await admin
               .from("sage_items")

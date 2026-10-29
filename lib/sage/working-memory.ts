@@ -9,7 +9,7 @@
  * on each turn. It is not a second copy of the conversation.
  */
 
-import { isSupersededProposal } from "@/lib/sage/proposal-lifecycle";
+import { isSupersededProposal, proposalState } from "@/lib/sage/proposal-lifecycle";
 import { conversationFallbackReply } from "@/lib/sage/conversation-reply";
 
 export type FocusKind = "calendar" | "expense" | "document" | "message" | "general";
@@ -21,7 +21,8 @@ export type FocusStatus =
   | "executed"
   | "superseded"
   | "dismissed"
-  | "canceled";
+  | "canceled"
+  | "expired";
 
 export type CollectedFields = Record<string, string | number | boolean | null>;
 
@@ -236,6 +237,13 @@ function kindFromProposal(row: Record<string, unknown>, itemType: string | null)
   return "general";
 }
 
+/** The kind of work a stored proposal belongs to. A question names its kind in `clarifies`. */
+export function focusKindOf(row: unknown, itemType: string | null): FocusKind {
+  const record = asRecord(row);
+  if (!record) return kindFromItemType(itemType);
+  return kindFromProposal(record, itemType);
+}
+
 function kindFromItemType(itemType: string | null): FocusKind {
   const value = (itemType ?? "").trim().toLowerCase();
   if (
@@ -273,21 +281,26 @@ function explicitRecordId(row: Record<string, unknown>, kind: FocusKind): string
   return null;
 }
 
+/** Focus status read from the shared proposal lifecycle, so every consumer agrees on what is live. */
 function focusStatus(row: Record<string, unknown>): FocusStatus {
-  if (isSupersededProposal(row)) return "superseded";
-  const status = (text(row.status) ?? "").toLowerCase();
-  if (status === "canceled" || status === "cancelled") return "canceled";
-  if (status === "dismissed" || status === "declined" || status === "waived_by_user") return "dismissed";
-  if (row.executed === true || status === "executed" || status === "completed") return "executed";
-  if (
-    row.approved === true ||
-    status === "approved" ||
-    (typeof row.approved_at === "string" && row.approved_at.trim().length > 0)
-  ) {
-    return "approved";
+  switch (proposalState(row)) {
+    case "superseded":
+      return "superseded";
+    case "expired":
+      return "expired";
+    case "canceled":
+      return "canceled";
+    case "dismissed":
+    case "declined":
+      return "dismissed";
+    case "executed":
+    case "completed":
+      return "executed";
+    case "approved":
+      return "approved";
+    default:
+      return row.type === "ask_clarification" ? "awaiting_clarification" : "pending";
   }
-  if (row.type === "ask_clarification") return "awaiting_clarification";
-  return "pending";
 }
 
 function collectedFields(row: Record<string, unknown>): CollectedFields {

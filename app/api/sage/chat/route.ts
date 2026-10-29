@@ -4,6 +4,7 @@ import { processChatMessage } from "@/lib/sage/chat";
 import type { ConversationContext } from "@/lib/sage/conversation-context";
 import { loadCalendarContext } from "@/lib/sage/calendar-chat";
 import { loadKnownCoparents } from "@/lib/sage/known-coparents";
+import { AMBIGUOUS_CASE_MESSAGE, resolveActiveCase } from "@/lib/cases/resolve-active-case";
 
 export const runtime = "nodejs";
 
@@ -18,6 +19,7 @@ export async function POST(req: NextRequest) {
     const body = (await req.json().catch(() => null)) as {
       message?: unknown;
       conversation_context?: unknown;
+      case_id?: unknown;
     } | null;
 
     const message =
@@ -39,23 +41,21 @@ export async function POST(req: NextRequest) {
     }
 
     const admin = getServiceRoleClient();
-    const { data: membership, error: membershipError } = await admin
-      .from("case_members")
-      .select("case_id")
-      .eq("user_id", user.id)
-      .limit(1)
-      .maybeSingle();
-
-    if (membershipError) {
-      console.error("[sage/chat] membership error:", membershipError);
+    const activeCase = await resolveActiveCase(admin, user.id, {
+      requestedCaseId: typeof body?.case_id === "string" ? body.case_id : null,
+    });
+    if (activeCase.status === "error") {
+      console.error("[sage/chat] membership error:", activeCase.message);
       return NextResponse.json({ error: "Internal server error" }, { status: 500 });
     }
-
-    if (!membership?.case_id) {
+    if (activeCase.status === "ambiguous") {
+      return NextResponse.json({ error: AMBIGUOUS_CASE_MESSAGE, code: "case_ambiguous" }, { status: 409 });
+    }
+    if (!activeCase.caseId) {
       return NextResponse.json({ error: "No case found" }, { status: 403 });
     }
 
-    const caseId = membership.case_id as string;
+    const caseId = activeCase.caseId;
 
     const { data: profile } = await admin
       .from("users")

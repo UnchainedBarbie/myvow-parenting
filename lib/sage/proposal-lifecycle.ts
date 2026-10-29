@@ -14,17 +14,39 @@ const RESULT_KEYS = [
   "result_message_id",
 ] as const;
 
-const TERMINAL_STATUS = new Set([
+/**
+ * The one list of statuses that end a proposal without a saved result.
+ * Every consumer that asks "is this proposal still live?" reads this list, so a status that ends
+ * work in one place ends it everywhere.
+ */
+export const ENDED_STATUS: ReadonlySet<string> = new Set([
   "waived_by_user",
-  "approved",
-  "executed",
   "declined",
   "canceled",
   "cancelled",
   "dismissed",
   "completed",
   "superseded",
+  "expired",
 ]);
+
+/** Statuses that end a proposal, plus the two that record the parent's approval or a finished save. */
+export const TERMINAL_STATUS: ReadonlySet<string> = new Set([...ENDED_STATUS, "approved", "executed"]);
+
+export type ProposalState =
+  | "open"
+  | "approved"
+  | "executed"
+  | "completed"
+  | "dismissed"
+  | "declined"
+  | "canceled"
+  | "superseded"
+  | "expired";
+
+function statusText(raw: { status?: unknown }): string {
+  return typeof raw.status === "string" ? raw.status.trim().toLowerCase() : "";
+}
 
 export type CurrentVersion = {
   proposalId: string;
@@ -53,20 +75,49 @@ export function isSupersededProposal(raw: unknown): boolean {
   return typeof proposal.superseded_by === "string" && proposal.superseded_by.trim().length > 0;
 }
 
-/** Closed for a further revision. save_failed stays open so recovery can move forward. */
-export function isInactiveProposal(raw: unknown): boolean {
-  if (!raw || typeof raw !== "object") return false;
-  if (isSupersededProposal(raw)) return true;
+/**
+ * Where a proposal stands. This is the single definition of live versus closed.
+ *   open        Waiting for the parent. A save that failed stays open so recovery can move forward.
+ *   approved    The parent approved it. The save has not finished.
+ *   executed    The action ran, or the record was saved.
+ *   completed   Closed because the work it asked for is done, or its question was answered.
+ *   dismissed, declined, canceled, superseded, expired   Ended without a result.
+ */
+export function proposalState(raw: unknown): ProposalState {
+  if (!raw || typeof raw !== "object") return "open";
   const proposal = raw as {
     executed?: boolean;
     approved?: boolean;
     approved_at?: unknown;
     status?: unknown;
   };
-  if (proposal.executed === true || proposal.approved === true) return true;
-  if (typeof proposal.approved_at === "string" && proposal.approved_at.trim()) return true;
-  const status = typeof proposal.status === "string" ? proposal.status.trim().toLowerCase() : "";
-  return TERMINAL_STATUS.has(status);
+  if (isSupersededProposal(raw)) return "superseded";
+  const status = statusText(proposal);
+  if (status === "expired") return "expired";
+  if (status === "canceled" || status === "cancelled") return "canceled";
+  if (status === "declined") return "declined";
+  if (status === "dismissed" || status === "waived_by_user") return "dismissed";
+  if (proposal.executed === true || status === "executed") return "executed";
+  if (status === "completed") return "completed";
+  if (
+    proposal.approved === true ||
+    status === "approved" ||
+    (typeof proposal.approved_at === "string" && proposal.approved_at.trim().length > 0)
+  ) {
+    return "approved";
+  }
+  return "open";
+}
+
+/** True while a proposal is still waiting on the parent. */
+export function isLiveProposal(raw: unknown): boolean {
+  return proposalState(raw) === "open";
+}
+
+/** Closed for a further revision. save_failed stays open so recovery can move forward. */
+export function isInactiveProposal(raw: unknown): boolean {
+  if (!raw || typeof raw !== "object") return false;
+  return proposalState(raw) !== "open";
 }
 
 function isSaveFailed(proposal: ProposalRecord): boolean {

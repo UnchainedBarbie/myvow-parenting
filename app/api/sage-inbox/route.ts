@@ -26,6 +26,39 @@ import {
 import { reviewGate, reviewGateFailure } from "@/lib/messages/review-receipt";
 import { attachmentIntent, type AttachmentOutcome } from "@/lib/messages/send-safety";
 import { waitUntil } from "@vercel/functions";
+import { reopenOwnQuestions, resolveOwnQuestions } from "@/lib/sage/clarification-lifecycle";
+import { AMBIGUOUS_CASE_MESSAGE, resolveActiveCase } from "@/lib/cases/resolve-active-case";
+
+/**
+ * A proposal that finishes (saved, sent) or is dismissed resolves the parent questions asked for it.
+ * An undo reopens the questions that proposal closed. Other questions in the plan stay as they are.
+ */
+function settleOwnQuestions(
+  proposals: PlanProposal[],
+  index: number,
+  change: "completed" | "dismissed" | "undone",
+  row: { item_type?: string | null; source_type?: string | null },
+  now: string
+): void {
+  const records = proposals as unknown as Record<string, unknown>[];
+  const result =
+    change === "undone"
+      ? (() => {
+          const reopened = reopenOwnQuestions(records, index);
+          return { proposals: reopened.proposals, touched: reopened.reopened };
+        })()
+      : (() => {
+          const resolved = resolveOwnQuestions(records, index, change, {
+            itemType: row.item_type ?? null,
+            sourceType: row.source_type ?? null,
+            now,
+          });
+          return { proposals: resolved.proposals, touched: resolved.resolved };
+        })();
+  for (const touched of result.touched) {
+    proposals[touched] = result.proposals[touched] as unknown as PlanProposal;
+  }
+}
 
 /** The exact text the parent approved after the shared outbound review, and proof of that review. */
 type ReviewedMessage = {
@@ -193,23 +226,21 @@ export async function GET(req: NextRequest) {
     }
 
     const admin = getServiceRoleClient();
-    const { data: membership, error: membershipError } = await admin
-      .from("case_members")
-      .select("case_id")
-      .eq("user_id", user.id)
-      .limit(1)
-      .maybeSingle();
-
-    if (membershipError) {
-      console.error("[sage-inbox/GET] Error loading membership:", membershipError);
+    const activeCase = await resolveActiveCase(admin, user.id, {
+      requestedCaseId: req.nextUrl.searchParams.get("case_id"),
+    });
+    if (activeCase.status === "error") {
+      console.error("[sage-inbox/GET] Error loading membership:", activeCase.message);
       return NextResponse.json({ error: "Internal server error" }, { status: 500 });
     }
-
-    if (!membership?.case_id) {
+    if (activeCase.status === "ambiguous") {
+      return NextResponse.json({ error: AMBIGUOUS_CASE_MESSAGE, code: "case_ambiguous" }, { status: 409 });
+    }
+    if (!activeCase.caseId) {
       return NextResponse.json({ error: "No case found" }, { status: 403 });
     }
 
-    const caseId = membership.case_id as string;
+    const caseId = activeCase.caseId;
     const statusParam = (req.nextUrl.searchParams.get("status") ?? "open").toLowerCase();
     const statusFilter =
       statusParam === "archived" ||
@@ -310,7 +341,7 @@ export async function POST(req: NextRequest) {
     const admin = getServiceRoleClient();
     const { data: row, error: fetchError } = await admin
       .from("sage_items")
-      .select("id, plan, case_id, source_id, source_type, tool_input, visible_to")
+      .select("id, plan, case_id, source_id, source_type, item_type, tool_input, visible_to")
       .eq("id", id)
       .eq("visible_to", user.id)
       .maybeSingle();
@@ -546,6 +577,7 @@ export async function POST(req: NextRequest) {
         );
       }
       proposals[idx] = finalized.proposal as PlanProposal;
+      settleOwnQuestions(proposals, idx, "completed", row as { item_type?: string | null; source_type?: string | null }, new Date().toISOString());
       const updatedPlan: SagePlan = { ...plan, proposals };
       const { error: updateError } = await admin
         .from("sage_items")
@@ -639,6 +671,7 @@ export async function POST(req: NextRequest) {
         delete next.status;
         delete next.waived_at;
         proposals[idx] = next;
+        settleOwnQuestions(proposals, idx, "undone", row as { item_type?: string | null; source_type?: string | null }, now);
         if (wasWaivedAsk) undidWaivedAskClarification = true;
         continue;
       }
@@ -800,6 +833,7 @@ export async function POST(req: NextRequest) {
           attachment_delivery: sent.attachment,
         };
         delete proposals[idx].send_claim_at;
+        settleOwnQuestions(proposals, idx, "completed", row as { item_type?: string | null; source_type?: string | null }, now);
         continue;
       }
 
@@ -845,6 +879,8 @@ export async function POST(req: NextRequest) {
         };
         if (p.type === "ask_clarification") {
           waivedAskClarification = true;
+        } else {
+          settleOwnQuestions(proposals, idx, "dismissed", row as { item_type?: string | null; source_type?: string | null }, now);
         }
       }
     }

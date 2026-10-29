@@ -4,6 +4,7 @@ import {
   correctIntakeText,
   senderIsAccountOwner,
 } from "@/lib/sage/intake-facts";
+import { isLiveProposal } from "@/lib/sage/proposal-lifecycle";
 import { filesForMessages, sageAttachmentViews, type SageAttachmentView } from "@/lib/sage/message-attachments";
 
 type Proposal = Record<string, unknown>;
@@ -21,10 +22,7 @@ export type StoredIntakeCorrection = {
 };
 
 function activeReply(proposals: Proposal[]): boolean {
-  return proposals.some((proposal) => {
-    const status = typeof proposal.status === "string" ? proposal.status.toLowerCase() : "";
-    return proposal.type === "reply_coparent" && status !== "dismissed" && status !== "superseded";
-  });
+  return proposals.some((proposal) => proposal.type === "reply_coparent" && isLiveProposal(proposal));
 }
 
 function withoutReadyReply(text: string, proposals: Proposal[]): string {

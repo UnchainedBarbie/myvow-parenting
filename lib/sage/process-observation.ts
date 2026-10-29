@@ -119,18 +119,22 @@ export async function processObservation(
       context: contextBlock || null,
     })
   );
-  const categoryBlob = [
-    intent.summary,
-    intent.evidence_excerpt,
-    observationText,
-  ]
+  // The words of this turn only. The conversation block carries Sage's own earlier questions and
+  // proposals ("What was the amount of this expense?"); scanning them would let Sage's wording
+  // classify the parent's next message. Detection reads what the sender wrote now.
+  const messageBodies = observation.messages
+    .map((m) => m.text.trim())
+    .filter(Boolean)
+    .join("\n");
+  // Category labels read the model's summary of this turn as well, after the turn is classified.
+  const categoryBlob = [intent.summary, intent.evidence_excerpt, messageBodies]
     .filter(Boolean)
     .join(" ");
 
   // Dentist/doctor bills are expenses (medical), not calendar-only medical_update.
   if (
     intent.item_type !== "expense" &&
-    (intent.tool_name === "expense" || looksLikeExpenseCommand(categoryBlob))
+    (intent.tool_name === "expense" || looksLikeExpenseCommand(messageBodies))
   ) {
     intent.item_type = "expense";
     intent.tool_name = "expense";
@@ -160,10 +164,6 @@ export async function processObservation(
     .map((r) => r.name);
 
   const today = context.today ?? new Date();
-  const messageBodies = observation.messages
-    .map((m) => m.text.trim())
-    .filter(Boolean)
-    .join("\n");
   const resolved_dates = resolveDates(
     entities.dates.map((d) => ({ raw: rawForDateResolver(d) })),
     today,
@@ -251,7 +251,7 @@ export async function processObservation(
   const amount =
     typeof entityAmount === "number" && Number.isFinite(entityAmount) && entityAmount > 0
       ? entityAmount
-      : parseExpenseAmountFromText(categoryBlob);
+      : parseExpenseAmountFromText(messageBodies);
   if (
     amount != null &&
     !entities.amounts.some((a) => a.value === amount)
@@ -267,7 +267,7 @@ export async function processObservation(
     notify_coparent?: boolean;
   } | undefined;
   if (intent.item_type === "expense") {
-    const notify_coparent = userAskedToNotifyCoparent(observationText);
+    const notify_coparent = userAskedToNotifyCoparent(messageBodies);
     if (typeof amount === "number" && Number.isFinite(amount) && amount > 0) {
       const allocation = await computeAllocationFromParentingPlan({
         caseId: context.case_id,
@@ -294,7 +294,7 @@ export async function processObservation(
 
   const hasAttachments =
     observation.messages.some((m) => (m.attachments?.length ?? 0) > 0) ||
-    /\[Attachment:/i.test(observationText);
+    /\[Attachment:/i.test(turnText);
 
   const inbound = !isUserCommand({
     sender: context.plan_sender ?? context.sender,

@@ -7,6 +7,7 @@ import {
   type DocumentRevision,
 } from "@/lib/sage/document-intent";
 import { isInactiveProposal } from "@/lib/sage/proposal-lifecycle";
+import { loadSessionItemIds } from "@/lib/sage/session-items";
 import type { SearchableDocument } from "@/lib/sage/document-search";
 
 type Admin = ReturnType<typeof getServiceRoleClient>;
@@ -78,18 +79,39 @@ export async function loadVisibleDocuments(
 }
 
 /** Newest open document proposal on the case, even when the journal link is missing. */
+/**
+ * Newest items first, limited to this parent's own items in this chat session.
+ * Another session's pending document, or the other parent's, never joins this conversation.
+ */
+async function sessionScopedItems<T extends { id?: string }>(
+  admin: Admin,
+  scope: { caseId: string; userId: string; sessionId: string | null },
+  columns: string
+): Promise<{ data: T[] | null; error: { message: string } | null }> {
+  const ids = await loadSessionItemIds(admin, scope.sessionId, scope.userId);
+  if (ids.length === 0) return { data: [], error: null };
+  const { data, error } = await admin
+    .from("sage_items")
+    .select(columns)
+    .in("id", ids)
+    .eq("case_id", scope.caseId)
+    .eq("visible_to", scope.userId)
+    .order("created_at", { ascending: false })
+    .limit(30);
+  return { data: (data as unknown as T[] | null) ?? null, error };
+}
+
 export async function loadLatestOpenDocument(
   admin: Admin,
   caseId: string,
-  userId: string
+  userId: string,
+  sessionId: string | null
 ): Promise<DocumentProposalState | null> {
-  const { data, error } = await admin
-    .from("sage_items")
-    .select("plan, created_at")
-    .eq("case_id", caseId)
-    .eq("visible_to", userId)
-    .order("created_at", { ascending: false })
-    .limit(30);
+  const { data, error } = await sessionScopedItems<{ id?: string; plan?: { proposals?: unknown[] } | null }>(
+    admin,
+    { caseId, userId, sessionId },
+    "id, plan, created_at"
+  );
   if (error || !data) {
     if (error) console.error("[sage/documents] open proposal load failed:", error.message);
     return null;
@@ -112,15 +134,14 @@ export async function reviseLatestOpenDocument(
   admin: Admin,
   caseId: string,
   userId: string,
-  revision: DocumentRevision
+  revision: DocumentRevision,
+  sessionId: string | null
 ): Promise<{ id: string; plan: Record<string, unknown> } | null> {
-  const { data, error } = await admin
-    .from("sage_items")
-    .select("id, plan")
-    .eq("case_id", caseId)
-    .eq("visible_to", userId)
-    .order("created_at", { ascending: false })
-    .limit(30);
+  const { data, error } = await sessionScopedItems<{ id?: string; plan?: { proposals?: unknown[] } | null }>(
+    admin,
+    { caseId, userId, sessionId },
+    "id, plan"
+  );
   if (error || !data) return null;
   for (const row of data as { id?: string; plan?: { proposals?: unknown[] } | null }[]) {
     if (!row.id || !row.plan || !Array.isArray(row.plan.proposals)) continue;

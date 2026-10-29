@@ -5,7 +5,7 @@ import {
   isLogDocumentProposal,
   isLogExpenseProposal,
 } from "@/lib/sage/proposal-kind";
-import { isSupersededProposal, type ProposalRecord } from "@/lib/sage/proposal-lifecycle";
+import { ENDED_STATUS, isSupersededProposal, type ProposalRecord } from "@/lib/sage/proposal-lifecycle";
 
 /**
  * A proposal leaves Open items only when this specific proposal is resolved.
@@ -13,15 +13,7 @@ import { isSupersededProposal, type ProposalRecord } from "@/lib/sage/proposal-l
  * conversation is not a link. Calendar update targets are not execution results.
  */
 
-const CLOSED_STATUS = new Set([
-  "waived_by_user",
-  "declined",
-  "canceled",
-  "cancelled",
-  "dismissed",
-  "superseded",
-  "completed",
-]);
+const CLOSED_STATUS = ENDED_STATUS;
 
 export type SentReplyLink = {
   proposalId: string;

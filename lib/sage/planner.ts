@@ -13,6 +13,7 @@ import {
   voiceProblems,
 } from "@/lib/sage/outbound-facts";
 import { coparentShareInvolves } from "@/lib/expenses-share";
+import { isParentFacingQuestion } from "@/lib/sage/proposal-kind";
 
 const SAGE_MODEL = "claude-sonnet-4-6";
 
@@ -473,10 +474,10 @@ export async function redraftMessage(params: {
   event?: string | null;
   child?: string | null;
 }): Promise<string | null> {
-  const parentFacingClarification =
-    params.proposalType === "ask_clarification" &&
-    (params.audience === "parent" ||
-      (params.sourceType ?? "").trim().toLowerCase() === "chat");
+  const parentFacingClarification = isParentFacingQuestion(
+    { type: params.proposalType, audience: params.audience },
+    params.sourceType
+  );
   const kindLabel = parentFacingClarification
     ? "clarification question to the parent"
     : params.proposalType === "ask_clarification"

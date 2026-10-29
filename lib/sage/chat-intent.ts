@@ -87,6 +87,8 @@ export type RoutedTurn = {
   control: ChatControl;
   reply: string;
   revision: PendingRevision | null;
+  /** The open question this turn answered, by proposal id. Absent when the turn answers none. */
+  answers?: string | null;
   result: ProcessObservationResult;
 };
 
@@ -575,6 +577,8 @@ function turn(opts: {
   amount?: number | null;
   expenseCategory?: string | null;
   reasoning: string;
+  /** Id of the open question this turn answers. The route closes that question by id. */
+  answers?: string | null;
 }): RoutedTurn {
   const plan: Plan = {
     status: opts.status ?? (opts.proposals.some((p) => p.type !== "note_only") ? "ready" : "no_action"),
@@ -586,6 +590,7 @@ function turn(opts: {
     control: opts.control ?? "none",
     reply: opts.reply,
     revision: opts.revision ?? null,
+    ...(opts.answers ? { answers: opts.answers } : {}),
     result: shell({
       message: opts.message,
       summary: opts.summary,
@@ -628,12 +633,14 @@ function expenseAnswer(
   description: string,
   amount: number,
   category: string | null,
-  fields: CollectedFields
+  fields: CollectedFields,
+  answers: string | null = null
 ): RoutedTurn {
   const sharing = fieldText(fields, "sharing_intent");
   const payer = fieldText(fields, "payer_name");
   return turn({
     handled: true,
+    answers,
     reply: "I can log that expense once you approve it.",
     message,
     summary: description,
@@ -706,14 +713,14 @@ function completeOpenDetail(
       const category = inferExpenseCategoryFromText(message);
       const description = fieldText(fields, "description") ?? fieldText(fields, "title") ?? "Expense";
       if (!category || storedAmount == null || message.trim().split(/\s+/).length > 3) return null;
-      return expenseAnswer(message, description, storedAmount, category, fields);
+      return expenseAnswer(message, description, storedAmount, category, fields, clarification.proposalId);
     }
     if (!needsAmount) return null;
     const amount = parseExpenseAmountFromText(message);
     if (amount == null || bareCorrection(message)?.kind !== "amount") return null;
     const description = fieldText(fields, "description") ?? fieldText(fields, "title") ?? "Expense";
     const category = fieldText(fields, "category") ?? inferExpenseCategoryFromText(description);
-    return expenseAnswer(message, description, amount, category, fields);
+    return expenseAnswer(message, description, amount, category, fields, clarification.proposalId);
   }
   if (clarification.kind === "message") {
     // The caller read this turn as conversation. The question stays open.
@@ -738,6 +745,7 @@ function completeOpenDetail(
     // The parent's words are kept exactly as typed and are labeled as theirs.
     return turn({
       handled: true,
+      answers: clarification.proposalId,
       reply: `Here is your message to ${name}, in your own words. Nothing is sent until you review it and choose Send.`,
       message,
       summary: `Message to ${name}`,

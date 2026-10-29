@@ -7,6 +7,7 @@ import { getServiceRoleClient } from "@/lib/supabase/server";
 import { savedEventPointer } from "@/lib/sage/calendar-chat";
 import { eventSubjectFromTexts, preferEventSubject, resolveEventSubject } from "@/lib/sage/event-subject";
 import { parseClockMinutes, resolveDate } from "@/lib/sage/resolver";
+import { isLiveProposal } from "@/lib/sage/proposal-lifecycle";
 import {
   deriveWorkingMemory,
   emptyWorkingMemory,
@@ -111,26 +112,12 @@ function isoDate(value: unknown): string | null {
   return /^\d{4}-\d{2}-\d{2}$/.test(trimmed) ? trimmed : null;
 }
 
+/** Not waiting on the parent. The shared lifecycle decides; a note or an untyped row is never open work. */
 function closed(raw: unknown): boolean {
   if (!raw || typeof raw !== "object") return true;
-  const proposal = raw as {
-    executed?: boolean;
-    approved?: boolean;
-    approved_at?: unknown;
-    status?: string;
-    type?: string;
-  };
+  const proposal = raw as { type?: string };
   if (!proposal.type || proposal.type === "note_only") return true;
-  if (proposal.executed === true || proposal.approved === true) return true;
-  if (typeof proposal.approved_at === "string" && proposal.approved_at.trim()) return true;
-  const status = (proposal.status ?? "").toLowerCase();
-  return (
-    status === "waived_by_user" ||
-    status === "approved" ||
-    status === "executed" ||
-    status === "canceled" ||
-    status === "cancelled"
-  );
+  return !isLiveProposal(raw);
 }
 
 function liveText(raw: unknown): string {

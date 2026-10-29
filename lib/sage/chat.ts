@@ -45,6 +45,8 @@ export type ChatProcessResult = {
   result: ProcessObservationResult;
   control: ChatControl;
   revision: PendingRevision | null;
+  /** Proposal id of the open question this turn answered, when the router read one. */
+  answers?: string | null;
 };
 
 export type ProcessChatMessageInput = {
@@ -197,6 +199,7 @@ export async function processChatMessage(
       result: routed.result,
       control: routed.control,
       revision: routed.revision,
+      answers: routed.answers ?? null,
     };
   }
 

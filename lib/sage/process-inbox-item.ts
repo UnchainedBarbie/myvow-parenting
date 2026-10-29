@@ -19,6 +19,7 @@ import {
 } from "@/lib/sage/observation-builder";
 import { processObservation } from "@/lib/sage/process-observation";
 import { loadIncomingContext } from "@/lib/sage/incoming-context";
+import { isLiveProposal } from "@/lib/sage/proposal-lifecycle";
 import { parentDirectory } from "@/lib/messages/case-parents";
 import { resolveReceivingParent } from "@/lib/messages/receiving-parent";
 import {
@@ -439,8 +440,7 @@ function coparentLabel(text: string): string {
  */
 function hasOutboundDraft(plan: Plan): boolean {
   return plan.proposals.some((p) => {
-    const status = ((p as { status?: string }).status ?? "").toLowerCase();
-    if (status === "dismissed" || status === "superseded") return false;
+    if (!isLiveProposal(p)) return false;
     return p.type === "reply_coparent" || p.type === "ask_clarification";
   });
 }

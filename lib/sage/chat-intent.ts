@@ -258,6 +258,11 @@ export function refersToCoparentRole(text: string): boolean {
   return /\bco[-\s]?parents?\b/i.test(text) || /\b(?:the\s+)?other\s+parent\b/i.test(text);
 }
 
+/** True when the parent is asking Sage to prepare or send a message to the co-parent. */
+export function isMessageDraftRequest(text: string): boolean {
+  return wantsNotify(text);
+}
+
 function wantsNotify(text: string): boolean {
   const lower = text.toLowerCase();
   if (/\b(let|tell) me\b/.test(lower) && !/\b(him|her|them)\b/.test(lower) && !refersToCoparentRole(text)) {
@@ -471,6 +476,16 @@ function transitionEvent(text: string): boolean {
   return /\b(school|pickup|pick-up|pick up|drop-?off|drop off|exchange)\b/i.test(text);
 }
 
+/** Calendar-notification wording. Used only when an event is already established or this turn schedules one. */
+export function calendarNotifyBody(facts: {
+  child: string | null;
+  subject: string | null;
+  dateLabel: string | null;
+  timeLabel: string | null;
+}): string | null {
+  return messageBody(facts);
+}
+
 function messageBody(facts: {
   child: string | null;
   subject: string | null;
@@ -604,6 +619,63 @@ function turn(opts: {
       expenseCategory: opts.expenseCategory,
     }),
   };
+}
+
+/** A message drafted from the conversation. It still needs review; nothing is sent. */
+export function messageDraftTurn(opts: {
+  message: string;
+  recipient: KnownCoparent;
+  body: string;
+  outcome: string;
+  keep?: Proposal[];
+}): RoutedTurn {
+  const messageCard = proposal("reply_coparent", opts.body, {
+    recipient_name: opts.recipient.name,
+    recipient_email: opts.recipient.email ?? "",
+    draft_origin: "sage_wording",
+  });
+  const kept = (opts.keep ?? []).filter((item) => item.type !== "reply_coparent" && item.type !== "note_only");
+  const proposals = [...kept, messageCard];
+  const hasCalendar = proposals.some((item) => item.type === "calendar_update");
+  const reply = hasCalendar
+    ? `I prepared a calendar event and a separate message to ${opts.recipient.name}. Each one needs your approval.`
+    : `Here is a message to ${opts.recipient.name}. Nothing is sent until you review it and choose Send.`;
+  return turn({
+    handled: true,
+    reply,
+    message: opts.message,
+    summary: opts.outcome || reply,
+    itemType: hasCalendar ? "calendar_event" : "message",
+    proposals,
+    reasoning:
+      "The parent asked for a message that continues this conversation. The draft uses that conversation and still needs approval.",
+  });
+}
+
+/** Sage cannot determine the intended message from the conversation, so it asks rather than inventing. */
+export function messageAskTurn(opts: {
+  message: string;
+  question: string;
+  recipient?: KnownCoparent | null;
+  keep?: Proposal[];
+}): RoutedTurn {
+  const kept = (opts.keep ?? []).filter((item) => item.type !== "reply_coparent" && item.type !== "note_only");
+  const ask = proposal("ask_clarification", opts.question, {
+    audience: "parent",
+    clarifies: "message",
+    ...(opts.recipient?.name ? { recipient_name: opts.recipient.name } : {}),
+    ...(opts.recipient?.email ? { recipient_email: opts.recipient.email } : {}),
+  });
+  return turn({
+    handled: true,
+    reply: opts.question,
+    message: opts.message,
+    summary: opts.question,
+    itemType: kept.some((item) => item.type === "calendar_update") ? "calendar_event" : "message",
+    proposals: [...kept, ask],
+    status: "awaiting_clarification",
+    reasoning: "The intended message could not be determined from the conversation, so Sage asked rather than inventing one.",
+  });
 }
 
 export function selfForwardResult(message: string, attachmentNames: string[] = []): RoutedTurn {
@@ -1240,12 +1312,20 @@ export function routeChatIntent(input: RouteChatIntentInput): RoutedTurn {
         )
       );
     } else {
-      const body = messageBody({
-        child,
-        subject,
-        dateLabel,
-        timeLabel,
-      });
+      // A message card may reuse calendar wording only for an event this turn schedules, or one
+      // the session already holds. A medical noun in a request to write is not a scheduled event.
+      const scheduleEstablished =
+        Boolean(inheritedEvent.date || inheritedEvent.time || inheritedEvent.eventId) ||
+        (conversation?.open_proposals ?? []).some((item) => item.type === "calendar_update");
+      const notifyFromCalendar = calendar || completingTime || scheduleEstablished;
+      const body = notifyFromCalendar
+        ? messageBody({
+            child,
+            subject: calendar || completingTime ? subject : inheritedEvent.subject,
+            dateLabel: calendar || completingTime ? dateLabel : inheritedEvent.date ? prettyDate(inheritedEvent.date) : dateLabel,
+            timeLabel: calendar || completingTime ? timeLabel : inheritedEvent.time ?? timeLabel,
+          })
+        : null;
       if (!body) {
         proposals.push(
           proposal(

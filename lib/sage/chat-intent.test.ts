@@ -66,12 +66,12 @@ const explicit = routeChatIntent({
   timezone: "America/Denver",
   today,
 });
-const messageCard = explicit.result.plan.proposals.find((p) => p.type === "reply_coparent");
-assert.ok(messageCard);
-assert.equal(messageCard.recipient_name, "Kevin");
-assert.equal(messageCard.recipient_email, "kevin@example.com");
-assert.doesNotMatch(messageCard.draft, /Kevin/);
-assert.equal(explicit.control, "none");
+// Naming an appointment is not a scheduled event. Sage asks rather than filling a template.
+assert.equal(
+  explicit.result.plan.proposals.some((p) => p.type === "reply_coparent"),
+  false
+);
+assert.match(explicit.reply, /What should I tell Kevin/i);
 
 const followUp = routeChatIntent({
   message: "Can you let him know?",

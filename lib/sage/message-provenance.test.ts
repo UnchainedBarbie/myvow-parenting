@@ -80,6 +80,7 @@ async function chat(
     shadow: false,
     today: TODAY,
     conversationModel: over.model,
+    conversationActionModel: null,
   });
 }
 

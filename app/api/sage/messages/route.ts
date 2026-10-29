@@ -1028,7 +1028,7 @@ export async function POST(request: NextRequest) {
           const coparents = await loadKnownCoparents(admin, caseId, user.id);
           const calendarContext = await loadCalendarContext(admin, caseId, user.id);
           const recentTurns = sessionId
-            ? await loadSessionTurns(admin, sessionId, user.id, trimmed)
+            ? await loadSessionTurns(admin, sessionId, user.id, trimmed, { limit: 16, maxChars: 800 })
             : [];
           const analysis = await prepareAnalysisRead(admin, {
             message: trimmed,
@@ -1052,6 +1052,7 @@ export async function POST(request: NextRequest) {
             viewerId: user.id,
             viewerRole,
             recentTurns,
+            sessionId: sessionId ?? null,
             analysisFiles: analysis?.files,
             loadAnalysisBytes: analysis?.loadBytes,
           });

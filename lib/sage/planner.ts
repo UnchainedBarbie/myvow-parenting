@@ -93,6 +93,16 @@ export type Proposal = {
   subject?: string | null;
   /** Author of a reply_coparent draft: the parent's own text, or wording Sage composed. */
   draft_origin?: "parent_text" | "sage_wording";
+  /**
+   * What a conversation-grounded draft rests on: the parent's earlier turns, the facts taken from them,
+   * the outcome the parent asked for, and what stays uncertain or disputed. The parent sees the draft, not this.
+   */
+  grounded_in?: {
+    outcome: string;
+    turns: number[];
+    facts: { text: string; status: string }[];
+    uncertain: string[];
+  };
   /** Set when the approved save should change the event status, such as canceled. */
   event_status?: string | null;
   /** Dollar amount for an expense proposal. Absent when the user did not state one. */

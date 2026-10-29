@@ -298,6 +298,7 @@ async function sendChat(db: FakeDb, message: string) {
     shadow: false,
     today: TODAY,
     conversationModel: speaker(),
+    conversationActionModel: null,
   });
   return { result, conversation };
 }

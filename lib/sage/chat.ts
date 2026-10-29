@@ -9,12 +9,21 @@ import {
   type ConversationModel,
 } from "@/lib/sage/conversation-reply";
 import {
+  isMessageDraftRequest,
   messageAnswerCandidate,
+  messageAskTurn,
+  messageDraftTurn,
   routeChatIntent,
   type ChatControl,
   type KnownCoparent,
   type PendingRevision,
 } from "@/lib/sage/chat-intent";
+import { buildContextFrame, hasConversationSubstance } from "@/lib/sage/context-frame";
+import {
+  anthropicConversationActionModel,
+  decideConversationAction,
+  type ConversationActionModel,
+} from "@/lib/sage/conversation-action";
 import type { CaseEvent, KnownChild } from "@/lib/sage/calendar-chat";
 import type { SearchableDocument } from "@/lib/sage/document-search";
 import type { ConversationContext } from "@/lib/sage/conversation-context";
@@ -87,6 +96,12 @@ export type ProcessChatMessageInput = {
    * The model produces text only.
    */
   conversationModel?: ConversationModel | null;
+  /**
+   * Reads a request against the conversation and drafts a message from it.
+   * Undefined uses the model when configured. Null skips interpretation (tests of other paths).
+   */
+  conversationActionModel?: ConversationActionModel | null;
+  sessionId?: string | null;
 };
 
 function buildReply(result: ProcessObservationResult): string {
@@ -167,6 +182,69 @@ export async function processChatMessage(
     timezone: input.timezone,
     today: input.today,
   });
+  const frame = buildContextFrame({
+    parentId: input.viewerId ?? "",
+    caseId: input.case_id,
+    role: input.viewerRole ?? null,
+    sessionId: input.sessionId ?? null,
+    message: input.message,
+    recentTurns: input.recentTurns,
+    conversation: input.conversation ?? null,
+    children: input.children,
+    coparents: input.coparents,
+  });
+  const actionModel =
+    input.conversationActionModel === undefined
+      ? anthropicConversationActionModel()
+      : input.conversationActionModel;
+  const routedMessage = routed.result.plan.proposals.some((proposal) => proposal.type === "reply_coparent");
+  const routedOtherAction = routed.result.plan.proposals.some(
+    (proposal) =>
+      proposal.type === "calendar_update" ||
+      proposal.type === "log_expense" ||
+      proposal.type === "log_document"
+  );
+  const shouldInterpret =
+    chatTurn &&
+    actionModel &&
+    (routedMessage ||
+      isMessageDraftRequest(input.message) ||
+      (!routed.handled && hasConversationSubstance(frame)));
+  if (shouldInterpret) {
+    const decision = await decideConversationAction({
+      frame,
+      model: actionModel,
+      conversation: input.conversation ?? null,
+      routedMessage,
+      routedOtherAction,
+    });
+    if (decision.status === "draft") {
+      Object.assign(
+        routed,
+        messageDraftTurn({
+          message: input.message,
+          recipient: decision.recipient,
+          body: decision.body,
+          outcome: decision.interpretation.outcome,
+          keep: routedOtherAction ? routed.result.plan.proposals : [],
+        })
+      );
+    } else if (decision.status === "ask") {
+      Object.assign(
+        routed,
+        messageAskTurn({
+          message: input.message,
+          question: decision.question,
+          recipient: decision.recipient,
+          keep: routedOtherAction ? routed.result.plan.proposals : [],
+        })
+      );
+    } else if (decision.status === "unrelated" && routedMessage && !routedOtherAction) {
+      routed.handled = false;
+      routed.result.plan.proposals = [];
+      routed.result.plan.status = "no_action";
+    }
+  }
   if ((input.intake ?? "chat") === "chat" && input.shadow !== false) {
     const coparentName = input.coparents?.length === 1 ? input.coparents[0].name.trim().split(/\s+/)[0] : "";
     const coparent = coparentName && !coparentName.includes("@") ? coparentName : null;

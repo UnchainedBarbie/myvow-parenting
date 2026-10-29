@@ -142,6 +142,7 @@ async function chat(
     shadow: false,
     today: TODAY,
     conversationModel: over.model,
+    conversationActionModel: null,
   });
 }
 
@@ -441,7 +442,7 @@ async function main() {
       assert.equal(/asshole|weekend|pediatric|profan|swear/i.test(source), false, `${file} holds no example-specific rules`);
     }
     const route = readFileSync(join(root, "app/api/sage/messages/route.ts"), "utf8");
-    assert.match(route, /loadSessionTurns\(admin, sessionId, user\.id, trimmed\)/);
+    assert.match(route, /loadSessionTurns\(admin, sessionId, user\.id, trimmed/);
     const chatSource = readFileSync(join(root, "lib/sage/chat.ts"), "utf8");
     assert.match(chatSource, /model\.reply\(packet\(\)\)/);
     assert.equal(/FALLBACK_REPLY|didn't take an action/.test(chatSource), false);

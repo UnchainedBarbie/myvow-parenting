@@ -216,6 +216,12 @@ export async function processChatMessage(
       model: actionModel,
       conversation: input.conversation ?? null,
       routedMessage,
+      messageIntent:
+        routedMessage ||
+        isMessageDraftRequest(input.message) ||
+        routed.result.plan.proposals.some(
+          (proposal) => proposal.type === "ask_clarification" && proposal.clarifies === "message"
+        ),
       routedOtherAction,
     });
     if (decision.status === "draft") {

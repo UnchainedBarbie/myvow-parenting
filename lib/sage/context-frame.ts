@@ -44,6 +44,13 @@ export type ActionInterpretation = {
   /** Claims the parent reported that are not independently verified in this frame. */
   disputed: string[];
   recipientName: string | null;
+  /**
+   * How the parent wants the co-parent to answer.
+   *   open_question            Invite them to state a position.
+   *   predetermined_admission  The parent wants a specific conclusion confirmed. A draft must not
+   *                            write that trap; it asks about the factual topic instead.
+   */
+  elicitation?: "open_question" | "predetermined_admission" | null;
 };
 
 export type OpenWork = {
@@ -218,4 +225,13 @@ export function coparentFacts(frame: ContextFrame): ConversationalFact[] {
 /** True when an earlier parent turn in this session carries substance a later action can refer to. */
 export function hasConversationSubstance(frame: ContextFrame): boolean {
   return frame.facts.some((fact) => fact.speaker === "parent" && fact.text.trim().length > 12);
+}
+
+/**
+ * True when this frame already holds a discussion a message can continue.
+ * A later request may point at that discussion with "him", "that", or "what we discussed"
+ * without restating it. Clarification is for when this is false.
+ */
+export function conversationSupportsDraft(frame: ContextFrame): boolean {
+  return relevantParentFacts(frame).some((fact) => fact.text.trim().length > 12);
 }

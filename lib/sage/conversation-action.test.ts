@@ -4,15 +4,18 @@ import { processChatMessage } from "@/lib/sage/chat";
 import { isMessageDraftRequest, routeChatIntent, type KnownCoparent } from "@/lib/sage/chat-intent";
 import {
   buildContextFrame,
+  conversationSupportsDraft,
   coparentFacts,
   hasConversationSubstance,
   hasEstablishedSchedule,
   relevantParentFacts,
   sageOnlyFacts,
+  type ActionGrounding,
   type ContextFrame,
 } from "@/lib/sage/context-frame";
 import {
   cleanDraft,
+  draftableOutcome,
   draftUsesConversation,
   parseActionInterpretation,
   type ConversationActionModel,
@@ -64,6 +67,12 @@ const DRAFT_REQUEST =
 const CONVERSATION_DRAFT =
   "Please clarify in writing whether agreement on a new pediatrician depends on vaccination decisions. We have not agreed on a new pediatrician. I provided other pediatrician options and my understanding is that you have not been willing to consider them. There is also disagreement about the previous practice's vaccination policy. I am asking for your position in writing.";
 
+const OPEN_POSITION_DRAFT =
+  "Please tell me in writing whether agreement on a new pediatrician depends on vaccination decisions, and whether you are willing to consider the other pediatrician options. I am asking for your actual position so we can document it. I am not asking you to confirm any legal conclusion.";
+
+const ASK_HIM =
+  "I want to ask him a question that confirms he is using coercive control so I can use that in court.";
+
 function emptyConversation(): ConversationContext {
   return {
     thread_subject: null,
@@ -75,12 +84,19 @@ function emptyConversation(): ConversationContext {
 function actionModel(opts?: {
   failInterpret?: boolean;
   failDraft?: boolean;
-  kind?: "message" | "calendar" | "expense" | "conversation";
+  kind?: "message" | "calendar" | "expense" | "document" | "conversation";
   draft?: string | null;
-}): { model: ConversationActionModel; frames: ContextFrame[] } {
+  grounding?: ActionGrounding;
+  recipientName?: string | null;
+  elicitation?: "open_question" | "predetermined_admission" | null;
+  outcome?: string;
+  refersTo?: string | null;
+}): { model: ConversationActionModel; frames: ContextFrame[]; draftFrames: ContextFrame[] } {
   const frames: ContextFrame[] = [];
+  const draftFrames: ContextFrame[] = [];
   return {
     frames,
+    draftFrames,
     model: {
       interpret: async (frame) => {
         frames.push(frame);
@@ -89,26 +105,35 @@ function actionModel(opts?: {
         return {
           kind,
           outcome:
-            kind === "message"
+            opts?.outcome ??
+            (kind === "message"
               ? "Ask Kevin to clarify in writing whether agreement on a new pediatrician depends on vaccination decisions."
               : kind === "expense"
                 ? "Log the dentist expense."
                 : kind === "calendar"
                   ? "Add the dentist visit to the calendar."
-                  : "Continue the conversation.",
-          refersTo: kind === "message" ? "the ongoing pediatrician disagreement" : null,
-          grounding: kind === "message" ? "conversation" : kind === "calendar" ? "calendar_event" : "insufficient",
+                  : kind === "document"
+                    ? "File the document."
+                    : "Continue the conversation."),
+          refersTo: opts?.refersTo ?? (kind === "message" ? "the ongoing pediatrician disagreement" : null),
+          grounding:
+            opts?.grounding ??
+            (kind === "message" ? "conversation" : kind === "calendar" ? "calendar_event" : "insufficient"),
           relevantFactIndexes: frame.facts
             .map((fact, index) => (fact.speaker === "parent" ? index : -1))
             .filter((index) => index >= 0),
           uncertain: ["whether Kevin will agree"],
           disputed: ["that Kevin refuses to consider the options", "the previous practice's vaccination policy"],
-          recipientName: "Kevin",
+          recipientName: opts?.recipientName === undefined ? "Kevin" : opts.recipientName,
+          elicitation: opts?.elicitation ?? (kind === "message" ? "open_question" : null),
         };
       },
-      draftMessage: async () => {
+      draftMessage: async (frame) => {
+        draftFrames.push(frame);
         if (opts?.failDraft) return null;
-        return opts?.draft === undefined ? CONVERSATION_DRAFT : opts.draft;
+        if (opts?.draft !== undefined) return opts.draft;
+        if (frame.interpretation?.elicitation === "predetermined_admission") return OPEN_POSITION_DRAFT;
+        return CONVERSATION_DRAFT;
       },
     },
   };
@@ -186,6 +211,7 @@ async function main() {
     assert.equal(frame.sessionId, "session-ashley");
     assert.ok(frame.capabilities.includes("message"));
     assert.equal(hasConversationSubstance(frame), true);
+    assert.equal(conversationSupportsDraft(frame), true);
     assert.ok(relevantParentFacts(frame).some((fact) => /have not agreed on a new pediatrician/i.test(fact.text)));
     assert.ok(sageOnlyFacts(frame).every((fact) => fact.speaker === "sage"));
     assert.ok(sageOnlyFacts(frame).some((fact) => /That sounds hard/i.test(fact.text)));
@@ -250,18 +276,65 @@ async function main() {
       uncertain: [],
       disputed: [],
       recipientName: "Kevin",
+      elicitation: "open_question",
     } }), true);
   }
 
-  // --- "Can you draft something?" after the same conversation --------------------------------------
+  // --- Indirect and referential draft requests after the same conversation -------------------------
   {
-    const spoken = actionModel();
-    const result = await chat("Can you draft something?", { action: spoken.model });
+    assert.equal(isMessageDraftRequest("I want to ask him a question."), false);
+    assert.equal(isMessageDraftRequest("Can you draft that?"), false);
+    assert.equal(isMessageDraftRequest("Write something based on what we discussed."), false);
+    assert.equal(isMessageDraftRequest(ASK_HIM), false);
+
+    for (const phrasing of [
+      "I want to ask him a question.",
+      "Can you draft that?",
+      "Write something based on what we discussed.",
+      "Can you draft something?",
+    ]) {
+      const spoken = actionModel();
+      const result = await chat(phrasing, { action: spoken.model });
+      const card = result.result.plan.proposals.find((proposal) => proposal.type === "reply_coparent");
+      assert.ok(card, phrasing);
+      assert.doesNotMatch(card.draft ?? "", APPOINTMENT_TEMPLATE);
+      assert.match(card.draft ?? "", /pediatrician/i);
+      assert.match(card.draft ?? "", /vaccin/i);
+      assert.equal(card.requires_approval, true);
+      assert.equal("executed" in card, false);
+      assert.match(result.reply, /Nothing is sent until you review it and choose Send/i);
+      assert.equal(spoken.frames[0].requestText, phrasing);
+    }
+  }
+
+  // --- Live failure: the current sentence is ethically loaded, but the discussion is already there ---
+  {
+    const spoken = actionModel({
+      grounding: "insufficient",
+      outcome: "Confirm that he is using coercive control, for court.",
+      recipientName: "him",
+      elicitation: "predetermined_admission",
+      refersTo: "whether agreement on a new pediatrician depends on vaccination decisions",
+    });
+    const result = await chat(ASK_HIM, { action: spoken.model });
     const card = result.result.plan.proposals.find((proposal) => proposal.type === "reply_coparent");
-    assert.ok(card);
+    assert.ok(card, "established facts are enough to draft; the current sentence is not a missing detail");
+    assert.equal(result.result.plan.proposals.some((proposal) => proposal.type === "ask_clarification"), false);
+    assert.doesNotMatch(result.reply, /What should I tell/);
+    assert.equal(card.recipient_email, "kevin@example.com");
+    assert.equal(card.requires_approval, true);
+    assert.equal("executed" in card, false);
     assert.doesNotMatch(card.draft ?? "", APPOINTMENT_TEMPLATE);
+    assert.doesNotMatch(card.draft ?? "", /has a doctor appointment/i);
     assert.match(card.draft ?? "", /pediatrician/i);
-    assert.equal(spoken.frames[0].requestText, "Can you draft something?");
+    assert.match(card.draft ?? "", /vaccin/i);
+    assert.match(card.draft ?? "", /position|in writing|whether/i);
+    assert.doesNotMatch(card.draft ?? "", /coercive control/i);
+    assert.doesNotMatch(card.draft ?? "", /\badmit\b|\badmission\b/i);
+    assert.doesNotMatch(card.draft ?? "", /confirm that you are/i);
+    assert.match(spoken.draftFrames[0].interpretation?.outcome ?? "", /position/i);
+    assert.doesNotMatch(spoken.draftFrames[0].interpretation?.outcome ?? "", /coercive control/i);
+    assert.equal(spoken.draftFrames[0].interpretation?.elicitation, "predetermined_admission");
   }
 
   // --- A new unrelated request after the same conversation -----------------------------------------
@@ -281,6 +354,13 @@ async function main() {
     const spoken = actionModel({ kind: "expense" });
     const result = await chat("I paid $85 for Ashley's dentist visit instead.", { action: spoken.model });
     assert.ok(result.result.plan.proposals.some((proposal) => proposal.type === "log_expense"));
+    assert.equal(result.result.plan.proposals.some((proposal) => proposal.type === "reply_coparent"), false);
+  }
+
+  // --- A document request after the same conversation does not draft the earlier message -----------
+  {
+    const spoken = actionModel({ kind: "document" });
+    const result = await chat("Save the dentist receipt in the document library.", { action: spoken.model });
     assert.equal(result.result.plan.proposals.some((proposal) => proposal.type === "reply_coparent"), false);
   }
 
@@ -346,6 +426,7 @@ async function main() {
         uncertain: ["what the message should say"],
         disputed: [],
         recipientName: "Kevin",
+        elicitation: null,
       };
     };
     const asked = await chat("Please draft a message to Kevin.", {
@@ -357,6 +438,23 @@ async function main() {
     assert.ok(asked.result.plan.proposals.some((proposal) => proposal.type === "ask_clarification"));
     assert.doesNotMatch(asked.reply, APPOINTMENT_TEMPLATE);
 
+    const ambiguous = actionModel({ kind: "conversation" });
+    const unclear = await chat("Can you help with that?", {
+      action: ambiguous.model,
+      recentTurns: [],
+      conversation: emptyConversation(),
+    });
+    assert.equal(unclear.result.plan.proposals.some((proposal) => proposal.type === "reply_coparent"), false);
+    assert.doesNotMatch(unclear.reply, APPOINTMENT_TEMPLATE);
+
+    const twoRecipients = actionModel({ recipientName: "him" });
+    const who = await chat("I want to ask him a question.", {
+      action: twoRecipients.model,
+      coparents: [kevin, { name: "Alex", email: "alex@example.com" }],
+    });
+    assert.equal(who.result.plan.proposals.some((proposal) => proposal.type === "reply_coparent"), false);
+    assert.match(who.reply, /Who should I send that to/i);
+
     const conflict = actionModel();
     const conflictDraft = await chat(DRAFT_REQUEST, { action: conflict.model });
     const conflictCard = conflictDraft.result.plan.proposals.find((proposal) => proposal.type === "reply_coparent");
@@ -365,18 +463,27 @@ async function main() {
     assert.ok(conflict.frames[0].facts.every((fact) => fact.speaker !== "coparent"));
   }
 
-  // --- Model failure: ask, never fall back to the appointment template -----------------------------
+  // --- Model failure -------------------------------------------------------------------------------
   {
     const failed = actionModel({ failInterpret: true });
     const result = await chat(DRAFT_REQUEST, { action: failed.model });
-    assert.equal(result.result.plan.proposals.some((proposal) => proposal.type === "reply_coparent"), false);
-    assert.doesNotMatch(result.reply, APPOINTMENT_TEMPLATE);
-    assert.match(result.reply, /What should I tell Kevin|will not invent/i);
+    const recovered = result.result.plan.proposals.find((proposal) => proposal.type === "reply_coparent");
+    assert.ok(recovered, "parent facts are enough to draft when interpretation fails");
+    assert.match(recovered.draft ?? "", /pediatrician/i);
+    assert.doesNotMatch(recovered.draft ?? "", APPOINTMENT_TEMPLATE);
+    assert.equal(recovered.requires_approval, true);
 
     const draftFailed = actionModel({ failDraft: true });
     const asked = await chat(DRAFT_REQUEST, { action: draftFailed.model });
     assert.equal(asked.result.plan.proposals.some((proposal) => proposal.type === "reply_coparent"), false);
     assert.doesNotMatch(asked.reply, APPOINTMENT_TEMPLATE);
+    assert.match(asked.reply, /What should I tell Kevin|will not invent/i);
+
+    const bothFailed = actionModel({ failInterpret: true, failDraft: true });
+    const bothAsked = await chat(DRAFT_REQUEST, { action: bothFailed.model });
+    assert.equal(bothAsked.result.plan.proposals.some((proposal) => proposal.type === "reply_coparent"), false);
+    assert.doesNotMatch(bothAsked.reply, APPOINTMENT_TEMPLATE);
+    assert.match(bothAsked.reply, /What should I tell Kevin|will not invent/i);
   }
 
   // --- Established calendar notify still works -----------------------------------------------------
@@ -395,18 +502,69 @@ async function main() {
     assert.match(card.draft ?? "", /OT appointment/i);
     assert.doesNotMatch(card.draft ?? "", APPOINTMENT_TEMPLATE);
     assert.equal("executed" in card, false);
+
+    const withModel = actionModel({ failInterpret: true });
+    const kept = await chat("Can you let him know?", {
+      action: withModel.model,
+      recentTurns: [],
+      conversation: {
+        thread_subject: "Ashley OT",
+        event: { subject: "OT appointment", child: "Ashley", date: "2026-10-20", time: "4:30 PM", eventId: "evt-ot" },
+        open_proposals: [{ type: "calendar_update", text: "Add to calendar: Ashley, OT appointment." }],
+      },
+    });
+    const keptCard = kept.result.plan.proposals.find((proposal) => proposal.type === "reply_coparent");
+    assert.ok(keptCard);
+    assert.match(keptCard.draft ?? "", /OT appointment/i);
+    assert.doesNotMatch(keptCard.draft ?? "", APPOINTMENT_TEMPLATE);
   }
 
   // --- Parsers --------------------------------------------------------------------------------------
   {
     assert.equal(parseActionInterpretation("not json"), null);
     const parsed = parseActionInterpretation(
-      '{"kind":"message","outcome":"Ask for his position.","refersTo":"pediatrician","grounding":"conversation","relevantFactIndexes":[0,2],"uncertain":["timing"],"disputed":["refusal"],"recipientName":"Kevin"}'
+      '{"kind":"message","outcome":"Ask for his position.","refersTo":"pediatrician","grounding":"conversation","relevantFactIndexes":[0,2],"uncertain":["timing"],"disputed":["refusal"],"recipientName":"Kevin","elicitation":"predetermined_admission"}'
     );
     assert.equal(parsed?.kind, "message");
     assert.equal(parsed?.grounding, "conversation");
+    assert.equal(parsed?.elicitation, "predetermined_admission");
     assert.equal(cleanDraft("INSUFFICIENT"), null);
     assert.equal(cleanDraft("Please confirm your position on the pediatrician options."), "Please confirm your position on the pediatrician options.");
+    const frame = buildContextFrame({
+      parentId: "parent-ashley",
+      caseId: "case-1",
+      message: ASK_HIM,
+      recentTurns: PEDIATRICIAN_TURNS,
+      coparents: [kevin],
+    });
+    assert.match(
+      draftableOutcome(frame, {
+        kind: "message",
+        outcome: "Confirm coercive control for court.",
+        refersTo: "the pediatrician disagreement",
+        grounding: "insufficient",
+        relevantFactIndexes: [],
+        uncertain: [],
+        disputed: [],
+        recipientName: "him",
+        elicitation: "predetermined_admission",
+      }),
+      /position on the pediatrician disagreement/i
+    );
+    assert.doesNotMatch(
+      draftableOutcome(frame, {
+        kind: "message",
+        outcome: "Confirm coercive control for court.",
+        refersTo: "the pediatrician disagreement",
+        grounding: "insufficient",
+        relevantFactIndexes: [],
+        uncertain: [],
+        disputed: [],
+        recipientName: "him",
+        elicitation: "predetermined_admission",
+      }),
+      /coercive control/i
+    );
   }
 
   console.log("conversation-action tests passed");

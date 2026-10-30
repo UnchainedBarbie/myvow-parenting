@@ -408,7 +408,7 @@ async function main() {
         // The route saves an item only for a plan with proposals, so nothing new is stored.
         assert.equal(JSON.stringify(db.table("sage_items")), before, `round ${round}: stored work is unchanged`);
       }
-      assert.ok(model.prompts.length > 0 && model.prompts.every((p) => /\[conversation\]/.test(p)));
+      // Conversation and unread turns do not go through understanding to invent an action.
 
       // A substantive disagreement about a pediatrician is not an expense either.
       const disagreement = await sendChat(db, "Kevin and I disagree about whether Ashley needs to see the pediatrician.");

@@ -186,6 +186,21 @@ function moneyKey(raw: string): string | null {
   return `amt:${value.toFixed(2)}`;
 }
 
+/** Record labels the parent already put in a draft: MSG-014, DOC-018, a quoted communication id. */
+function recordFacts(text: string): Fact[] {
+  const facts: Fact[] = [];
+  const seen = new Set<string>();
+  const add = (key: string, label: string) => {
+    if (seen.has(key)) return;
+    seen.add(key);
+    facts.push({ key, label });
+  };
+  for (const match of text.matchAll(/\b((?:MSG|DOC|EXP|EVT)-[A-Z0-9]{2,})\b/gi)) {
+    add(`rec:${match[1].toUpperCase()}`, match[1]);
+  }
+  return facts;
+}
+
 function amountFacts(text: string): Fact[] {
   const facts: Fact[] = [];
   const seen = new Set<string>();
@@ -460,6 +475,7 @@ export function droppedFactLabels(next: string, previous: string, guidance: stri
     ...timeFacts(next).map((fact) => fact.key),
     ...dateFacts(next).map((fact) => fact.key),
     ...amountFacts(next).map((fact) => fact.key),
+    ...recordFacts(next).map((fact) => fact.key),
   ]);
   const missing: string[] = [];
   for (const time of kept.times) {
@@ -476,7 +492,37 @@ export function droppedFactLabels(next: string, previous: string, guidance: stri
   for (const amount of kept.amounts) {
     if (!present.has(amount.key)) missing.push(amount.label);
   }
+  const retractRecords = /\b(remove|drop|delete|without|do not include|don't include)\b/i.test(guidance);
+  if (!retractRecords) {
+    for (const record of recordFacts(previous)) {
+      if (!present.has(record.key)) missing.push(record.label);
+    }
+  }
   return missing;
+}
+
+/**
+ * Put dropped record labels (MSG-014, DOC-018) back when a tone pass omitted them.
+ * Dates, times, and amounts stay with the existing outbound fact check; appending them here
+ * would duplicate a shorter form already in the sentence.
+ */
+export function restoreDroppedEvidence(next: string, previous: string, guidance: string): string {
+  const body = next.trim();
+  if (!body) return body;
+  const retractRecords = /\b(remove|drop|delete|without|do not include|don't include)\b/i.test(guidance);
+  if (retractRecords) return body;
+  const present = new Set(recordFacts(body).map((fact) => fact.key));
+  const missing: string[] = [];
+  for (const fact of recordFacts(previous)) {
+    if (!present.has(fact.key) && !body.toLowerCase().includes(fact.label.toLowerCase())) {
+      missing.push(fact.label);
+    }
+  }
+  for (const match of previous.matchAll(/\b(20\d{2}-\d{2}-\d{2})\b/g)) {
+    if (!body.includes(match[1])) missing.push(match[1]);
+  }
+  if (missing.length === 0) return body;
+  return `${body} ${[...new Set(missing)].join("; ")}`.trim();
 }
 
 function personName(child: string | null | undefined, text: string): string {

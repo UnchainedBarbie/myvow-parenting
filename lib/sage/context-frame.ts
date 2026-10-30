@@ -16,6 +16,7 @@ import type { KnownChild } from "@/lib/sage/calendar-chat";
 import type { ConversationContext } from "@/lib/sage/conversation-context";
 import type { ConversationTurn } from "@/lib/sage/conversation-reply";
 import { proposalId } from "@/lib/sage/proposal-lifecycle";
+import { openTasksFromMemory, type OpenTask } from "@/lib/sage/open-task";
 import { focusKindOf } from "@/lib/sage/working-memory";
 
 export type Speaker = "parent" | "sage" | "coparent";
@@ -90,6 +91,13 @@ export type ContextFrame = {
   openProposals: OpenWork[];
   openClarification: OpenWork | null;
   completed: CompletedWork[];
+  /** Live and closed tasks derived from this session's proposals. Historical sessions are not mixed in. */
+  openTasks: OpenTask[];
+  /**
+   * Outgoing drafts this turn may revise. Undefined keeps every open message proposal.
+   * Empty means this turn starts a new message and must not rewrite another draft.
+   */
+  currentDrafts?: string[];
   capabilities: readonly ActionKind[];
 };
 
@@ -195,6 +203,11 @@ export function buildContextFrame(input: BuildContextFrameInput): ContextFrame {
     openProposals: proposals,
     openClarification: clarification,
     completed: completedWork(input.conversation),
+    openTasks: openTasksFromMemory(input.conversation?.memory, {
+      ownerId: input.parentId,
+      caseId: input.caseId,
+      sessionId: input.sessionId ?? null,
+    }),
     capabilities: SESSION_CAPABILITIES,
   };
 }

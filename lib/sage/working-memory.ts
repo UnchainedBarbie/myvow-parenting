@@ -37,6 +37,10 @@ export type WorkingFocus = {
   fields: CollectedFields;
   missing: string[];
   clarification: string | null;
+  /** Recipient-facing draft text, when this focus is an outgoing proposal. */
+  draft: string | null;
+  /** Parent's private objective. Never copied into the outgoing body. */
+  privateObjective: string | null;
 };
 
 export type WorkingClarification = {
@@ -212,6 +216,8 @@ function toFocus(
     fields: collectedFields(row),
     missing: missingFields(row),
     clarification: row.type === "ask_clarification" ? text(row.draft) : null,
+    draft: row.type === "ask_clarification" ? null : (text(row.revised_text) ?? text(row.draft)),
+    privateObjective: text(row.private_objective),
   };
 }
 

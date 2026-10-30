@@ -28,11 +28,14 @@ import { matchingLedgerText } from "@/lib/sage/ledger-facts";
 import {
   isClosedProposal,
   latestRevisableDraft,
+  revisableDraftById,
   revisePendingDraft,
   revisionReply,
   unsatisfiedDependsOn,
   type RevisableDraft,
 } from "@/lib/sage/open-drafts";
+import { applyTurnToTasks } from "@/lib/sage/open-task-apply";
+import { blocksRecencyFold } from "@/lib/sage/turn-arbitration";
 import { closeAnsweredQuestions, turnRepeatsOpenQuestions } from "@/lib/sage/clarification-lifecycle";
 import { AMBIGUOUS_CASE_MESSAGE, resolveActiveCase } from "@/lib/cases/resolve-active-case";
 import { reviseProposal, withProposalIds } from "@/lib/sage/proposal-lifecycle";
@@ -1039,7 +1042,7 @@ export async function POST(request: NextRequest) {
             currentDocumentId: attachmentDocumentId,
             recentTurns,
           });
-          const { reply, result, control, revision, answers } = await processChatMessage({
+          const { reply, result, control, revision, answers, taskDecision } = await processChatMessage({
             message: trimmed,
             case_id: caseId,
             timezone,
@@ -1096,6 +1099,48 @@ export async function POST(request: NextRequest) {
           const noteOnly = isNoteOnlyPlan(result.plan);
           let foldedReply = false;
           let foldedCalendar = false;
+          const skipRecencyFold = blocksRecencyFold(taskDecision);
+          const appliedTask = await applyTurnToTasks({
+            admin,
+            userId: user.id,
+            decision: taskDecision,
+            proposals: result.plan.proposals,
+            guidance: trimmed,
+            privateObjective:
+              result.plan.proposals.find((proposal) => typeof proposal.private_objective === "string")
+                ?.private_objective ?? null,
+          });
+          if (appliedTask.folded) {
+            revisedItem = appliedTask.item;
+            if (appliedTask.relation === "revise") {
+              foldedReply = true;
+              revisionNarration = revisionReply("reply_coparent");
+            }
+          } else if (
+            (taskDecision.relation === "revise" || taskDecision.relation === "change_outcome") &&
+            !taskDecision.unread &&
+            taskDecision.currentItemId
+          ) {
+            const named = await revisableDraftById(
+              admin,
+              user.id,
+              taskDecision.currentItemId,
+              taskDecision.currentProposalId
+            );
+            if (named && named.proposalType !== "calendar_update") {
+              const revisedNamed = await revisePendingDraft({
+                admin,
+                userId: user.id,
+                guidance: trimmed,
+                target: named,
+              });
+              if (revisedNamed) {
+                foldedReply = true;
+                revisionNarration = revisedNamed.reply;
+                revisedItem = revisedNamed.item;
+              }
+            }
+          }
           const turnHasCalendar = result.plan.proposals.some(
             (p) => p.type === "calendar_update"
           );
@@ -1138,7 +1183,7 @@ export async function POST(request: NextRequest) {
                   itemType: result.interpretation.intent.item_type,
                 })
               : [];
-          if (!preserveOpenWork && sessionId && (noteOnly || turnHasCalendar)) {
+          if (!foldedReply && !skipRecencyFold && !preserveOpenWork && sessionId && (noteOnly || turnHasCalendar)) {
             // Only an outgoing draft is revisable. A question addressed to the parent never is.
             const openReply = await latestRevisableDraft(admin, sessionId, user.id);
             if (answeredQuestions.length > 0) {
@@ -1162,7 +1207,7 @@ export async function POST(request: NextRequest) {
               }
             }
           }
-          if (!preserveOpenWork && sessionId && turnHasCalendar) {
+          if (!skipRecencyFold && !preserveOpenWork && sessionId && turnHasCalendar) {
             const openCalendar = await latestRevisableDraft(admin, sessionId, user.id, {
               calendarOnly: true,
             });
@@ -1190,7 +1235,7 @@ export async function POST(request: NextRequest) {
                 }
               }
             }
-          } else if (!preserveOpenWork && sessionId && noteOnly) {
+          } else if (!skipRecencyFold && !preserveOpenWork && sessionId && noteOnly) {
             const openCalendar = await latestRevisableDraft(admin, sessionId, user.id, {
               calendarOnly: true,
             });
@@ -1218,7 +1263,7 @@ export async function POST(request: NextRequest) {
                 }
               }
             }
-          } else if (!preserveOpenWork && sessionId && !noteOnly) {
+          } else if (!foldedReply && !skipRecencyFold && !preserveOpenWork && sessionId && !noteOnly) {
             const blockedDraft = await latestRevisableDraft(
               admin,
               sessionId,
@@ -1261,12 +1306,17 @@ export async function POST(request: NextRequest) {
             }));
 
           if (
-            !(noteOnly && foldedReply) &&
+            !foldedReply &&
             !foldedCalendar &&
             !repeatsOpenQuestion &&
             result.plan.proposals.length > 0
           ) {
             const { intent, entities } = result.interpretation;
+            const taskId =
+              result.plan.proposals.find((proposal) => typeof proposal.task_id === "string" && proposal.task_id.trim())
+                ?.task_id ??
+              taskDecision.taskId ??
+              crypto.randomUUID();
             const { data: itemRow, error: insertItemError } = await admin
               .from("sage_items")
               .insert({
@@ -1292,7 +1342,7 @@ export async function POST(request: NextRequest) {
                     : {}),
                 },
                 child_ids: result.child_ids,
-                plan: withProposalIds(result.plan),
+                plan: { ...withProposalIds(result.plan), task_id: taskId },
                 status: "pending",
               })
               .select(SAGE_ITEM_SELECT)

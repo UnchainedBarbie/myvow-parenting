@@ -1,7 +1,8 @@
 import type { getServiceRoleClient } from "@/lib/supabase/server";
+import { restoreDroppedEvidence } from "@/lib/sage/outbound-facts";
 import { redraftMessage } from "@/lib/sage/planner";
 import { isParentFacingQuestion } from "@/lib/sage/proposal-kind";
-import { isInactiveProposal, reviseProposal } from "@/lib/sage/proposal-lifecycle";
+import { isInactiveProposal, proposalId, reviseProposal } from "@/lib/sage/proposal-lifecycle";
 import { loadSessionItems } from "@/lib/sage/session-items";
 
 type Admin = ReturnType<typeof getServiceRoleClient>;
@@ -145,6 +146,58 @@ export async function latestRevisableDraft(
   return null;
 }
 
+/** The named outgoing draft, not whichever draft happens to be newest. */
+export async function revisableDraftById(
+  admin: Admin,
+  userId: string,
+  itemId: string,
+  proposalIdValue: string | null
+): Promise<RevisableDraft | null> {
+  const { data } = await admin
+    .from("sage_items")
+    .select("id, summary, plan, source_type")
+    .eq("id", itemId)
+    .eq("visible_to", userId)
+    .maybeSingle();
+  if (!data || typeof (data as { plan?: unknown }).plan !== "object" || !(data as { plan?: unknown }).plan) {
+    return null;
+  }
+  const row = data as {
+    id: string;
+    summary?: string | null;
+    source_type?: string | null;
+    plan: { proposals?: unknown[] };
+  };
+  const proposals = Array.isArray(row.plan.proposals) ? row.plan.proposals : [];
+  const index = proposalIdValue
+    ? proposals.findIndex((raw) => proposalId(raw) === proposalIdValue)
+    : proposals.findIndex((raw) => openReplyProposal(raw, row.source_type) || openCalendarProposal(raw));
+  if (index < 0) return null;
+  const raw = proposals[index];
+  const calendar = openCalendarProposal(raw);
+  const reply = openReplyProposal(raw, row.source_type);
+  const proposal = calendar ?? reply;
+  if (!proposal) return null;
+  const currentDraft =
+    typeof proposal.revised_text === "string" && proposal.revised_text.trim()
+      ? proposal.revised_text.trim()
+      : typeof proposal.draft === "string"
+        ? proposal.draft.trim()
+        : "";
+  const audienceRaw = raw && typeof raw === "object" ? (raw as { audience?: unknown }).audience : null;
+  return {
+    itemId: row.id,
+    summary: (row.summary ?? "").trim(),
+    proposalType: calendar ? "calendar_update" : (proposal as { type: "reply_coparent" | "ask_clarification" }).type,
+    proposalIndex: index,
+    currentDraft,
+    sourceType: typeof row.source_type === "string" ? row.source_type : null,
+    audience: audienceRaw === "parent" || audienceRaw === "coparent" ? audienceRaw : null,
+    plan: row.plan as Record<string, unknown>,
+    proposals: proposals.map((p) => (p && typeof p === "object" ? { ...(p as Record<string, unknown>) } : {})),
+  };
+}
+
 /** The writer that turns the parent's guidance into new draft text. Tests inject their own. */
 export type Redrafter = typeof redraftMessage;
 
@@ -194,13 +247,18 @@ export async function revisePendingDraft(opts: {
     event: opts.event,
     child: opts.child,
   });
-  const revisedText = redraft?.trim() ?? "";
+  const revisedText = restoreDroppedEvidence(
+    redraft?.trim() ?? "",
+    opts.target.currentDraft,
+    opts.guidance
+  );
   if (!revisedText) return null;
 
   const proposals = (Array.isArray(freshPlan?.proposals) ? freshPlan.proposals : opts.target.proposals).map(
     (p) => (p && typeof p === "object" ? { ...(p as Record<string, unknown>) } : {})
   );
   const revised = reviseProposal(proposals, opts.target.proposalIndex, {
+    draft: revisedText,
     revised_text: revisedText,
     ...(opts.clearDependsOn ? { depends_on: null, date_supplied: true } : {}),
   });

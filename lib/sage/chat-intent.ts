@@ -628,11 +628,14 @@ export function messageDraftTurn(opts: {
   body: string;
   outcome: string;
   keep?: Proposal[];
+  taskId?: string;
 }): RoutedTurn {
   const messageCard = proposal("reply_coparent", opts.body, {
     recipient_name: opts.recipient.name,
     recipient_email: opts.recipient.email ?? "",
     draft_origin: "sage_wording",
+    ...(opts.outcome ? { private_objective: opts.outcome } : {}),
+    ...(opts.taskId ? { task_id: opts.taskId } : {}),
   });
   const kept = (opts.keep ?? []).filter((item) => item.type !== "reply_coparent" && item.type !== "note_only");
   const proposals = [...kept, messageCard];

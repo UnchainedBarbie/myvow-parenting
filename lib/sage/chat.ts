@@ -6,6 +6,7 @@
 import {
   anthropicConversationModel,
   buildConversationPacket,
+  conversationFallbackReply,
   type ConversationModel,
 } from "@/lib/sage/conversation-reply";
 import {
@@ -18,12 +19,21 @@ import {
   type KnownCoparent,
   type PendingRevision,
 } from "@/lib/sage/chat-intent";
-import { buildContextFrame, hasConversationSubstance } from "@/lib/sage/context-frame";
+import { buildContextFrame, hasConversationSubstance, withInterpretation } from "@/lib/sage/context-frame";
 import {
   anthropicConversationActionModel,
   decideConversationAction,
+  interpretConversationTurn,
   type ConversationActionModel,
 } from "@/lib/sage/conversation-action";
+import { liveTaskById, whichOpenMessageQuestion } from "@/lib/sage/open-task";
+import {
+  anthropicArbitrationModel,
+  arbitrateTurn,
+  idleArbitration,
+  type ArbitrationModel,
+  type TurnArbitration,
+} from "@/lib/sage/turn-arbitration";
 import type { CaseEvent, KnownChild } from "@/lib/sage/calendar-chat";
 import type { SearchableDocument } from "@/lib/sage/document-search";
 import type { ConversationContext } from "@/lib/sage/conversation-context";
@@ -56,6 +66,8 @@ export type ChatProcessResult = {
   revision: PendingRevision | null;
   /** Proposal id of the open question this turn answered, when the router read one. */
   answers?: string | null;
+  /** How this turn relates to an OpenTask. Unread means task state must not change. */
+  taskDecision: TurnArbitration;
 };
 
 export type ProcessChatMessageInput = {
@@ -101,6 +113,11 @@ export type ProcessChatMessageInput = {
    * Undefined uses the model when configured. Null skips interpretation (tests of other paths).
    */
   conversationActionModel?: ConversationActionModel | null;
+  /**
+   * Reads this turn against live OpenTasks. Undefined uses the model when configured.
+   * Null keeps the structural reading (tests of other paths).
+   */
+  arbitrationModel?: ArbitrationModel | null;
   sessionId?: string | null;
 };
 
@@ -150,6 +167,7 @@ export async function processChatMessage(
       result,
       control: "none",
       revision: null,
+      taskDecision: idleArbitration(),
     };
   }
   const chatTurn = (input.intake ?? "chat") === "chat";
@@ -210,46 +228,93 @@ export async function processChatMessage(
     (routedMessage ||
       isMessageDraftRequest(input.message) ||
       (!routed.handled && hasConversationSubstance(frame)));
-  if (shouldInterpret) {
-    const decision = await decideConversationAction({
-      frame,
-      model: actionModel,
-      conversation: input.conversation ?? null,
-      routedMessage,
-      messageIntent:
-        routedMessage ||
-        isMessageDraftRequest(input.message) ||
-        routed.result.plan.proposals.some(
-          (proposal) => proposal.type === "ask_clarification" && proposal.clarifies === "message"
-        ),
-      routedOtherAction,
-    });
-    if (decision.status === "draft") {
-      Object.assign(
-        routed,
-        messageDraftTurn({
-          message: input.message,
-          recipient: decision.recipient,
-          body: decision.body,
-          outcome: decision.interpretation.outcome,
-          keep: routedOtherAction ? routed.result.plan.proposals : [],
+  const interpretation = shouldInterpret ? await interpretConversationTurn(frame, actionModel) : null;
+  const framed = withInterpretation(frame, interpretation);
+  const messageIntent =
+    routedMessage ||
+    isMessageDraftRequest(input.message) ||
+    routed.result.plan.proposals.some(
+      (proposal) => proposal.type === "ask_clarification" && proposal.clarifies === "message"
+    );
+  const arbitrationModel =
+    input.arbitrationModel === undefined ? anthropicArbitrationModel() : input.arbitrationModel;
+  const taskDecision = await arbitrateTurn(
+    {
+      frame: framed,
+      tasks: frame.openTasks,
+      interpretation,
+      hasActionCard: routedMessage || routedOtherAction,
+      messageIntent,
+    },
+    arbitrationModel
+  );
+  const applyAction =
+    !taskDecision.unread &&
+    taskDecision.relation !== "conversation" &&
+    taskDecision.relation !== "cancel" &&
+    taskDecision.relation !== "ask";
+  const boundTask = liveTaskById(frame.openTasks, taskDecision.taskId);
+  const framedForDraft =
+    taskDecision.relation === "new_task"
+      ? { ...framed, currentDrafts: [] as string[] }
+      : boundTask?.outgoingBody
+        ? { ...framed, currentDrafts: [boundTask.outgoingBody] }
+        : framed;
+  const actionDecision =
+    shouldInterpret && applyAction
+      ? await decideConversationAction({
+          frame: framedForDraft,
+          model: actionModel,
+          conversation: input.conversation ?? null,
+          routedMessage,
+          messageIntent,
+          routedOtherAction,
+          skipInterpret: true,
+          interpretation,
         })
-      );
-    } else if (decision.status === "ask") {
-      Object.assign(
-        routed,
-        messageAskTurn({
-          message: input.message,
-          question: decision.question,
-          recipient: decision.recipient,
-          keep: routedOtherAction ? routed.result.plan.proposals : [],
-        })
-      );
-    } else if (decision.status === "unrelated" && routedMessage && !routedOtherAction) {
-      routed.handled = false;
-      routed.result.plan.proposals = [];
-      routed.result.plan.status = "no_action";
-    }
+      : null;
+  if (
+    applyAction &&
+    actionDecision?.status === "draft" &&
+    !(taskDecision.relation === "continue" && routedMessage)
+  ) {
+    Object.assign(
+      routed,
+      messageDraftTurn({
+        message: input.message,
+        recipient: actionDecision.recipient,
+        body: actionDecision.body,
+        outcome: actionDecision.interpretation.outcome,
+        keep: routedOtherAction ? routed.result.plan.proposals : [],
+        taskId: taskDecision.relation === "new_task" ? undefined : taskDecision.taskId ?? undefined,
+      })
+    );
+  } else if (applyAction && actionDecision?.status === "ask" && !routedMessage) {
+    Object.assign(
+      routed,
+      messageAskTurn({
+        message: input.message,
+        question: actionDecision.question,
+        recipient: actionDecision.recipient,
+        keep: routedOtherAction ? routed.result.plan.proposals : [],
+      })
+    );
+  } else if (
+    (actionDecision?.status === "unrelated" ||
+      interpretation?.kind === "conversation" ||
+      taskDecision.relation === "conversation" ||
+      taskDecision.relation === "ask") &&
+    routedMessage &&
+    !routedOtherAction
+  ) {
+    routed.handled = false;
+    routed.result.plan.proposals = [];
+    routed.result.plan.status = "no_action";
+  }
+  if (taskDecision.relation === "ask") {
+    routed.handled = false;
+    routed.result.plan.proposals = [];
+    routed.result.plan.status = "no_action";
   }
   if ((input.intake ?? "chat") === "chat" && input.shadow !== false) {
     const coparentName = input.coparents?.length === 1 ? input.coparents[0].name.trim().split(/\s+/)[0] : "";
@@ -284,6 +349,68 @@ export async function processChatMessage(
       control: routed.control,
       revision: routed.revision,
       answers: routed.answers ?? null,
+      taskDecision,
+    };
+  }
+
+  if (
+    taskDecision.unread ||
+    taskDecision.relation === "conversation" ||
+    taskDecision.relation === "cancel" ||
+    taskDecision.relation === "ask"
+  ) {
+    const spoken =
+      taskDecision.relation === "ask"
+        ? whichOpenMessageQuestion(frame.openTasks)
+        : model
+          ? await model.reply(packet()).catch(() => null)
+          : null;
+    const observation = buildObservationFromChat(input.message, { id: input.source_id });
+    return {
+      reply:
+        taskDecision.relation === "ask"
+          ? whichOpenMessageQuestion(frame.openTasks)
+          : spoken?.trim()
+            ? spoken.trim()
+            : conversationFallbackReply(input.conversation?.memory?.clarification?.question),
+      actions: [],
+      result: {
+        observation,
+        interpretation: {
+          intent: {
+            item_type: "information_only",
+            domain: "general",
+            summary: input.message.trim().slice(0, 120),
+            evidence_excerpt: "",
+            tool_name: null,
+            action_required: false,
+            action_type: null,
+            urgency: "normal",
+            confidence: 1,
+          },
+          entities: {
+            children: [],
+            people: [],
+            dates: [],
+            amounts: [],
+            merchants: [],
+            providers: [],
+            documents: [],
+          },
+          reasoning: { signals: [] },
+        },
+        child_ids: [],
+        unresolved_children: [],
+        resolved_dates: [],
+        plan: {
+          status: "no_action",
+          proposals: [],
+          reasoning: "This turn does not change an OpenTask.",
+        },
+      },
+      control: "none",
+      revision: null,
+      taskDecision,
     };
   }
 
@@ -312,6 +439,7 @@ export async function processChatMessage(
         result,
         control: "none",
         revision: null,
+        taskDecision,
       };
     }
   }
@@ -328,6 +456,7 @@ export async function processChatMessage(
     result,
     control: "none",
     revision: null,
+    taskDecision,
   };
 }
 

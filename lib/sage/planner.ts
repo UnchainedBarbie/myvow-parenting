@@ -93,6 +93,10 @@ export type Proposal = {
   subject?: string | null;
   /** Author of a reply_coparent draft: the parent's own text, or wording Sage composed. */
   draft_origin?: "parent_text" | "sage_wording";
+  /** OpenTask this proposal belongs to. Legacy rows omit it; the sage_item id is then the task. */
+  task_id?: string;
+  /** Parent's private objective for this work. Never sent to the co-parent. */
+  private_objective?: string;
   /**
    * What a conversation-grounded draft rests on: the parent's earlier turns, the facts taken from them,
    * the outcome the parent asked for, and what stays uncertain or disputed. The parent sees the draft, not this.

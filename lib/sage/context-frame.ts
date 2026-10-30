@@ -17,6 +17,7 @@ import type { ConversationContext } from "@/lib/sage/conversation-context";
 import type { ConversationTurn } from "@/lib/sage/conversation-reply";
 import { proposalId } from "@/lib/sage/proposal-lifecycle";
 import { openTasksFromMemory, type OpenTask } from "@/lib/sage/open-task";
+import type { GroundedIn } from "@/lib/sage/task-objective";
 import { focusKindOf } from "@/lib/sage/working-memory";
 
 export type Speaker = "parent" | "sage" | "coparent";
@@ -45,6 +46,10 @@ export type ActionInterpretation = {
   /** Claims the parent reported that are not independently verified in this frame. */
   disputed: string[];
   recipientName: string | null;
+  /** The specific question the outgoing message must ask. Not a broader restatement of the topic. */
+  question?: string | null;
+  /** Details the parent does not want the co-parent told. Never copied into the outgoing body. */
+  privateConstraints?: string[];
   /**
    * How the parent wants the co-parent to answer.
    *   open_question            Invite them to state a position.
@@ -98,6 +103,10 @@ export type ContextFrame = {
    * Empty means this turn starts a new message and must not rewrite another draft.
    */
   currentDrafts?: string[];
+  /** Stored task objective for this draft. Private fields stay out of the outgoing body. */
+  taskObjective?: GroundedIn | null;
+  /** True when an earlier draft in this turn did not ask taskObjective.question. */
+  correctingMissedQuestion?: boolean;
   capabilities: readonly ActionKind[];
 };
 

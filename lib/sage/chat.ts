@@ -14,22 +14,29 @@ import {
   messageAnswerCandidate,
   messageAskTurn,
   messageDraftTurn,
+  messageSelectionTurn,
   routeChatIntent,
   type ChatControl,
   type KnownCoparent,
   type PendingRevision,
 } from "@/lib/sage/chat-intent";
-import { buildContextFrame, hasConversationSubstance, withInterpretation } from "@/lib/sage/context-frame";
+import { buildContextFrame, hasConversationSubstance, relevantParentFacts, withInterpretation } from "@/lib/sage/context-frame";
 import {
   anthropicConversationActionModel,
   decideConversationAction,
   interpretConversationTurn,
   type ConversationActionModel,
 } from "@/lib/sage/conversation-action";
-import { liveTaskById, whichOpenMessageQuestion } from "@/lib/sage/open-task";
+import { liveTaskById, liveTasksOfKind, whichOpenMessageQuestion } from "@/lib/sage/open-task";
+import {
+  mergeObjective,
+  objectiveFromParts,
+  parseSelectionAnswer,
+} from "@/lib/sage/task-objective";
 import {
   anthropicArbitrationModel,
   arbitrateTurn,
+  askArbitration,
   idleArbitration,
   type ArbitrationModel,
   type TurnArbitration,
@@ -222,46 +229,99 @@ export async function processChatMessage(
       proposal.type === "log_expense" ||
       proposal.type === "log_document"
   );
+  const pendingSelection = input.conversation?.memory?.clarification?.selectionOptions ?? [];
+  const pickedIndex =
+    pendingSelection.length > 0 ? parseSelectionAnswer(input.message, pendingSelection.length) : null;
+  const picked = pickedIndex != null ? pendingSelection.find((option) => option.index === pickedIndex) ?? null : null;
+  const pickedTask = picked ? liveTaskById(frame.openTasks, picked.taskId) : null;
   const shouldInterpret =
     chatTurn &&
     actionModel &&
+    !pickedTask &&
     (routedMessage ||
       isMessageDraftRequest(input.message) ||
       (!routed.handled && hasConversationSubstance(frame)));
-  const interpretation = shouldInterpret ? await interpretConversationTurn(frame, actionModel) : null;
+  const interpretation = pickedTask
+    ? {
+        kind: "message" as const,
+        outcome: pickedTask.groundedIn?.outcome || pickedTask.privateObjective || "Revise the selected message.",
+        question: pickedTask.groundedIn?.question ?? null,
+        refersTo: pickedTask.groundedIn?.question ?? null,
+        grounding: "conversation" as const,
+        relevantFactIndexes: pickedTask.groundedIn?.turns ?? [],
+        uncertain: pickedTask.groundedIn?.uncertain ?? [],
+        disputed: [] as string[],
+        recipientName: frame.coparents[0]?.name ?? null,
+        elicitation: "open_question" as const,
+        privateConstraints: pickedTask.groundedIn?.private_constraints ?? [],
+      }
+    : shouldInterpret
+      ? await interpretConversationTurn(frame, actionModel)
+      : null;
   const framed = withInterpretation(frame, interpretation);
   const messageIntent =
     routedMessage ||
     isMessageDraftRequest(input.message) ||
+    !!pickedTask ||
     routed.result.plan.proposals.some(
       (proposal) => proposal.type === "ask_clarification" && proposal.clarifies === "message"
     );
   const arbitrationModel =
     input.arbitrationModel === undefined ? anthropicArbitrationModel() : input.arbitrationModel;
-  const taskDecision = await arbitrateTurn(
-    {
-      frame: framed,
-      tasks: frame.openTasks,
-      interpretation,
-      hasActionCard: routedMessage || routedOtherAction,
-      messageIntent,
-    },
-    arbitrationModel
-  );
+  const taskDecision: TurnArbitration = pickedTask
+    ? {
+        relation: "revise",
+        taskId: pickedTask.id,
+        currentProposalId: pickedTask.currentProposalId,
+        currentItemId: pickedTask.currentItemId,
+        kind: pickedTask.kind,
+        unread: false,
+      }
+    : picked
+      ? askArbitration()
+      : await arbitrateTurn(
+          {
+            frame: framed,
+            tasks: frame.openTasks,
+            interpretation,
+            hasActionCard: routedMessage || routedOtherAction,
+            messageIntent,
+          },
+          arbitrationModel
+        );
   const applyAction =
     !taskDecision.unread &&
     taskDecision.relation !== "conversation" &&
     taskDecision.relation !== "cancel" &&
     taskDecision.relation !== "ask";
   const boundTask = liveTaskById(frame.openTasks, taskDecision.taskId);
-  const framedForDraft =
-    taskDecision.relation === "new_task"
+  const turnObjective = objectiveFromParts({
+    outcome: interpretation?.outcome ?? "",
+    question: interpretation?.question,
+    elicitation: interpretation?.elicitation,
+    refersTo: interpretation?.refersTo,
+    facts: relevantParentFacts(framed).map((fact) => ({ text: fact.text, status: "parent_stated" })),
+    turns: interpretation?.relevantFactIndexes,
+    uncertain: interpretation?.uncertain,
+    privateConstraints: interpretation?.privateConstraints,
+  });
+  const storedObjective = mergeObjective(
+    taskDecision.relation === "new_task" ? null : boundTask?.groundedIn ?? null,
+    turnObjective,
+    input.message,
+    boundTask?.outgoingBody ?? null,
+    taskDecision.relation === "change_outcome"
+  );
+  const framedForDraft = {
+    ...(taskDecision.relation === "new_task"
       ? { ...framed, currentDrafts: [] as string[] }
       : boundTask?.outgoingBody
         ? { ...framed, currentDrafts: [boundTask.outgoingBody] }
-        : framed;
+        : framed),
+    taskObjective: storedObjective,
+  };
   const actionDecision =
-    shouldInterpret && applyAction
+    (shouldInterpret || !!pickedTask) && applyAction
       ? await decideConversationAction({
           frame: framedForDraft,
           model: actionModel,
@@ -284,9 +344,11 @@ export async function processChatMessage(
         message: input.message,
         recipient: actionDecision.recipient,
         body: actionDecision.body,
-        outcome: actionDecision.interpretation.outcome,
+        outcome: storedObjective.outcome || actionDecision.interpretation.outcome,
+        groundedIn: storedObjective,
         keep: routedOtherAction ? routed.result.plan.proposals : [],
         taskId: taskDecision.relation === "new_task" ? undefined : taskDecision.taskId ?? undefined,
+        answers: picked ? input.conversation?.memory?.clarification?.proposalId ?? null : null,
       })
     );
   } else if (applyAction && actionDecision?.status === "ask" && !routedMessage) {
@@ -312,9 +374,26 @@ export async function processChatMessage(
     routed.result.plan.status = "no_action";
   }
   if (taskDecision.relation === "ask") {
-    routed.handled = false;
-    routed.result.plan.proposals = [];
-    routed.result.plan.status = "no_action";
+    const options = liveTasksOfKind(frame.openTasks, "message").map((task, index) => ({
+      index: index + 1,
+      taskId: task.id,
+      itemId: task.currentItemId,
+      proposalId: task.currentProposalId,
+    }));
+    if (options.length > 0) {
+      Object.assign(
+        routed,
+        messageSelectionTurn({
+          message: input.message,
+          question: whichOpenMessageQuestion(frame.openTasks),
+          options,
+        })
+      );
+    } else {
+      routed.handled = false;
+      routed.result.plan.proposals = [];
+      routed.result.plan.status = "no_action";
+    }
   }
   if ((input.intake ?? "chat") === "chat" && input.shadow !== false) {
     const coparentName = input.coparents?.length === 1 ? input.coparents[0].name.trim().split(/\s+/)[0] : "";

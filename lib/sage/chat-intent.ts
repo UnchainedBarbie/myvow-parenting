@@ -629,12 +629,17 @@ export function messageDraftTurn(opts: {
   outcome: string;
   keep?: Proposal[];
   taskId?: string;
+  groundedIn?: Proposal["grounded_in"];
+  /** Closes a pending selection question by id. */
+  answers?: string | null;
 }): RoutedTurn {
+  const privateObjective = opts.groundedIn?.outcome?.trim() || opts.outcome;
   const messageCard = proposal("reply_coparent", opts.body, {
     recipient_name: opts.recipient.name,
     recipient_email: opts.recipient.email ?? "",
     draft_origin: "sage_wording",
-    ...(opts.outcome ? { private_objective: opts.outcome } : {}),
+    ...(privateObjective ? { private_objective: privateObjective } : {}),
+    ...(opts.groundedIn ? { grounded_in: opts.groundedIn } : {}),
     ...(opts.taskId ? { task_id: opts.taskId } : {}),
   });
   const kept = (opts.keep ?? []).filter((item) => item.type !== "reply_coparent" && item.type !== "note_only");
@@ -652,6 +657,29 @@ export function messageDraftTurn(opts: {
     proposals,
     reasoning:
       "The parent asked for a message that continues this conversation. The draft uses that conversation and still needs approval.",
+    ...(opts.answers ? { answers: opts.answers } : {}),
+  });
+}
+
+/** Sage asked which live message the parent means. The options are stored so a short answer can resolve them. */
+export function messageSelectionTurn(opts: {
+  message: string;
+  question: string;
+  options: NonNullable<Proposal["selection_options"]>;
+}): RoutedTurn {
+  const ask = proposal("ask_clarification", opts.question, {
+    audience: "parent",
+    selection_options: opts.options,
+  });
+  return turn({
+    handled: true,
+    reply: opts.question,
+    message: opts.message,
+    summary: opts.question,
+    itemType: "note",
+    proposals: [ask],
+    status: "awaiting_clarification",
+    reasoning: "More than one message could fit, so Sage asked which one and stored the choices.",
   });
 }
 
@@ -754,6 +782,7 @@ export function messageAnswerCandidate(
 ): { name: string; email: string; body: string } | null {
   const clarification = memory?.clarification;
   if (!clarification || clarification.kind !== "message" || isExplicitNoteRequest(message)) return null;
+  if ((clarification.selectionOptions?.length ?? 0) > 0) return null;
   if (
     wantsExpense(message) ||
     wantsCalendar(message) ||

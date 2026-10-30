@@ -5,6 +5,7 @@
  */
 
 import { isUserCommand } from "@/lib/sage/observation-builder";
+import { draftNeedsCorrection, type GroundedIn } from "@/lib/sage/task-objective";
 import {
   composeFactualReply,
   droppedFactLabels,
@@ -98,15 +99,23 @@ export type Proposal = {
   /** Parent's private objective for this work. Never sent to the co-parent. */
   private_objective?: string;
   /**
-   * What a conversation-grounded draft rests on: the parent's earlier turns, the facts taken from them,
-   * the outcome the parent asked for, and what stays uncertain or disputed. The parent sees the draft, not this.
+   * What a conversation-grounded draft rests on. outcome and private_constraints stay private.
+   * question is what the outgoing message must ask. rejected and last_guidance accumulate revision feedback.
+   * The parent sees the draft, not this record.
    */
   grounded_in?: {
     outcome: string;
+    question?: string;
     turns: number[];
     facts: { text: string; status: string }[];
     uncertain: string[];
+    private_constraints?: string[];
+    rejected?: string[];
+    last_guidance?: string;
+    evidence_refs?: string[];
   };
+  /** Ordered live tasks when Sage asked which message the parent means. */
+  selection_options?: { index: number; taskId: string; itemId: string | null; proposalId: string | null }[];
   /** Set when the approved save should change the event status, such as canceled. */
   event_status?: string | null;
   /** Dollar amount for an expense proposal. Absent when the user did not state one. */
@@ -487,6 +496,8 @@ export async function redraftMessage(params: {
   sources?: string | null;
   event?: string | null;
   child?: string | null;
+  /** Stored task objective. The current draft is not a substitute for these facts. */
+  objective?: GroundedIn | null;
 }): Promise<string | null> {
   const parentFacingClarification = isParentFacingQuestion(
     { type: params.proposalType, audience: params.audience },
@@ -500,13 +511,23 @@ export async function redraftMessage(params: {
   const guidance = params.guidance.trim() || "(no specific guidance — improve clarity and calm tone)";
   const who = params.child?.trim() ? `Child: ${params.child.trim()}` : "";
   const event = params.event?.trim() ? `Event: ${params.event.trim()}` : "";
+  const objective = params.objective;
   const userPrompt = `Redraft this ${kindLabel}.
-Keep every fact already in the current draft. Add facts from the user guidance.
+The current draft is a previous attempt. It is not the authority for what is true.
+Facts you may state are only those in FACTS, EVIDENCE, and the user guidance.
+The message must ask QUESTION. If the current draft does not ask it, write a new message that does. Do not paraphrase a draft that missed the question.
+Never copy PRIVATE or REJECTED into the message.
 An arrival time does not replace a start time. Remove a fact only when the guidance corrects or retracts it, such as "not 8" or "instead of 8pm".
 Write plain declarative sentences. No exclamation point. No "actually", "just a heads-up", "just so you know", or "FYI".
 ${who}
 ${event}
 Context summary: ${params.summary}
+QUESTION: ${objective?.question || "(use the user guidance)"}
+PRIVATE: ${objective?.outcome || ""}
+CONSTRAINTS: ${(objective?.private_constraints ?? []).join("; ")}
+FACTS: ${(objective?.facts ?? []).map((fact) => fact.text).join("\n")}
+EVIDENCE: ${(objective?.evidence_refs ?? []).join(", ")}
+REJECTED: ${(objective?.rejected ?? []).join("\n")}
 Current draft: ${params.currentDraft}
 User guidance: ${guidance}`;
   if (parentFacingClarification) {
@@ -514,18 +535,30 @@ User guidance: ${guidance}`;
     if (first) return first;
     return callAnthropicDraft(userPrompt, DRAFT_SYSTEM);
   }
-  const sources = [params.sources, params.currentDraft, guidance]
+  const sources = [
+    params.sources,
+    (objective?.facts ?? []).map((fact) => fact.text).join("\n"),
+    (objective?.evidence_refs ?? []).join("\n"),
+    guidance,
+  ]
     .filter((part) => part && part.trim())
     .join("\n");
-  return draftCheckedOutbound(userPrompt, sources, {
-    retain: {
-      draft: params.currentDraft,
-      guidance,
-      event: params.event,
-      child: params.child,
-    },
-    userAsked: guidance,
-  });
+  const retain = {
+    draft: params.currentDraft,
+    guidance,
+    event: params.event,
+    child: params.child,
+  };
+  let drafted = await draftCheckedOutbound(userPrompt, sources, { retain, userAsked: guidance });
+  if (drafted && draftNeedsCorrection(drafted, objective)) {
+    const corrected = await draftCheckedOutbound(
+      `${userPrompt}\nThe previous attempt missed QUESTION or copied PRIVATE or REJECTED. Write a new message that asks QUESTION. Do not paraphrase the previous attempt. Do not copy private strategy.`,
+      sources,
+      { retain, userAsked: guidance }
+    );
+    if (corrected && !draftNeedsCorrection(corrected, objective)) drafted = corrected;
+  }
+  return drafted;
 }
 
 /**

@@ -149,7 +149,17 @@ function overlapScore(query: Set<string>, target: Set<string>): number {
 }
 
 function taskTargetTokens(task: OpenTask): Set<string> {
-  return contentTokens([task.outgoingBody, task.privateObjective, task.clarification].filter(Boolean).join(" "));
+  return contentTokens(
+    [
+      task.outgoingBody,
+      task.privateObjective,
+      task.groundedIn?.question,
+      task.groundedIn?.outcome,
+      task.clarification,
+    ]
+      .filter(Boolean)
+      .join(" ")
+  );
 }
 
 function intentTokens(interpretation: ActionInterpretation | null): Set<string> {

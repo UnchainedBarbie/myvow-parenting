@@ -118,6 +118,7 @@ export function ProposalCardList({
     reviewingEdit: boolean;
   };
   const [sendReview, setSendReview] = useState<SendReview | null>(null);
+  const [showPrevious, setShowPrevious] = useState(false);
 
   async function startReview(queue: number[]) {
     const [index, ...rest] = queue;
@@ -213,6 +214,9 @@ export function ProposalCardList({
     });
   if (visible.length === 0) return null;
 
+  const currentCards = visible.filter(({ p }) => !isSupersededProposal(p));
+  const previousCards = visible.filter(({ p }) => isSupersededProposal(p));
+
   const suppressActions = hideActions || historical;
   const actionableCount = visible.filter(({ p }) => isActionable(p)).length;
   const checked = selectedIndexes;
@@ -227,7 +231,7 @@ export function ProposalCardList({
     >
       <div className="flex flex-wrap items-center gap-2">
         <p className="text-[11px] font-medium text-[#5B7A52]">
-          {proposalListHeading(visible.map(({ p }) => p))}
+          {proposalListHeading((currentCards.length > 0 ? currentCards : visible).map(({ p }) => p))}
         </p>
         {historical && (
           <span className="text-[10px] text-foreground-secondary">revised below</span>
@@ -244,7 +248,7 @@ export function ProposalCardList({
       </div>
 
       <ul className="space-y-2">
-        {visible.map(({ p, idx }) => {
+        {currentCards.map(({ p, idx }) => {
           const blocked = isBlocked(p);
           const superseded = isSupersededProposal(p);
           const approved = p.approved === true;
@@ -489,6 +493,31 @@ export function ProposalCardList({
           );
         })}
       </ul>
+      {previousCards.length > 0 ? (
+        <div>
+          <button
+            type="button"
+            className="text-[11px] text-[#5B7A52] hover:underline"
+            aria-expanded={showPrevious}
+            onClick={() => setShowPrevious((open) => !open)}
+          >
+            Previous versions ({previousCards.length})
+          </button>
+          {showPrevious ? (
+            <ul className="mt-2 space-y-2">
+              {previousCards.map(({ p, idx }) => (
+                <li
+                  key={`${itemId}-previous-${idx}`}
+                  className="rounded-md bg-[#F7F5F0] px-2 py-1 text-[11px] text-foreground-secondary"
+                >
+                  <span className="font-medium">Superseded</span>
+                  <p className="mt-1 whitespace-pre-wrap">{displayDraft(p, false)}</p>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      ) : null}
 
       {sendReview ? (
         <div className="space-y-1" data-testid="proposal-send-review">

@@ -10,6 +10,7 @@
  */
 
 import { proposalId, proposalState, type ProposalState } from "@/lib/sage/proposal-lifecycle";
+import { parseGroundedIn, type GroundedIn } from "@/lib/sage/task-objective";
 import type { MemorySource, WorkingFocus, WorkingMemory } from "@/lib/sage/working-memory";
 import { focusKindOf, type FocusKind } from "@/lib/sage/working-memory";
 
@@ -48,6 +49,8 @@ export type OpenTask = {
   versions: TaskVersion[];
   /** Parent's private objective. Never copied into the outgoing body. */
   privateObjective: string | null;
+  /** Full stored objective, including the question, facts, constraints, and rejected feedback. */
+  groundedIn: GroundedIn | null;
   /** Recipient-facing text of the current version. */
   outgoingBody: string | null;
   resultIds: string[];
@@ -157,6 +160,7 @@ export function openTasksFromItems(opts: {
         currentProposalIndex: null,
         versions: [],
         privateObjective: null,
+        groundedIn: null,
         outgoingBody: null,
         resultIds: [],
         source: item.sourceType ?? null,
@@ -191,6 +195,9 @@ export function openTasksFromItems(opts: {
       task!.currentItemId = itemId;
       task!.currentProposalIndex = index;
       task!.outgoingBody = outgoingOf(row);
+      task!.groundedIn = parseGroundedIn(row.grounded_in) ?? task!.groundedIn;
+      const storedObjective = text(row.private_objective);
+      if (storedObjective) task!.privateObjective = storedObjective;
       task!.missing = text(row.depends_on) ? [text(row.depends_on)!] : [];
       if (row.type === "ask_clarification") {
         task!.clarification = outgoingOf(row);
@@ -255,6 +262,7 @@ export function openTasksFromMemory(
         status: statusFromFocus(entry),
       })),
       privateObjective: current.privateObjective,
+      groundedIn: parseGroundedIn(current.groundedInRaw),
       outgoingBody: current.draft ?? current.clarification,
       resultIds: current.recordId ? [current.recordId] : [],
       source: null,

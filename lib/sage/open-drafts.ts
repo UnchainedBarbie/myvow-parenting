@@ -1,5 +1,6 @@
 import type { getServiceRoleClient } from "@/lib/supabase/server";
 import { restoreDroppedEvidence } from "@/lib/sage/outbound-facts";
+import { mergeObjective, parseGroundedIn } from "@/lib/sage/task-objective";
 import { redraftMessage } from "@/lib/sage/planner";
 import { isParentFacingQuestion } from "@/lib/sage/proposal-kind";
 import { isInactiveProposal, proposalId, reviseProposal } from "@/lib/sage/proposal-lifecycle";
@@ -236,6 +237,12 @@ export async function revisePendingDraft(opts: {
     ? freshPlan.proposals[opts.target.proposalIndex]
     : opts.target.proposals[opts.target.proposalIndex];
   if (isClosedProposal(live)) return null;
+  const priorObjective = parseGroundedIn(
+    live && typeof live === "object" ? (live as { grounded_in?: unknown }).grounded_in : null
+  );
+  const objective = priorObjective
+    ? mergeObjective(priorObjective, priorObjective, opts.guidance, opts.target.currentDraft, false)
+    : null;
   const redraft = await (opts.redraft ?? redraftMessage)({
     summary: opts.target.summary,
     proposalType: opts.target.proposalType,
@@ -246,6 +253,7 @@ export async function revisePendingDraft(opts: {
     sources: opts.sources,
     event: opts.event,
     child: opts.child,
+    objective,
   });
   const revisedText = restoreDroppedEvidence(
     redraft?.trim() ?? "",
@@ -260,6 +268,7 @@ export async function revisePendingDraft(opts: {
   const revised = reviseProposal(proposals, opts.target.proposalIndex, {
     draft: revisedText,
     revised_text: revisedText,
+    ...(objective ? { grounded_in: objective, private_objective: objective.outcome } : {}),
     ...(opts.clearDependsOn ? { depends_on: null, date_supplied: true } : {}),
   });
   if (!revised) return null;

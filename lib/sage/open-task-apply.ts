@@ -27,13 +27,24 @@ function draftOf(row: Record<string, unknown>): string {
   return typeof row.draft === "string" ? row.draft.trim() : "";
 }
 
-function outgoingDraft(proposals: unknown[]): string | null {
+function outgoingMessage(proposals: unknown[]): {
+  draft: string;
+  privateObjective: string | null;
+  groundedIn: Record<string, unknown> | null;
+} | null {
   for (const raw of proposals) {
     const row = asRecord(raw);
     if (!row) continue;
     if (row.type === "reply_coparent" || row.type === "ask_clarification") {
       const text = draftOf(row);
-      if (text) return text;
+      if (!text) continue;
+      const grounded = asRecord(row.grounded_in);
+      const privateObjective = typeof row.private_objective === "string" ? row.private_objective.trim() : "";
+      return {
+        draft: text,
+        privateObjective: privateObjective || null,
+        groundedIn: grounded,
+      };
     }
   }
   return null;
@@ -96,6 +107,7 @@ export async function applyTaskRevision(opts: {
   previousDraft?: string;
   guidance?: string;
   privateObjective?: string | null;
+  groundedIn?: Record<string, unknown> | null;
 }): Promise<{ id: string; plan: Record<string, unknown> } | null> {
   const loaded = await loadOwnedPlan(opts.admin, opts.itemId, opts.userId);
   if (!loaded) return null;
@@ -110,6 +122,7 @@ export async function applyTaskRevision(opts: {
     draft: next,
     revised_text: next,
     ...(opts.privateObjective ? { private_objective: opts.privateObjective } : {}),
+    ...(opts.groundedIn ? { grounded_in: opts.groundedIn } : {}),
     approved: false,
   });
   if (!revised) return null;
@@ -163,6 +176,7 @@ export async function applyTurnToTasks(opts: {
   proposals: unknown[];
   guidance?: string;
   privateObjective?: string | null;
+  groundedIn?: Record<string, unknown> | null;
 }): Promise<AppliedTaskTurn> {
   const decision = opts.decision;
   if (!decision || decision.unread) return { folded: false };
@@ -179,16 +193,17 @@ export async function applyTurnToTasks(opts: {
   if (decision.relation !== "revise" && decision.relation !== "change_outcome") {
     return { folded: false };
   }
-  const nextDraft = outgoingDraft(opts.proposals);
-  if (!nextDraft) return { folded: false };
+  const outgoing = outgoingMessage(opts.proposals);
+  if (!outgoing) return { folded: false };
   const item = await applyTaskRevision({
     admin: opts.admin,
     userId: opts.userId,
     itemId: decision.currentItemId,
     proposalId: decision.currentProposalId,
-    nextDraft,
+    nextDraft: outgoing.draft,
     guidance: opts.guidance,
-    privateObjective: opts.privateObjective,
+    privateObjective: outgoing.privateObjective ?? opts.privateObjective,
+    groundedIn: outgoing.groundedIn ?? opts.groundedIn ?? null,
   });
   if (!item) return { folded: false };
   return { folded: true, relation: "revise", item };

@@ -11,6 +11,7 @@
 
 import { isSupersededProposal, proposalState } from "@/lib/sage/proposal-lifecycle";
 import { conversationFallbackReply } from "@/lib/sage/conversation-reply";
+import { parseSelectionOptions, type SelectionOption } from "@/lib/sage/task-objective";
 
 export type FocusKind = "calendar" | "expense" | "document" | "message" | "general";
 
@@ -41,6 +42,8 @@ export type WorkingFocus = {
   draft: string | null;
   /** Parent's private objective. Never copied into the outgoing body. */
   privateObjective: string | null;
+  /** Stored grounded_in object, when this proposal has one. */
+  groundedInRaw: Record<string, unknown> | null;
 };
 
 export type WorkingClarification = {
@@ -50,6 +53,8 @@ export type WorkingClarification = {
   question: string;
   collected: CollectedFields;
   missing: string[];
+  /** Set when this question asks the parent to choose among live tasks. */
+  selectionOptions?: SelectionOption[];
 };
 
 export type WorkingMemory = {
@@ -175,6 +180,7 @@ export function deriveWorkingMemory(items: MemorySource[]): WorkingMemory {
       history.push(entry);
       if (!focus && isCurrent(entry.status)) focus = entry;
       if (!clarification && entry.status === "awaiting_clarification") {
+        const source = records[index];
         clarification = {
           proposalId: entry.proposalId,
           itemId: entry.itemId,
@@ -182,6 +188,7 @@ export function deriveWorkingMemory(items: MemorySource[]): WorkingMemory {
           question: entry.clarification ?? "",
           collected,
           missing: entry.missing,
+          selectionOptions: parseSelectionOptions(source?.selection_options),
         };
       }
     }
@@ -218,6 +225,7 @@ function toFocus(
     clarification: row.type === "ask_clarification" ? text(row.draft) : null,
     draft: row.type === "ask_clarification" ? null : (text(row.revised_text) ?? text(row.draft)),
     privateObjective: text(row.private_objective),
+    groundedInRaw: asRecord(row.grounded_in),
   };
 }
 

@@ -19,6 +19,7 @@ import {
   type ArbitrationModel,
 } from "@/lib/sage/turn-arbitration";
 import { buildContextFrame } from "@/lib/sage/context-frame";
+import { draftExposesPrivateStrategy, draftMissesIntendedQuestion, parseSelectionAnswer } from "@/lib/sage/task-objective";
 import type { ConversationActionModel } from "@/lib/sage/conversation-action";
 import type { ConversationContext } from "@/lib/sage/conversation-context";
 import { deriveWorkingMemory } from "@/lib/sage/working-memory";
@@ -646,6 +647,7 @@ async function main() {
         privateObjective: null,
         outgoingBody: "sent",
         resultIds: ["m1"],
+        groundedIn: null,
         source: "chat",
       },
     ];
@@ -796,6 +798,10 @@ async function main() {
     assert.equal(asked.taskDecision.relation, "ask");
     assert.equal(asked.result.plan.proposals.some((proposal) => proposal.type === "reply_coparent"), false);
     assert.match(asked.reply, /more than one message/i);
+    const choices = asked.result.plan.proposals.find((proposal) => proposal.type === "ask_clarification");
+    assert.ok(choices?.selection_options);
+    assert.equal(choices?.selection_options?.length, 2);
+    assert.equal(choices?.selection_options?.[1]?.taskId, "item-glasses");
 
     const db = new FakeDb();
     db.seed("sage_items", [
@@ -920,6 +926,268 @@ async function main() {
     const parsed = parseArbitration('{"relation":"ask","taskId":null}', []);
     assert.equal(parsed?.relation, "ask");
     assert.equal(parsed?.taskId, null);
+  }
+
+  // --- Pediatrician objective survives drafting, rejection, and a numbered selection ----------------
+  {
+    const CONDITION_QUESTION =
+      "Would you consider a new pediatrician without requiring vaccination consent?";
+    const PRIVATE_OUTCOME =
+      "Obtain a written explanation of whether agreement on a new pediatrician is conditioned on vaccination consent, without revealing that this is for court.";
+    const PROVIDERS = "Which providers would you consider?";
+    assert.equal(draftMissesIntendedQuestion(PROVIDERS, CONDITION_QUESTION), true);
+    assert.equal(draftMissesIntendedQuestion(CONDITION_QUESTION, CONDITION_QUESTION), false);
+    assert.equal(
+      draftExposesPrivateStrategy("I am preparing this for litigation.", {
+        question: CONDITION_QUESTION,
+        private_constraints: ["Do not reveal litigation strategy."],
+      }),
+      true
+    );
+    assert.equal(
+      draftExposesPrivateStrategy(CONDITION_QUESTION, {
+        question: CONDITION_QUESTION,
+        private_constraints: ["Do not reveal litigation strategy."],
+      }),
+      false
+    );
+    assert.equal(parseSelectionAnswer("2", 2), 2);
+    assert.equal(parseSelectionAnswer("Work from the #2 draft", 2), 2);
+    assert.equal(parseSelectionAnswer("No, you're not listening to me.", 2), null);
+
+    let drafts = 0;
+    const pediatrician: ConversationActionModel = {
+      interpret: async () => ({
+        kind: "message",
+        outcome: PRIVATE_OUTCOME,
+        question: CONDITION_QUESTION,
+        refersTo: "whether a new pediatrician can be considered without vaccination consent",
+        grounding: "conversation",
+        relevantFactIndexes: [],
+        uncertain: [],
+        disputed: [],
+        recipientName: "Kevin",
+        elicitation: "open_question",
+        privateConstraints: ["Do not reveal litigation strategy or that this is being documented for court."],
+      }),
+      draftMessage: async (frame) => {
+        drafts += 1;
+        const correcting = frame.correctingMissedQuestion || (frame.taskObjective?.rejected.length ?? 0) > 0;
+        if (!correcting && drafts === 1) return PROVIDERS;
+        return frame.taskObjective?.question || CONDITION_QUESTION;
+      },
+    };
+    const first = await chat("Please draft a message asking him that question.", { action: pediatrician });
+    const card = first.result.plan.proposals.find((proposal) => proposal.type === "reply_coparent");
+    assert.ok(card);
+    assert.equal(card.draft, CONDITION_QUESTION);
+    assert.equal(card.private_objective, PRIVATE_OUTCOME);
+    assert.equal(card.grounded_in?.question, CONDITION_QUESTION);
+    assert.equal(card.grounded_in?.outcome, PRIVATE_OUTCOME);
+    assert.ok(card.grounded_in?.private_constraints?.some((line) => /litigation|court/i.test(line)));
+    assert.doesNotMatch(card.draft ?? "", /court|litigation|documenting/i);
+    assert.equal(card.requires_approval, true);
+    assert.equal("executed" in card, false);
+    assert.equal(first.taskDecision.relation, "new_task");
+
+    const rejected = await chat("No, you're not listening to me. I want a revised message based on the things I have said to you.", {
+      action: {
+        interpret: async () => ({
+          kind: "message",
+          outcome: "Revise the message from what I already said.",
+          question: CONDITION_QUESTION,
+          refersTo: "the pediatrician disagreement",
+          grounding: "conversation",
+          relevantFactIndexes: [],
+          uncertain: [],
+          disputed: [],
+          recipientName: "Kevin",
+          elicitation: "open_question",
+          privateConstraints: ["Do not reveal litigation strategy."],
+        }),
+        draftMessage: async (frame) => {
+          const missed = (frame.taskObjective?.rejected.length ?? 0) > 0 || frame.correctingMissedQuestion;
+          return missed ? CONDITION_QUESTION : PROVIDERS;
+        },
+      },
+      conversation: conversationWith({
+        id: "item-msg",
+        itemType: "message",
+        proposals: [
+          {
+            id: "msg-1",
+            type: "reply_coparent",
+            draft: PROVIDERS,
+            requires_approval: true,
+            private_objective: PRIVATE_OUTCOME,
+            grounded_in: {
+              outcome: PRIVATE_OUTCOME,
+              question: CONDITION_QUESTION,
+              turns: [],
+              facts: [
+                {
+                  text: "The children were dismissed from the previous pediatrician because of the practice's vaccination policy.",
+                  status: "parent_stated",
+                },
+              ],
+              uncertain: [],
+              private_constraints: ["Do not reveal litigation strategy or that this is being documented for court."],
+              rejected: [],
+              last_guidance: "",
+              evidence_refs: [],
+            },
+          },
+        ],
+      }),
+    });
+    const revised = rejected.result.plan.proposals.find((proposal) => proposal.type === "reply_coparent");
+    assert.ok(revised);
+    assert.equal(rejected.taskDecision.relation, "revise");
+    assert.equal(rejected.taskDecision.taskId, "item-msg");
+    assert.equal(revised.draft, CONDITION_QUESTION);
+    assert.doesNotMatch(revised.draft ?? "", /providers/i);
+    assert.equal(revised.private_objective, PRIVATE_OUTCOME);
+    assert.ok((revised.grounded_in?.rejected ?? []).some((note) => /not listening/i.test(note)));
+    assert.equal(revised.grounded_in?.question, CONDITION_QUESTION);
+    assert.equal(revised.requires_approval, true);
+    assert.equal("executed" in revised, false);
+    assert.equal("approved" in revised, false);
+
+    const again = await chat("Try another draft. I don't like the ones you have.", {
+      action: {
+        interpret: async () => ({
+          kind: "message",
+          outcome: "Revise again from what I said.",
+          question: CONDITION_QUESTION,
+          refersTo: "the pediatrician disagreement",
+          grounding: "conversation",
+          relevantFactIndexes: [],
+          uncertain: [],
+          disputed: [],
+          recipientName: "Kevin",
+          elicitation: "open_question",
+          privateConstraints: ["Do not reveal litigation strategy."],
+        }),
+        draftMessage: async (frame) =>
+          (frame.taskObjective?.rejected.length ?? 0) > 0 || frame.correctingMissedQuestion
+            ? CONDITION_QUESTION
+            : PROVIDERS,
+      },
+      conversation: conversationWith({
+        id: "item-msg",
+        itemType: "message",
+        proposals: [
+          {
+            id: "msg-1",
+            type: "reply_coparent",
+            draft: PROVIDERS,
+            requires_approval: true,
+            private_objective: PRIVATE_OUTCOME,
+            grounded_in: revised.grounded_in,
+          },
+        ],
+      }),
+    });
+    const second = again.result.plan.proposals.find((proposal) => proposal.type === "reply_coparent");
+    assert.equal(again.taskDecision.relation, "revise");
+    assert.equal(again.taskDecision.taskId, "item-msg");
+    assert.equal(second?.draft, CONDITION_QUESTION);
+    assert.doesNotMatch(second?.draft ?? "", /providers|court|litigation/i);
+    assert.equal(second?.private_objective, PRIVATE_OUTCOME);
+    assert.ok((second?.grounded_in?.rejected?.length ?? 0) >= 2);
+    assert.ok((second?.grounded_in?.rejected ?? []).some((note) => /not listening/i.test(note)));
+    assert.ok((second?.grounded_in?.rejected ?? []).some((note) => /don't like|another draft/i.test(note)));
+    assert.equal(second?.grounded_in?.question, CONDITION_QUESTION);
+    assert.equal(second?.requires_approval, true);
+
+    const memory = deriveWorkingMemory([
+      {
+        itemId: "item-select",
+        itemType: "note",
+        proposals: [
+          {
+            id: "sel-1",
+            type: "ask_clarification",
+            audience: "parent",
+            draft: "I have more than one message in progress. Which one should I use?\n1. pediatrician\n2. glasses",
+            selection_options: [
+              { index: 1, taskId: "item-msg", itemId: "item-msg", proposalId: "msg-1" },
+              { index: 2, taskId: "item-glasses", itemId: "item-glasses", proposalId: "msg-g1" },
+            ],
+          },
+        ],
+      },
+      {
+        itemId: "item-msg",
+        itemType: "message",
+        proposals: [
+          {
+            id: "msg-1",
+            type: "reply_coparent",
+            draft: CONDITION_QUESTION,
+            requires_approval: true,
+            private_objective: PRIVATE_OUTCOME,
+            grounded_in: {
+              outcome: PRIVATE_OUTCOME,
+              question: CONDITION_QUESTION,
+              turns: [],
+              facts: [],
+              uncertain: [],
+              private_constraints: [],
+              rejected: [],
+              last_guidance: "",
+              evidence_refs: [],
+            },
+          },
+        ],
+      },
+      {
+        itemId: "item-glasses",
+        itemType: "message",
+        proposals: [
+          {
+            id: "msg-g1",
+            type: "reply_coparent",
+            draft: GLASSES_DRAFT,
+            requires_approval: true,
+            private_objective: GLASSES_OBJECTIVE,
+            grounded_in: {
+              outcome: GLASSES_OBJECTIVE,
+              question: "Can you take Ashley to get glasses on Thursday?",
+              turns: [],
+              facts: [],
+              uncertain: [],
+              private_constraints: [],
+              rejected: [],
+              last_guidance: "",
+              evidence_refs: [],
+            },
+          },
+        ],
+      },
+    ]);
+    const selected = await chat("2", {
+      action: {
+        interpret: async () => {
+          throw new Error("a numbered selection must not be reinterpreted");
+        },
+        draftMessage: async (frame) => frame.taskObjective?.question || GLASSES_DRAFT,
+      },
+      conversation: {
+        thread_subject: null,
+        event: { subject: null, child: null, date: null, time: null, eventId: null },
+        open_proposals: [],
+        memory,
+      },
+    });
+    assert.equal(selected.taskDecision.relation, "revise");
+    assert.equal(selected.taskDecision.taskId, "item-glasses");
+    assert.equal(selected.answers, "sel-1");
+    const chosen = selected.result.plan.proposals.find((proposal) => proposal.type === "reply_coparent");
+    assert.equal(chosen?.draft, "Can you take Ashley to get glasses on Thursday?");
+    assert.doesNotMatch(chosen?.draft ?? "", /vaccination|court/i);
+    assert.equal(chosen?.private_objective, GLASSES_OBJECTIVE);
+    assert.equal(chosen?.requires_approval, true);
   }
 
   console.log("open-task tests passed");

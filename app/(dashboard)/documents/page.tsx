@@ -264,7 +264,7 @@ export default async function DocumentsPage() {
       <div className="space-y-2">
         <div className="grid gap-4 lg:grid-cols-[minmax(260px,28%)_minmax(0,1fr)] items-start">
           <DocumentUploadForm caseId={caseId} children={children ?? []} logEntries={logEntries} />
-          <DocumentList documents={documents} children={children ?? []} />
+          <DocumentList documents={documents} children={children ?? []} caseId={caseId} />
         </div>
       </div>
     </div>

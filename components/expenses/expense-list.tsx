@@ -9,7 +9,10 @@ import { cn } from "@/lib/utils";
 import { ColumnFilterPopover } from "@/components/documents/column-filter-popover";
 import { DateFilterPopover, type DateFilterValue } from "@/components/documents/date-filter-popover";
 import { getCategoryColor } from "@/lib/categoryColors";
-import { Download, Trash2, Check, XCircle, Filter, Paperclip, Pencil, Lock, ChevronUp, ChevronDown } from "lucide-react";
+import { Download, FileSpreadsheet, FileText, Check, XCircle, Filter, Paperclip, Pencil, Lock, ChevronUp, ChevronDown, Trash2 } from "lucide-react";
+import { RecordSelectionBar } from "@/components/reports/record-selection-bar";
+import { SelectionReportDialog } from "@/components/reports/selection-report-dialog";
+import { downloadSelectionReport } from "@/lib/reports/download-selection-report";
 import { showErrorToast, showSuccessToast } from "@/components/ui/toaster";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { coparentShareInvolves } from "@/lib/expenses-share";
@@ -95,6 +98,7 @@ interface ExpenseListProps {
   expenses: ExpenseRow[];
   currentUserId: string;
   custodySplitPercent: number;
+  caseId: string;
   children: { id: string; first_name: string; profile_image?: string | null; date_of_birth?: string | null }[];
 }
 
@@ -259,6 +263,7 @@ export function ExpenseList({
   expenses,
   currentUserId,
   custodySplitPercent,
+  caseId,
   children,
 }: ExpenseListProps) {
   const router = useRouter();
@@ -306,6 +311,10 @@ export function ExpenseList({
   const [markPaidRef, setMarkPaidRef] = useState<string>("");
   const [markPaidNotes, setMarkPaidNotes] = useState<string>("");
   const [exportingSelected, setExportingSelected] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
+  const [creatingReport, setCreatingReport] = useState(false);
+  const [reportError, setReportError] = useState<string | null>(null);
+  const [reportChoices, setReportChoices] = useState({ summary: true, details: true, files: true });
   const [editExpense, setEditExpense] = useState<ExpenseRow | null>(null);
   const [editForm, setEditForm] = useState({
     description: "",
@@ -594,7 +603,7 @@ export function ExpenseList({
   }
 
   async function handleExportSelectedCSV() {
-    const selected = filtered.filter((exp) => selectedIds.has(exp.id));
+    const selected = expenses.filter((exp) => selectedIds.has(exp.id));
     if (selected.length === 0) return;
     setExportingSelected(true);
     try {
@@ -676,12 +685,17 @@ export function ExpenseList({
   }
 
   async function handleDownloadSelectedReceipts() {
-    const selected = filtered.filter(
-      (exp) => selectedIds.has(exp.id) && exp.receipt_file_id
-    );
+    const chosen = expenses.filter((exp) => selectedIds.has(exp.id));
+    const selected = chosen.filter((exp) => exp.receipt_file_id);
+    const missingReceipts = chosen.length - selected.length;
     if (selected.length === 0) {
       showErrorToast("No receipts attached to selected expenses");
       return;
+    }
+    if (missingReceipts > 0) {
+      showErrorToast(
+        `${missingReceipts} selected expense${missingReceipts === 1 ? " has" : "s have"} no receipt.`
+      );
     }
     const ids = [
       ...new Set(
@@ -831,6 +845,31 @@ export function ExpenseList({
         ? `You owe $${Math.abs(totals.net).toFixed(2)}`
         : "You are all settled";
 
+  async function handleCreateExpenseReport() {
+    const ids = expenses.filter((exp) => selectedIds.has(exp.id)).map((exp) => exp.id);
+    setCreatingReport(true);
+    setReportError(null);
+    try {
+      const result = await downloadSelectionReport({
+        caseId,
+        reportType: "expenses",
+        ids,
+        options: reportChoices,
+      });
+      const missing = result.warnings.length;
+      showSuccessToast(
+        missing > 0
+          ? `Expense report downloaded. ${missing} attachment${missing === 1 ? " was" : "s were"} unavailable.`
+          : "Expense report downloaded"
+      );
+      setReportOpen(false);
+    } catch (error) {
+      setReportError(error instanceof Error ? error.message : "The report could not be created.");
+    } finally {
+      setCreatingReport(false);
+    }
+  }
+
   function applyDateFilter(value: DateFilterValue) {
     setStartDate(value.startDate ?? "");
     setEndDate(value.endDate ?? "");
@@ -960,35 +999,37 @@ const dateFilterValue: DateFilterValue = {
         </div>
 
         {selectedIds.size > 0 && (
-          <div className="flex flex-wrap items-center gap-2 py-2 px-3 rounded-card border border-border bg-background-secondary/60">
-            <span className="text-xs text-foreground-secondary">
-              {selectedIds.size} selected
-            </span>
-            <button
-              type="button"
-              className="text-xs text-[#5B7A52] hover:underline"
-              onClick={() => void handleDownloadSelectedReceipts()}
-              disabled={deleting}
-            >
-              Download Receipts
-            </button>
-            <button
-              type="button"
-              className="text-xs text-[#5B7A52] hover:underline"
-              onClick={() => void handleExportSelectedCSV()}
-              disabled={exportingSelected}
-            >
-              {exportingSelected ? "Exporting…" : "Export"}
-            </button>
-            <button
-              type="button"
-              className="text-xs text-red-600/90 hover:text-red-700 hover:underline"
-              onClick={handleDeleteSelected}
-              disabled={deleting}
-            >
-              {deleting ? "Deleting…" : "Delete"}
-            </button>
-          </div>
+          <RecordSelectionBar
+            count={selectedIds.size}
+            deleting={deleting}
+            onDelete={handleDeleteSelected}
+            actions={[
+              {
+                label: "Download Receipts",
+                hint: "Original files only",
+                icon: Download,
+                onClick: () => void handleDownloadSelectedReceipts(),
+              },
+              {
+                label: "Export Data",
+                hint: "Spreadsheet data only",
+                icon: FileSpreadsheet,
+                onClick: () => void handleExportSelectedCSV(),
+                disabled: exportingSelected,
+                busyLabel: "Exporting…",
+              },
+              {
+                label: "Create Report",
+                hint: "Report + receipts",
+                icon: FileText,
+                onClick: () => {
+                  setReportChoices({ summary: true, details: true, files: true });
+                  setReportError(null);
+                  setReportOpen(true);
+                },
+              },
+            ]}
+          />
         )}
 
         {expenses.length === 0 ? (
@@ -1998,6 +2039,24 @@ const dateFilterValue: DateFilterValue = {
         </div>
       </div>
     )}
+    <SelectionReportDialog
+      open={reportOpen}
+      title="Create expense report"
+      countLabel={`${selectedIds.size} selected expense${selectedIds.size === 1 ? "" : "s"}`}
+      choices={[
+        { id: "summary", label: "Include summary and reimbursement totals" },
+        { id: "details", label: "Include itemized expense details" },
+        { id: "files", label: "Include receipts and supporting files" },
+      ]}
+      selected={reportChoices}
+      onToggle={(id) => setReportChoices((current) => ({ ...current, [id]: !current[id as keyof typeof current] }))}
+      onClose={() => {
+        if (!creatingReport) setReportOpen(false);
+      }}
+      onGenerate={() => void handleCreateExpenseReport()}
+      generating={creatingReport}
+      error={reportError}
+    />
     </>
   );
 }

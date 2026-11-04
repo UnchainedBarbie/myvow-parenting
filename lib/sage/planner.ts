@@ -5,6 +5,7 @@
  */
 
 import { isUserCommand } from "@/lib/sage/observation-builder";
+import { anthropicFidelityModel, objectiveAfterVerdict, parentTurnsForFidelity } from "@/lib/sage/instruction-fidelity";
 import { draftNeedsCorrection, type GroundedIn } from "@/lib/sage/task-objective";
 import {
   composeFactualReply,
@@ -498,6 +499,10 @@ export async function redraftMessage(params: {
   child?: string | null;
   /** Stored task objective. The current draft is not a substitute for these facts. */
   objective?: GroundedIn | null;
+  /** Parent-authored lines. When omitted, the stored objective's facts are used. */
+  parentTurns?: string[];
+  /** Filled when the review replaces a stored question that was too broad. */
+  repairedObjective?: { current: GroundedIn | null };
 }): Promise<string | null> {
   const parentFacingClarification = isParentFacingQuestion(
     { type: params.proposalType, audience: params.audience },
@@ -557,6 +562,41 @@ User guidance: ${guidance}`;
       { retain, userAsked: guidance }
     );
     if (corrected && !draftNeedsCorrection(corrected, objective)) drafted = corrected;
+  }
+  const parentTurns = parentTurnsForFidelity({
+    parentFacts: params.parentTurns,
+    objective,
+  });
+  if (drafted && parentTurns.length > 0 && (process.env.ANTHROPIC_API_KEY ?? "").trim()) {
+    const verdict = await anthropicFidelityModel()
+      .evaluate({
+        parentTurns,
+        request: guidance,
+        objective: objective ?? null,
+        draft: drafted,
+      })
+      .catch(() => null);
+    if (verdict && (!verdict.fulfills || verdict.privateLeak)) {
+      const repairedObjective = objectiveAfterVerdict(objective ?? null, verdict);
+      if (params.repairedObjective) params.repairedObjective.current = repairedObjective;
+      const question = repairedObjective?.question || objective?.question || "";
+      const repaired = await draftCheckedOutbound(
+        `${userPrompt}\nThe draft did not fulfill the parent's request. Ask this question instead: ${question}\nDo not paraphrase the previous attempt. Do not copy private strategy.`,
+        sources,
+        { retain, userAsked: guidance }
+      );
+      if (!repaired) return null;
+      const again = await anthropicFidelityModel()
+        .evaluate({
+          parentTurns,
+          request: guidance,
+          objective: objective ?? null,
+          draft: repaired,
+        })
+        .catch(() => null);
+      if (again && (!again.fulfills || again.privateLeak)) return null;
+      return repaired;
+    }
   }
   return drafted;
 }

@@ -19,12 +19,15 @@ export type DocumentIndexSource = {
   linkedExpenses: string[];
   linkedMessages: string[];
   hasStoredFile: boolean;
+  /** Description already saved on the document. Not generated for a report. */
+  description?: string | null;
 };
 
 export type DocumentIndexOptions = {
   documentList: boolean;
   linkedConversations: boolean;
   includeFiles: boolean;
+  metadata?: boolean;
 };
 
 export type DocumentIndexFact = { label: string; value: string };
@@ -57,6 +60,7 @@ export function documentIndexOptions(options: Record<string, boolean> | undefine
     documentList: options?.document_list !== false,
     linkedConversations: options?.linked_conversations !== false,
     includeFiles: options?.include_documents_zip === true,
+    metadata: options?.document_metadata === true,
   };
 }
 
@@ -79,6 +83,7 @@ export function prepareDocumentIndex(input: {
   generatedAt: Date;
   options: DocumentIndexOptions;
   withheldCount: number;
+  scope?: "case" | "selected";
   fileLines: string[];
   linkWarning: string | null;
   evidenceLabels?: Map<string, string> | null;
@@ -152,20 +157,49 @@ export function prepareDocumentIndex(input: {
     timeZone: input.timeZone,
   }).format(input.generatedAt);
 
+  const selectedScope = input.scope === "selected";
   const sectionNames: string[] = [];
-  if (input.options.documentList) sectionNames.push("Document list");
+  if (input.options.documentList) sectionNames.push(selectedScope ? "Selected documents" : "Document list");
+  if (input.options.metadata) sectionNames.push("Document details");
   if (input.options.includeFiles) sectionNames.push("Document files");
 
   const blocks: DocumentIndexDocument["blocks"] = [];
   if (input.options.documentList) {
     blocks.push({
       kind: "table",
-      title: "Documents",
-      intro: "Columns match the Documents tab, with the parent who uploaded the file when that name is stored. Linked records use saved expense receipts and message links. Calendar events are not stored as document links, so this index does not assign event IDs. The list is ordered by upload date, newest first.",
+      title: selectedScope ? "Selected documents" : "Documents",
+      intro: selectedScope
+        ? "This index includes the selected documents only. Columns match the Documents tab, with the parent who uploaded the file when that name is stored. Linked records use saved expense receipts and message links. The list is ordered by upload date, newest first."
+        : "Columns match the Documents tab, with the parent who uploaded the file when that name is stored. Linked records use saved expense receipts and message links. Calendar events are not stored as document links, so this index does not assign event IDs. The list is ordered by upload date, newest first.",
       headers,
       widths,
       rows,
       empty: "No documents are available to include.",
+    });
+  }
+  if (input.options.metadata) {
+    const detailLines = sorted.flatMap((doc) => {
+      const id = formatDocumentNumber(doc.documentNumber);
+      const title = doc.title?.trim() || doc.fileName.trim() || "Untitled document";
+      const stored = doc.description?.trim() || "";
+      return [
+        `${id} — ${title}`,
+        `Date: ${uploadDate(doc.createdAt, input.timeZone)}. Category: ${documentCategoryLabel(doc.category)}. Child: ${doc.childName.trim() || "All children"}.`,
+        `Source: ${doc.fileName.trim() || "No filename stored"}.`,
+        stored
+          ? `Stored description: ${stored}`
+          : "Stored description: No description is stored.",
+        "The stored description was already saved on the document. It was not generated for this report, and it is separate from the original file.",
+        "",
+      ];
+    });
+    blocks.push({
+      kind: "lines",
+      title: "Document details",
+      lines:
+        detailLines.length > 0
+          ? detailLines
+          : ["No selected documents have stored details to show."],
     });
   }
   if (input.options.includeFiles) {
@@ -213,7 +247,9 @@ export function prepareDocumentIndex(input: {
         { label: "Sections", value: sectionNames.length > 0 ? sectionNames.join("; ") : "None selected" },
       ],
       blocks,
-      completeness: `This report lists ${sorted.length} document${sorted.length === 1 ? "" : "s"} from the Documents tab that this person is allowed to access. Each document record stays separate. ${withheld} ${unavailable}`,
+      completeness: selectedScope
+        ? `This report includes the ${sorted.length} selected document${sorted.length === 1 ? "" : "s"}. Documents that were not selected are not included. ${unavailable}`
+        : `This report lists ${sorted.length} document${sorted.length === 1 ? "" : "s"} from the Documents tab that this person is allowed to access. Each document record stays separate. ${withheld} ${unavailable}`,
       verificationExplanation:
         "This SHA-256 hash covers the included document identifiers, numbers, upload times, file names, categories, and visibility. It does not cover file bytes. It is not an independent certification. Unavailable files stay listed in Supporting evidence.",
     },

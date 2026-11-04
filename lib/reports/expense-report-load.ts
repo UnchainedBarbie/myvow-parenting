@@ -17,6 +17,7 @@ import {
   type ExpenseReportOptions,
   type ExpenseReportSource,
 } from "@/lib/reports/expense-report";
+import { SelectionAccessError, uniqueSelectedIds } from "@/lib/reports/selection-access";
 
 type Admin = ReturnType<typeof getServiceRoleClient>;
 
@@ -97,6 +98,7 @@ export async function loadExpenseReport(input: {
   dateEnd: string | null;
   options: ExpenseReportOptions;
   embedInPdf?: boolean;
+  recordIds?: string[];
 }): Promise<ExpenseReportLoad> {
   const { admin, caseId, userId } = input;
   const [caseResult, memberResult, viewerResult, roleResult] = await Promise.all([
@@ -142,7 +144,14 @@ export async function loadExpenseReport(input: {
         .filter((id): id is string => typeof id === "string" && id.length > 0)
     ),
   ];
-  const rawExpenses = expenseLoaded.rows;
+  let rawExpenses = expenseLoaded.rows;
+  if (input.recordIds) {
+    const wanted = uniqueSelectedIds(input.recordIds);
+    const byId = new Map(rawExpenses.map((expense) => [String((expense as { id: string }).id), expense]));
+    const missing = wanted.filter((id) => !byId.has(id));
+    if (missing.length > 0) throw new SelectionAccessError(missing.length);
+    rawExpenses = wanted.map((id) => byId.get(id)!);
+  }
   const relatedIds = [
     ...new Set(
       rawExpenses.flatMap((expense) => {

@@ -187,9 +187,8 @@ export function openTasksFromItems(opts: {
         if (!task!.resultIds.includes(resultId)) task!.resultIds.push(resultId);
       }
       if (status === "superseded") return;
-      const takeCurrent =
-        !task!.currentProposalId || (!isLiveStatus(task!.status) && isLiveStatus(status));
-      if (!takeCurrent) return;
+      // The latest non-superseded proposal is the task, even when that proposal is closed.
+      // An older open draft must not become active after a newer one was canceled.
       task!.status = status;
       task!.currentProposalId = id || task!.currentProposalId;
       task!.currentItemId = itemId;
@@ -206,10 +205,6 @@ export function openTasksFromItems(opts: {
     });
   }
   return [...byId.values()];
-}
-
-function isLiveStatus(status: OpenTaskStatus): boolean {
-  return LIVE_TASK_STATUS.has(status);
 }
 
 /** Same derivation from working memory when session items are not loaded separately. */
@@ -239,7 +234,7 @@ export function openTasksFromMemory(
   }
   const tasks: OpenTask[] = [];
   for (const [itemId, entries] of grouped) {
-    const current = entries.find((entry) => isLiveFocus(entry)) ?? entries[0];
+    const current = entries.find((entry) => entry.status !== "superseded") ?? entries[0];
     if (!current) continue;
     const status = statusFromFocus(current);
     tasks.push({
@@ -269,14 +264,6 @@ export function openTasksFromMemory(
     });
   }
   return tasks;
-}
-
-function isLiveFocus(entry: WorkingFocus): boolean {
-  return (
-    entry.status === "pending" ||
-    entry.status === "awaiting_clarification" ||
-    entry.status === "approved"
-  );
 }
 
 function statusFromFocus(entry: WorkingFocus): OpenTaskStatus {

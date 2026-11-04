@@ -1,6 +1,6 @@
 import type { getServiceRoleClient } from "@/lib/supabase/server";
 import { restoreDroppedEvidence } from "@/lib/sage/outbound-facts";
-import { mergeObjective, parseGroundedIn } from "@/lib/sage/task-objective";
+import { mergeObjective, parseGroundedIn, type GroundedIn } from "@/lib/sage/task-objective";
 import { redraftMessage } from "@/lib/sage/planner";
 import { isParentFacingQuestion } from "@/lib/sage/proposal-kind";
 import { isInactiveProposal, proposalId, reviseProposal } from "@/lib/sage/proposal-lifecycle";
@@ -243,6 +243,7 @@ export async function revisePendingDraft(opts: {
   const objective = priorObjective
     ? mergeObjective(priorObjective, priorObjective, opts.guidance, opts.target.currentDraft, false)
     : null;
+  const repairedObjective = { current: null as GroundedIn | null };
   const redraft = await (opts.redraft ?? redraftMessage)({
     summary: opts.target.summary,
     proposalType: opts.target.proposalType,
@@ -254,6 +255,7 @@ export async function revisePendingDraft(opts: {
     event: opts.event,
     child: opts.child,
     objective,
+    repairedObjective,
   });
   const revisedText = restoreDroppedEvidence(
     redraft?.trim() ?? "",
@@ -268,7 +270,12 @@ export async function revisePendingDraft(opts: {
   const revised = reviseProposal(proposals, opts.target.proposalIndex, {
     draft: revisedText,
     revised_text: revisedText,
-    ...(objective ? { grounded_in: objective, private_objective: objective.outcome } : {}),
+    ...((repairedObjective.current ?? objective)
+      ? {
+          grounded_in: repairedObjective.current ?? objective,
+          private_objective: (repairedObjective.current ?? objective)!.outcome,
+        }
+      : {}),
     ...(opts.clearDependsOn ? { depends_on: null, date_supplied: true } : {}),
   });
   if (!revised) return null;

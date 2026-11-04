@@ -7,6 +7,7 @@ import {
   type SupportingFile,
 } from "@/lib/reports/embed-attachments";
 import type { DocumentIndexOptions, DocumentIndexSource } from "@/lib/reports/document-index";
+import { SelectionAccessError, uniqueSelectedIds } from "@/lib/reports/selection-access";
 
 type Admin = ReturnType<typeof getServiceRoleClient>;
 
@@ -57,6 +58,7 @@ function missingRelation(error: { code?: string; message?: string } | null): boo
 type RawDocument = {
   id: string;
   title?: string | null;
+  description?: string | null;
   file_name?: string | null;
   mime_type?: string | null;
   category?: string | null;
@@ -73,6 +75,7 @@ export async function loadDocumentIndex(input: {
   caseId: string;
   userId: string;
   options: DocumentIndexOptions;
+  recordIds?: string[];
 }): Promise<DocumentIndexLoad> {
   const { admin, caseId, userId } = input;
   const [caseResult, memberResult, viewerResult, viewerMemberResult, documentResult] = await Promise.all([
@@ -87,7 +90,7 @@ export async function loadDocumentIndex(input: {
     admin
       .from("documents")
       .select(
-        "id, title, file_name, mime_type, category, created_at, visibility, document_number, uploaded_by, related_comm_id, storage_path"
+        "id, title, description, file_name, mime_type, category, created_at, visibility, document_number, uploaded_by, related_comm_id, storage_path"
       )
       .eq("case_id", caseId)
       .eq("status", "active")
@@ -99,10 +102,18 @@ export async function loadDocumentIndex(input: {
 
   const role = (viewerMemberResult.data as { role?: string | null } | null)?.role ?? null;
   const raw = (documentResult.data ?? []) as RawDocument[];
-  const visible = raw.filter((doc) =>
+  let visible = raw.filter((doc) =>
     documentAuthorizedForViewer({ visibility: doc.visibility, uploadedBy: doc.uploaded_by }, { userId, role })
   );
-  const withheldCount = raw.length - visible.length;
+  let withheldCount = raw.length - visible.length;
+  if (input.recordIds) {
+    const wanted = uniqueSelectedIds(input.recordIds);
+    const byId = new Map(visible.map((doc) => [doc.id, doc]));
+    const missing = wanted.filter((id) => !byId.has(id));
+    if (missing.length > 0) throw new SelectionAccessError(missing.length);
+    visible = wanted.map((id) => byId.get(id)!);
+    withheldCount = 0;
+  }
   const visibleIds = visible.map((doc) => doc.id);
 
   const childNameByDocument = new Map<string, string>();
@@ -375,6 +386,7 @@ export async function loadDocumentIndex(input: {
       ]),
     ],
     hasStoredFile: Boolean(doc.storage_path?.trim()),
+    description: typeof doc.description === "string" ? doc.description : null,
   }));
 
   const files: SupportingFile[] = [];

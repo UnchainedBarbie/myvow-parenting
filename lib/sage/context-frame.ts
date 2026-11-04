@@ -90,6 +90,11 @@ export type ContextFrame = {
   children: { id: string; name: string }[];
   coparents: { name: string; email: string | null }[];
   recentTurns: ConversationTurn[];
+  /**
+   * Older parent-authored turns recovered because they belong to this discussion.
+   * Sage drafts are not included. This is not the whole session.
+   */
+  parentContext: string[];
   facts: ConversationalFact[];
   requestText: string;
   interpretation: ActionInterpretation | null;
@@ -117,6 +122,7 @@ export type BuildContextFrameInput = {
   sessionId?: string | null;
   message: string;
   recentTurns?: ConversationTurn[];
+  parentContext?: string[];
   conversation?: ConversationContext | null;
   children?: KnownChild[];
   coparents?: KnownCoparent[];
@@ -206,6 +212,7 @@ export function buildContextFrame(input: BuildContextFrameInput): ContextFrame {
       email: coparent.email,
     })),
     recentTurns,
+    parentContext: (input.parentContext ?? []).map((line) => line.trim()).filter(Boolean),
     facts: factsFromTurns(recentTurns),
     requestText: input.message.trim(),
     interpretation: null,

@@ -8,7 +8,7 @@ import { bareCorrection, type ConversationContext } from "@/lib/sage/conversatio
 import { hasMessageSubstance } from "@/lib/messages/message-content";
 import type { Observation } from "@/lib/sage/observation-builder";
 import type { Plan, Proposal } from "@/lib/sage/planner";
-import { isInactiveProposal, reviseProposal } from "@/lib/sage/proposal-lifecycle";
+import { isInactiveProposal, proposalState, reviseProposal } from "@/lib/sage/proposal-lifecycle";
 import type { ProcessObservationResult } from "@/lib/sage/process-observation";
 import {
   answerCalendarQuestion,
@@ -1475,9 +1475,21 @@ export function cancelPendingMessages(
     if (!raw || typeof raw !== "object") return raw;
     const current = raw as Record<string, unknown>;
     if (current.type !== "reply_coparent") return raw;
-    if (isInactiveProposal(current) || current.executed === true) return raw;
+    if (current.executed === true) return raw;
+    const state = proposalState(current);
+    if (
+      state === "executed" ||
+      state === "completed" ||
+      state === "superseded" ||
+      state === "canceled" ||
+      state === "dismissed" ||
+      state === "declined" ||
+      state === "expired"
+    ) {
+      return raw;
+    }
     canceled += 1;
-    return { ...current, status: "canceled", waived_at: nowIso };
+    return { ...current, status: "canceled", waived_at: nowIso, approved: false };
   });
   return { proposals: next, canceled };
 }

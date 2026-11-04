@@ -209,13 +209,15 @@ export function ProposalCardList({
   const visible = proposals
     .map((p, idx) => ({ p, idx }))
     .filter(({ p }) => {
-      if ((p.status ?? "").toLowerCase() === "dismissed") return false;
       return !isParentClarification(p) && !(isLogDocumentProposal(p.type) && p.executed === true);
     });
   if (visible.length === 0) return null;
 
-  const currentCards = visible.filter(({ p }) => !isSupersededProposal(p));
+  const closed = (p: (typeof visible)[number]["p"]) =>
+    isWaived(p) || (p.status ?? "").toLowerCase() === "dismissed";
+  const currentCards = visible.filter(({ p }) => !isSupersededProposal(p) && !closed(p));
   const previousCards = visible.filter(({ p }) => isSupersededProposal(p));
+  const canceledCards = visible.filter(({ p }) => closed(p) && !isSupersededProposal(p));
 
   const suppressActions = hideActions || historical;
   const actionableCount = visible.filter(({ p }) => isActionable(p)).length;
@@ -493,6 +495,19 @@ export function ProposalCardList({
           );
         })}
       </ul>
+      {canceledCards.length > 0 ? (
+        <ul className="space-y-2">
+          {canceledCards.map(({ p, idx }) => (
+            <li
+              key={`${itemId}-canceled-${idx}`}
+              className="rounded-md bg-[#F7F5F0] px-2 py-1 text-[11px] text-foreground-secondary"
+            >
+              <span className="font-medium">Canceled</span>
+              <p className="mt-1 whitespace-pre-wrap">{displayDraft(p, false)}</p>
+            </li>
+          ))}
+        </ul>
+      ) : null}
       {previousCards.length > 0 ? (
         <div>
           <button

@@ -136,6 +136,8 @@ export async function dismissTaskProposals(opts: {
   admin: Admin;
   userId: string;
   itemId: string;
+  /** An approved message that was never sent can still be canceled. */
+  includeApprovedUnsent?: boolean;
 }): Promise<{ id: string; plan: Record<string, unknown> } | null> {
   const loaded = await loadOwnedPlan(opts.admin, opts.itemId, opts.userId);
   if (!loaded) return null;
@@ -145,7 +147,8 @@ export async function dismissTaskProposals(opts: {
     const row = asRecord(raw);
     if (!row) return raw;
     const status = typeof row.status === "string" ? row.status.trim().toLowerCase() : "";
-    if (row.executed === true || row.approved === true) return raw;
+    if (row.executed === true) return raw;
+    if (!opts.includeApprovedUnsent && row.approved === true) return raw;
     if (
       status === "executed" ||
       status === "completed" ||
@@ -180,16 +183,27 @@ export async function applyTurnToTasks(opts: {
 }): Promise<AppliedTaskTurn> {
   const decision = opts.decision;
   if (!decision || decision.unread) return { folded: false };
-  if (!decision.currentItemId) return { folded: false };
   if (decision.relation === "cancel") {
-    const item = await dismissTaskProposals({
-      admin: opts.admin,
-      userId: opts.userId,
-      itemId: decision.currentItemId,
-    });
-    if (!item) return { folded: false };
-    return { folded: true, relation: "cancel", item };
+    const ids =
+      decision.closeItemIds && decision.closeItemIds.length > 0
+        ? decision.closeItemIds
+        : decision.currentItemId
+          ? [decision.currentItemId]
+          : [];
+    let last: { id: string; plan: Record<string, unknown> } | null = null;
+    for (const itemId of ids) {
+      const item = await dismissTaskProposals({
+        admin: opts.admin,
+        userId: opts.userId,
+        itemId,
+        includeApprovedUnsent: true,
+      });
+      if (item) last = item;
+    }
+    if (!last) return { folded: false };
+    return { folded: true, relation: "cancel", item: last };
   }
+  if (!decision.currentItemId) return { folded: false };
   if (decision.relation !== "revise" && decision.relation !== "change_outcome") {
     return { folded: false };
   }

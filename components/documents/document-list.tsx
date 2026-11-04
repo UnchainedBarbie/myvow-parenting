@@ -12,7 +12,10 @@ import { getCategoryColor } from "@/lib/categoryColors";
 import { DateFilterPopover, type DateFilterValue } from "@/components/documents/date-filter-popover";
 import { ColumnFilterPopover } from "@/components/documents/column-filter-popover";
 import { TitleFilterPopover } from "@/components/documents/title-filter-popover";
-import { Filter, Pencil, Download, Trash2 } from "lucide-react";
+import { Filter, Pencil, Download, FileSpreadsheet, FileText, Trash2 } from "lucide-react";
+import { RecordSelectionBar } from "@/components/reports/record-selection-bar";
+import { SelectionReportDialog } from "@/components/reports/selection-report-dialog";
+import { downloadSelectionReport } from "@/lib/reports/download-selection-report";
 import { showErrorToast, showSuccessToast } from "@/components/ui/toaster";
 import { DOCUMENT_CATEGORY_LABELS, DOCUMENT_VISIBILITY_LABELS } from "@/lib/documents-tab";
 import { documentDownloadPath } from "@/lib/documents-files";
@@ -89,6 +92,7 @@ type Child = { id: string; first_name: string };
 interface DocumentListProps {
   documents: DocumentRow[];
   children?: Child[];
+  caseId: string;
 }
 
 function formatDate(createdAt: string) {
@@ -145,7 +149,7 @@ function parseMultiParam(s: string | null): string[] {
   return s.split(",").map((x) => x.trim()).filter(Boolean);
 }
 
-export function DocumentList({ documents, children = [] }: DocumentListProps) {
+export function DocumentList({ documents, children = [], caseId }: DocumentListProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [searchInput, setSearchInput] = useState(() => searchParams.get("q") ?? "");
@@ -167,6 +171,11 @@ export function DocumentList({ documents, children = [] }: DocumentListProps) {
   const [detailOpen, setDetailOpen] = useState(false);
   const [detailEditMode, setDetailEditMode] = useState(false);
   const [downloadingZip, setDownloadingZip] = useState(false);
+  const [exportingSelected, setExportingSelected] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
+  const [creatingReport, setCreatingReport] = useState(false);
+  const [reportError, setReportError] = useState<string | null>(null);
+  const [reportChoices, setReportChoices] = useState({ index: true, metadata: true, files: true });
   const [deleteConfirm, setDeleteConfirm] = useState<{ ids: string[]; doc?: DocumentRow } | null>(null);
 
   const setParams = useCallback(
@@ -317,7 +326,7 @@ export function DocumentList({ documents, children = [] }: DocumentListProps) {
   }
 
   async function handleDownloadSelected() {
-    const ids = [...selectedIds];
+    const ids = documents.filter((doc) => selectedIds.has(doc.id)).map((doc) => doc.id);
     if (ids.length === 0) return;
     setDownloadingZip(true);
     const timeoutMs = 30_000;
@@ -397,9 +406,9 @@ export function DocumentList({ documents, children = [] }: DocumentListProps) {
     }
   }
 
-  function handleExportCSV() {
+  function exportDocumentRows(rows: DocumentRow[], filename: string) {
     const headers = ["Doc ID", "Title", "File name", "Category", "Child", "Date uploaded", "Visibility", "Description"];
-    const rows = filteredAndSorted.map((doc) => {
+    const lines = rows.map((doc) => {
       const docId =
         doc.document_number != null ? docIdFromNumber(doc.document_number) : "";
       return [
@@ -413,14 +422,64 @@ export function DocumentList({ documents, children = [] }: DocumentListProps) {
         doc.description ?? "",
       ].map(csvEscape).join(",");
     });
-    const csv = [headers.map(csvEscape).join(","), ...rows].join("\r\n");
+    const csv = [headers.map(csvEscape).join(","), ...lines].join("\r\n");
     const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `MyVow_Documents_${new Date().toISOString().slice(0, 10)}.csv`;
+    a.download = filename;
     a.click();
     URL.revokeObjectURL(url);
+  }
+
+  function handleExportCSV() {
+    exportDocumentRows(
+      filteredAndSorted,
+      `MyVow_Documents_${new Date().toISOString().slice(0, 10)}.csv`
+    );
+  }
+
+  function handleExportSelected() {
+    const selected = documents.filter((doc) => selectedIds.has(doc.id));
+    if (selected.length === 0) return;
+    setExportingSelected(true);
+    try {
+      exportDocumentRows(
+        selected,
+        `MyVow-Documents-${new Date().toISOString().slice(0, 10)}.csv`
+      );
+    } finally {
+      setExportingSelected(false);
+    }
+  }
+
+  async function handleCreateDocumentReport() {
+    const ids = documents.filter((doc) => selectedIds.has(doc.id)).map((doc) => doc.id);
+    setCreatingReport(true);
+    setReportError(null);
+    try {
+      const result = await downloadSelectionReport({
+        caseId,
+        reportType: "documents",
+        ids,
+        options: {
+          index: reportChoices.index,
+          metadata: reportChoices.metadata,
+          files: reportChoices.files,
+        },
+      });
+      const missing = result.warnings.length;
+      showSuccessToast(
+        missing > 0
+          ? `Document report downloaded. ${missing} attachment${missing === 1 ? " was" : "s were"} unavailable.`
+          : "Document report downloaded"
+      );
+      setReportOpen(false);
+    } catch (error) {
+      setReportError(error instanceof Error ? error.message : "The report could not be created.");
+    } finally {
+      setCreatingReport(false);
+    }
   }
 
   const anyFilterActive =
@@ -476,25 +535,38 @@ export function DocumentList({ documents, children = [] }: DocumentListProps) {
         </div>
 
         {selectedIds.size > 0 && (
-          <div className="flex flex-wrap items-center gap-2 py-2 px-3 rounded-card border border-border bg-background-secondary/60">
-            <span className="text-xs text-foreground-secondary">{selectedIds.size} selected</span>
-            <Button
-              size="sm"
-              className="rounded-full h-8 text-xs bg-[#7B9E87] hover:bg-[#6A8A78] text-white"
-              onClick={handleDownloadSelected}
-              disabled={downloadingZip}
-            >
-              {downloadingZip ? "Preparing…" : "Download"}
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              className="rounded-full h-8 text-xs text-red-600/90 hover:text-red-700 hover:bg-red-50"
-              onClick={handleBulkDelete}
-            >
-              Delete
-            </Button>
-          </div>
+          <RecordSelectionBar
+            count={selectedIds.size}
+            onDelete={handleBulkDelete}
+            actions={[
+              {
+                label: "Download Documents",
+                hint: "Original files only",
+                icon: Download,
+                onClick: () => void handleDownloadSelected(),
+                disabled: downloadingZip,
+                busyLabel: "Preparing…",
+              },
+              {
+                label: "Export Index",
+                hint: "Spreadsheet data only",
+                icon: FileSpreadsheet,
+                onClick: handleExportSelected,
+                disabled: exportingSelected,
+                busyLabel: "Exporting…",
+              },
+              {
+                label: "Create Report",
+                hint: "Report + documents",
+                icon: FileText,
+                onClick: () => {
+                  setReportChoices({ index: true, metadata: true, files: true });
+                  setReportError(null);
+                  setReportOpen(true);
+                },
+              },
+            ]}
+          />
         )}
 
         {documents.length === 0 ? (
@@ -792,6 +864,27 @@ export function DocumentList({ documents, children = [] }: DocumentListProps) {
         initialEditMode={detailEditMode}
         onSaved={() => router.refresh()}
         children={children}
+      />
+
+      <SelectionReportDialog
+        open={reportOpen}
+        title="Create document report"
+        countLabel={`${selectedIds.size} selected document${selectedIds.size === 1 ? "" : "s"}`}
+        choices={[
+          { id: "index", label: "Include document index" },
+          { id: "metadata", label: "Include document metadata and available summaries" },
+          { id: "files", label: "Include original documents" },
+        ]}
+        selected={reportChoices}
+        onToggle={(id) =>
+          setReportChoices((current) => ({ ...current, [id]: !current[id as keyof typeof current] }))
+        }
+        onClose={() => {
+          if (!creatingReport) setReportOpen(false);
+        }}
+        onGenerate={() => void handleCreateDocumentReport()}
+        generating={creatingReport}
+        error={reportError}
       />
 
       {deleteConfirm && (

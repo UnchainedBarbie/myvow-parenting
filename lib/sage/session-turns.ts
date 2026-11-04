@@ -1,4 +1,5 @@
 import type { getServiceRoleClient } from "@/lib/supabase/server";
+import { recoverParentContext } from "@/lib/sage/parent-context";
 import { SHADOW_CONTEXT_TURNS, shadowTurnsFromJournal } from "@/lib/sage/shadow-context";
 
 type Admin = ReturnType<typeof getServiceRoleClient>;
@@ -40,4 +41,53 @@ export async function loadSessionTurns(
     turns.pop();
   }
   return turns.slice(-limit);
+}
+
+/**
+ * Recent dialogue plus older parent turns that still belong to this discussion.
+ * The lookback is bounded. Sage's earlier drafts are not returned as parent context.
+ */
+export async function loadDraftContext(
+  admin: Admin,
+  sessionId: string,
+  userId: string,
+  currentMessage: string
+): Promise<{ recentTurns: { role: "parent" | "sage"; text: string }[]; parentContext: string[] }> {
+  const recentLimit = 16;
+  const lookback = 60;
+  const { data, error } = await admin
+    .from("sage_journal_messages")
+    .select("role, content")
+    .eq("session_id", sessionId)
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false })
+    .limit(lookback);
+  if (error || !data) return { recentTurns: [], parentContext: [] };
+  const rows = [...(data as { role?: string | null; content?: string | null }[])].reverse();
+  const turns: { role: "parent" | "sage"; text: string }[] = [];
+  for (const row of rows) {
+    const role = row.role === "sage" ? "sage" : row.role === "user" || row.role === "parent" ? "parent" : null;
+    if (!role) continue;
+    const text = (row.content ?? "").replace(/\s+/g, " ").trim();
+    if (!text) continue;
+    turns.push({ role, text: text.slice(0, 800) });
+  }
+  const current = currentMessage.replace(/\s+/g, " ").trim();
+  const last = turns[turns.length - 1];
+  if (last?.role === "parent" && current && last.text.toLowerCase() === current.toLowerCase()) {
+    turns.pop();
+  }
+  const recentTurns = turns.slice(-recentLimit);
+  const olderParentTurns = turns
+    .slice(0, Math.max(0, turns.length - recentTurns.length))
+    .filter((turn) => turn.role === "parent")
+    .map((turn) => turn.text);
+  return {
+    recentTurns,
+    parentContext: recoverParentContext({
+      recentTurns,
+      olderParentTurns,
+      request: currentMessage,
+    }),
+  };
 }

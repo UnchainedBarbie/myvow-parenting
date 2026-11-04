@@ -27,7 +27,7 @@ import {
   interpretConversationTurn,
   type ConversationActionModel,
 } from "@/lib/sage/conversation-action";
-import { liveTaskById, liveTasksOfKind, whichOpenMessageQuestion } from "@/lib/sage/open-task";
+import { liveTaskById, liveTasksOfKind, whichOpenMessageQuestion, type OpenTask } from "@/lib/sage/open-task";
 import {
   mergeObjective,
   objectiveFromParts,
@@ -52,7 +52,7 @@ import {
 import { attachExpenseSharing } from "@/lib/sage/attach-expense-sharing";
 import { isCalendarUpdateProposal, isLogExpenseProposal } from "@/lib/sage/proposal-kind";
 import type { Proposal } from "@/lib/sage/planner";
-import { settleParentChatPlan } from "@/lib/sage/working-memory";
+import { settleParentChatPlan, type WorkingMemory } from "@/lib/sage/working-memory";
 import { scheduleShadowComparison } from "@/lib/sage/shadow-interpreter";
 import {
   analysisObservationResult,
@@ -102,6 +102,8 @@ export type ProcessChatMessageInput = {
   loadAnalysisBytes?: (file: AnalysisFile) => Promise<Buffer | null>;
   extractPdf?: (buffer: Buffer) => Promise<string>;
   recentTurns?: { role: "parent" | "sage"; text: string }[];
+  /** Older parent-authored turns that still belong to this discussion. */
+  parentContext?: string[];
   /**
    * Answers a document question from extracted text.
    * Undefined uses the model when configured. Null keeps the local answer.
@@ -214,6 +216,7 @@ export async function processChatMessage(
     sessionId: input.sessionId ?? null,
     message: input.message,
     recentTurns: input.recentTurns,
+    parentContext: input.parentContext,
     conversation: input.conversation ?? null,
     children: input.children,
     coparents: input.coparents,
@@ -268,7 +271,7 @@ export async function processChatMessage(
     );
   const arbitrationModel =
     input.arbitrationModel === undefined ? anthropicArbitrationModel() : input.arbitrationModel;
-  const taskDecision: TurnArbitration = pickedTask
+  let taskDecision: TurnArbitration = pickedTask
     ? {
         relation: "revise",
         taskId: pickedTask.id,
@@ -289,6 +292,30 @@ export async function processChatMessage(
           },
           arbitrationModel
         );
+  if (
+    pendingSelection.length > 0 &&
+    !picked &&
+    !taskDecision.separate &&
+    (taskDecision.relation === "new_task" ||
+      taskDecision.relation === "revise" ||
+      taskDecision.relation === "continue") &&
+    (messageIntent || interpretation?.kind === "message" || taskDecision.kind === "message")
+  ) {
+    taskDecision = askArbitration();
+  }
+  if (routed.control === "cancel_message") {
+    const openMessages = liveTasksOfKind(frame.openTasks, "message");
+    if (openMessages.length > 1 && taskDecision.cancelScope !== "all") {
+      routed.control = "none";
+      routed.handled = false;
+      routed.result.plan.proposals = [];
+      routed.result.plan.status = "no_action";
+      taskDecision = askArbitration();
+    }
+  }
+  if (taskDecision.relation === "cancel") {
+    taskDecision = { ...taskDecision, closeItemIds: messageCloseIds(frame.openTasks, taskDecision, input.conversation?.memory) };
+  }
   const applyAction =
     !taskDecision.unread &&
     taskDecision.relation !== "conversation" &&
@@ -300,7 +327,10 @@ export async function processChatMessage(
     question: interpretation?.question,
     elicitation: interpretation?.elicitation,
     refersTo: interpretation?.refersTo,
-    facts: relevantParentFacts(framed).map((fact) => ({ text: fact.text, status: "parent_stated" })),
+    facts: parentFactLines(frame.parentContext, relevantParentFacts(framed).map((fact) => fact.text)).map((text) => ({
+      text,
+      status: "parent_stated",
+    })),
     turns: interpretation?.relevantFactIndexes,
     uncertain: interpretation?.uncertain,
     privateConstraints: interpretation?.privateConstraints,
@@ -344,8 +374,8 @@ export async function processChatMessage(
         message: input.message,
         recipient: actionDecision.recipient,
         body: actionDecision.body,
-        outcome: storedObjective.outcome || actionDecision.interpretation.outcome,
-        groundedIn: storedObjective,
+        outcome: actionDecision.objective?.outcome || storedObjective.outcome || actionDecision.interpretation.outcome,
+        groundedIn: actionDecision.objective ?? storedObjective,
         keep: routedOtherAction ? routed.result.plan.proposals : [],
         taskId: taskDecision.relation === "new_task" ? undefined : taskDecision.taskId ?? undefined,
         answers: picked ? input.conversation?.memory?.clarification?.proposalId ?? null : null,
@@ -441,15 +471,21 @@ export async function processChatMessage(
     const spoken =
       taskDecision.relation === "ask"
         ? whichOpenMessageQuestion(frame.openTasks)
-        : model
-          ? await model.reply(packet()).catch(() => null)
-          : null;
+        : taskDecision.relation === "cancel"
+          ? taskDecision.cancelScope === "all"
+            ? "I canceled the open messages. Nothing was sent."
+            : "I canceled that message. Nothing was sent."
+          : model
+            ? await model.reply(packet()).catch(() => null)
+            : null;
     const observation = buildObservationFromChat(input.message, { id: input.source_id });
     return {
       reply:
         taskDecision.relation === "ask"
           ? whichOpenMessageQuestion(frame.openTasks)
-          : spoken?.trim()
+          : taskDecision.relation === "cancel"
+            ? spoken ?? "I canceled that message. Nothing was sent."
+            : spoken?.trim()
             ? spoken.trim()
             : conversationFallbackReply(input.conversation?.memory?.clarification?.question),
       actions: [],
@@ -567,6 +603,43 @@ function scheduleReadShadow(
       proposals: [],
     },
   });
+}
+
+function parentFactLines(context: string[] | undefined, facts: string[]): string[] {
+  const seen = new Set<string>();
+  const lines: string[] = [];
+  for (const line of [...(context ?? []), ...facts]) {
+    const text = line.trim();
+    if (!text || seen.has(text)) continue;
+    seen.add(text);
+    lines.push(text);
+  }
+  return lines;
+}
+
+function messageCloseIds(
+  tasks: readonly OpenTask[],
+  decision: TurnArbitration,
+  memory: WorkingMemory | null | undefined
+): string[] {
+  const options = memory?.clarification?.selectionOptions ?? [];
+  const selectionId = options.length > 0 ? memory?.clarification?.itemId ?? null : null;
+  const ids = new Set<string>();
+  if (decision.cancelScope === "all") {
+    for (const task of liveTasksOfKind(tasks, "message")) {
+      if (task.currentItemId) ids.add(task.currentItemId);
+    }
+    if (selectionId) ids.add(selectionId);
+    return [...ids];
+  }
+  if (decision.currentItemId) ids.add(decision.currentItemId);
+  if (
+    selectionId &&
+    options.some((option) => option.taskId === decision.taskId || option.itemId === decision.currentItemId)
+  ) {
+    ids.add(selectionId);
+  }
+  return [...ids];
 }
 
 async function shareExpenseTurn(

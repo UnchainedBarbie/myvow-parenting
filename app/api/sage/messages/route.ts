@@ -5,7 +5,7 @@ import { loadCalendarContext } from "@/lib/sage/calendar-chat";
 import { reconcileCalendarPlan } from "@/lib/sage/calendar-match";
 import { processChatMessage } from "@/lib/sage/chat";
 import { scheduleShadowComparison } from "@/lib/sage/shadow-interpreter";
-import { loadSessionTurns } from "@/lib/sage/session-turns";
+import { loadDraftContext } from "@/lib/sage/session-turns";
 import { pendingDocument, shouldPreserveOpenWork } from "@/lib/sage/chat-intent";
 import { prepareAnalysisRead } from "@/lib/sage/analysis-sources";
 import { requestsDocumentAnalysis } from "@/lib/sage/document-read";
@@ -1030,9 +1030,10 @@ export async function POST(request: NextRequest) {
           );
           const coparents = await loadKnownCoparents(admin, caseId, user.id);
           const calendarContext = await loadCalendarContext(admin, caseId, user.id);
-          const recentTurns = sessionId
-            ? await loadSessionTurns(admin, sessionId, user.id, trimmed, { limit: 16, maxChars: 800 })
-            : [];
+          const draftContext = sessionId
+            ? await loadDraftContext(admin, sessionId, user.id, trimmed)
+            : { recentTurns: [], parentContext: [] };
+          const recentTurns = draftContext.recentTurns;
           const analysis = await prepareAnalysisRead(admin, {
             message: trimmed,
             caseId,
@@ -1055,6 +1056,7 @@ export async function POST(request: NextRequest) {
             viewerId: user.id,
             viewerRole,
             recentTurns,
+            parentContext: draftContext.parentContext,
             sessionId: sessionId ?? null,
             analysisFiles: analysis?.files,
             loadAnalysisBytes: analysis?.loadBytes,

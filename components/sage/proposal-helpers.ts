@@ -108,6 +108,8 @@ export function isCommitted(p: SageProposal): boolean {
 
 export function isActionable(p: SageProposal): boolean {
   if (p.type === "note_only" || isWaived(p) || isBlocked(p) || isSupersededProposal(p)) return false;
+  const status = (p.status ?? "").toLowerCase();
+  if (status === "dismissed" || status === "expired" || status === "declined") return false;
   if (isCalendarUpdateProposal(p.type)) return !isCommitted(p);
   if (p.executed === true) return false;
   // Calendar / expense stay actionable until the form actually creates the record.

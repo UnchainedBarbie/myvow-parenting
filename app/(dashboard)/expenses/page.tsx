@@ -240,6 +240,7 @@ export default async function ExpensesPage() {
             expenses={expenses}
             currentUserId={user.id}
             custodySplitPercent={custodySplitPercent}
+            caseId={caseId}
             children={children ?? []}
           />
         </div>

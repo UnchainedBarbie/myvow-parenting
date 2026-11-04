@@ -476,6 +476,8 @@ export function prepareExpenseReport(input: {
   viewerId: string;
   viewerName: string;
   options: ExpenseReportOptions;
+  /** Case reports cover the visible ledger. Selection reports cover explicit ids only. */
+  scope?: "case" | "selected";
   receiptLines: string[];
   evidenceLabels?: Map<string, string> | null;
   csvEvidence?: boolean;
@@ -686,9 +688,10 @@ export function prepareExpenseReport(input: {
     timeZoneName: "short",
     timeZone: input.timeZone,
   }).format(input.generatedAt);
+  const selectedScope = input.scope === "selected";
   const sectionNames: string[] = [];
-  if (input.options.netBalance) sectionNames.push("Net balance");
-  if (input.options.ledger) sectionNames.push("All expenses");
+  if (input.options.netBalance) sectionNames.push(selectedScope ? "Summary" : "Net balance");
+  if (input.options.ledger) sectionNames.push(selectedScope ? "Selected expenses" : "All expenses");
   if (input.options.payments) sectionNames.push("Payment history");
   if (input.options.disputes) sectionNames.push("Dispute history");
   if (input.options.receiptsZip) sectionNames.push("Receipt files");
@@ -696,27 +699,42 @@ export function prepareExpenseReport(input: {
   const blocks: ExpenseReportDocument["blocks"] = [];
   if (input.options.netBalance) {
     const viewer = input.viewerName.trim() || "the parent who generated this report";
-    const overall = expenseTabNetBalance(input.expenses.map(toTabRow), input.viewerId);
     const period = expenseTabNetBalance(included.map(toTabRow), input.viewerId);
-    const periodNote = filtered
-      ? `Calculated only from expenses entered in ${dateLabel}. This is not the current overall balance.`
-      : "No date filter was applied, so this period balance is the same as the current overall balance.";
-    blocks.push({
-      kind: "lines",
-      title: "Net balance",
-      lines: [
-        `Shown for ${viewer}, using the same balance as that parent's Expenses tab. Paid expenses are excluded.`,
-        "Current overall balance. Every expense currently on the Expenses tab, including records outside this report's dates.",
-        `They owe you: ${expenseTabMoney(overall.owedToYou)}`,
-        `You owe them: ${expenseTabMoney(overall.youOwe)}`,
-        `Net: ${overall.label}`,
-        "Selected reporting period.",
-        periodNote,
-        `They owe you: ${expenseTabMoney(period.owedToYou)}`,
-        `You owe them: ${expenseTabMoney(period.youOwe)}`,
-        `Net: ${period.label}`,
-      ],
-    });
+    if (selectedScope) {
+      blocks.push({
+        kind: "lines",
+        title: "Summary",
+        lines: [
+          `Shown for ${viewer}, using the same balance rules as the Expenses tab.`,
+          "Totals are calculated from the selected expenses only.",
+          "Paid expenses are excluded from the balance. A share is shown as owed only when the stored status is an accepted, unpaid allocation.",
+          `They owe you: ${expenseTabMoney(period.owedToYou)}`,
+          `You owe them: ${expenseTabMoney(period.youOwe)}`,
+          `Net: ${period.label}`,
+        ],
+      });
+    } else {
+      const overall = expenseTabNetBalance(input.expenses.map(toTabRow), input.viewerId);
+      const periodNote = filtered
+        ? `Calculated only from expenses entered in ${dateLabel}. This is not the current overall balance.`
+        : "No date filter was applied, so this period balance is the same as the current overall balance.";
+      blocks.push({
+        kind: "lines",
+        title: "Net balance",
+        lines: [
+          `Shown for ${viewer}, using the same balance as that parent's Expenses tab. Paid expenses are excluded.`,
+          "Current overall balance. Every expense currently on the Expenses tab, including records outside this report's dates.",
+          `They owe you: ${expenseTabMoney(overall.owedToYou)}`,
+          `You owe them: ${expenseTabMoney(overall.youOwe)}`,
+          `Net: ${overall.label}`,
+          "Selected reporting period.",
+          periodNote,
+          `They owe you: ${expenseTabMoney(period.owedToYou)}`,
+          `You owe them: ${expenseTabMoney(period.youOwe)}`,
+          `Net: ${period.label}`,
+        ],
+      });
+    }
   }
   if (duplicates.length > 0) {
     blocks.push({
@@ -731,8 +749,10 @@ export function prepareExpenseReport(input: {
   if (input.options.ledger) {
     blocks.push({
       kind: "table",
-      title: "All expenses",
-      intro: `Columns follow the Expenses tab for ${input.viewerName.trim() || "the parent who generated this report"}. Submitted by is the parent who entered the expense. Their share is that parent's co-parent share, which is separate from who paid. Dates show the incurred date and the entered date. The report date filter uses the entered date.`,
+      title: selectedScope ? "Selected expenses" : "All expenses",
+      intro: selectedScope
+        ? `These are the selected expenses only. Columns follow the Expenses tab for ${input.viewerName.trim() || "the parent who generated this report"}. Submitted by is the parent who entered the expense. Their share is that parent's co-parent share, which is separate from who paid. Status uses the stored expense status.`
+        : `Columns follow the Expenses tab for ${input.viewerName.trim() || "the parent who generated this report"}. Submitted by is the parent who entered the expense. Their share is that parent's co-parent share, which is separate from who paid. Dates show the incurred date and the entered date. The report date filter uses the entered date.`,
       headers: [
         "Expense ID",
         "Description",
@@ -748,7 +768,9 @@ export function prepareExpenseReport(input: {
       ],
       widths: [16, 36, 20, 16, 28, 28, 16, 14, 18, 16, 47.4],
       rows: ledgerRows,
-      empty: "No expenses were entered in the selected dates.",
+      empty: selectedScope
+        ? "No selected expenses are included."
+        : "No expenses were entered in the selected dates.",
     });
   }
   if (input.options.payments) {
@@ -789,9 +811,11 @@ export function prepareExpenseReport(input: {
     outside === 0
       ? "No other expense records in this case fall outside those dates."
       : `${outside} other expense record${outside === 1 ? "" : "s"} in this case ${outside === 1 ? "falls" : "fall"} outside those dates and ${outside === 1 ? "remains" : "remain"} in the case.`;
-  const completeness = filtered
-    ? `This is a filtered expense report. ${included.length} expense record${included.length === 1 ? " is" : "s are"} included. ${outsideSentence}`
-    : `This report includes all ${included.length} expense record${included.length === 1 ? "" : "s"} in this case.`;
+  const completeness = selectedScope
+    ? `This report includes the ${included.length} selected expense record${included.length === 1 ? "" : "s"}. Expenses that were not selected are not included. Totals use only these records.`
+    : filtered
+      ? `This is a filtered expense report. ${included.length} expense record${included.length === 1 ? " is" : "s are"} included. ${outsideSentence}`
+      : `This report includes all ${included.length} expense record${included.length === 1 ? "" : "s"} in this case.`;
 
   return {
     includedCount: included.length,
@@ -803,7 +827,12 @@ export function prepareExpenseReport(input: {
           label: "Parties",
           value: parents.length > 0 ? parents.map((parent) => parent.name).join("; ") : "Not recorded",
         },
-        { label: "Date range", value: `${dateLabel}. Expenses are included by the date they were entered, not the incurred date.` },
+        {
+          label: selectedScope ? "Records" : "Date range",
+          value: selectedScope
+            ? `${included.length} selected expense${included.length === 1 ? "" : "s"}. Totals use only these records.`
+            : `${dateLabel}. Expenses are included by the date they were entered, not the incurred date.`,
+        },
         { label: "Generated", value: generatedLabel },
         { label: "Sections", value: sectionNames.join("; ") },
       ],

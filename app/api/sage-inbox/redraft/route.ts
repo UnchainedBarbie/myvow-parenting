@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
 import { matchingLedgerText } from "@/lib/sage/ledger-facts";
 import { redraftMessage } from "@/lib/sage/planner";
+import { parseGroundedIn } from "@/lib/sage/task-objective";
 
 export const runtime = "nodejs";
 
@@ -66,6 +67,7 @@ export async function POST(req: NextRequest) {
               draft?: string;
               revised_text?: string;
               audience?: string;
+              grounded_in?: unknown;
             }>;
           })
         : null;
@@ -136,6 +138,7 @@ export async function POST(req: NextRequest) {
       sourceType: item.source_type ?? null,
       audience,
       sources,
+      objective: parseGroundedIn(proposal.grounded_in),
     });
 
     if (!draft) {

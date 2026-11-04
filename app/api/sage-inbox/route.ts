@@ -86,6 +86,7 @@ type PlanProposal = {
   supersedes?: string | null;
   replacement_item_id?: string | null;
   waived_at?: string;
+  selection_options?: unknown;
   unblocked?: boolean;
   executed?: boolean;
   executed_at?: string;
@@ -876,7 +877,37 @@ export async function POST(req: NextRequest) {
           ...p,
           status: "waived_by_user",
           waived_at: now,
+          approved: false,
         };
+        if (p.type === "reply_coparent") {
+          for (let other = 0; other < proposals.length; other += 1) {
+            if (other === idx) continue;
+            const sibling = proposals[other];
+            if (!sibling || sibling.executed === true) continue;
+            const siblingStatus = (sibling.status ?? "").toLowerCase();
+            if (
+              siblingStatus === "waived_by_user" ||
+              siblingStatus === "canceled" ||
+              siblingStatus === "cancelled" ||
+              siblingStatus === "dismissed" ||
+              siblingStatus === "superseded" ||
+              siblingStatus === "executed" ||
+              siblingStatus === "completed"
+            ) {
+              continue;
+            }
+            const closesWithMessage =
+              sibling.type === "reply_coparent" ||
+              (sibling.type === "ask_clarification" && Array.isArray(sibling.selection_options));
+            if (!closesWithMessage) continue;
+            proposals[other] = {
+              ...sibling,
+              status: "waived_by_user",
+              waived_at: now,
+              approved: false,
+            };
+          }
+        }
         if (p.type === "ask_clarification") {
           waivedAskClarification = true;
         } else {

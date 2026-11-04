@@ -258,6 +258,14 @@ const OBLIGATION_PATTERNS: { re: RegExp; label: string }[] = [
     re: /\b(under|per) (our |the )?(agreement|parenting plan|court order|order|law|decree)\b/i,
     label: "per the order or agreement",
   },
+  {
+    re: /\b(our|the) court order\b/i,
+    label: "court order cited",
+  },
+  {
+    re: /\b(as outlined|as set out|as stated|according to|pursuant to)\b[^.?!]{0,60}\b(order|agreement|parenting plan|plan|decree)\b/i,
+    label: "per the order or agreement",
+  },
   { re: /\byou are required to\b/i, label: "you are required to" },
   { re: /\byou are (not )?(allowed|permitted) to\b/i, label: "permitted or forbidden" },
   {
@@ -290,20 +298,59 @@ export function isObligationProblem(label: string): boolean {
 const INSTRUMENT_REQUEST =
   /\b(?:tell|ask)\s+(?:him|her|them|my co-parent)\b(?:\s+that)?\s+(?:our agreement|the agreement|the parenting plan|parenting plan|the court order|court order|the decree|the statute|the law|the order)\s+(?:requires|require|required|says|states|provides|permits|permit|forbids|forbid|prohibits|prohibit|mandates|mandate|must|have to)\s+([^.?!]+)/i;
 
+const INSTRUCTION =
+  /^(?:please\s+)?(?:tell|ask|remind|let)\s+(?:him|her|them|my co-parent)\b(?:\s+know)?(?:\s+that)?\s+([\s\S]+)$/i;
+
+const INSTRUMENT_LEAD =
+  /\b(?:our|the)\s+(?:parenting plan|plan|agreement|court order|decree|statute|law|order)\s+(?:requires|require|required|says|states|provides|permits|permit|forbids|forbid|prohibits|prohibit|mandates|mandate|must|have to)\s+/i;
+
+const INSTRUMENT_TRAIL =
+  /\b(?:under|per)\s+(?:our\s+|the\s+)?(?:court order|parenting plan|agreement|decree|statute|law|order)\b/i;
+
 /**
- * The act inside an instruction to assert an instrument.
- * "Tell him the parenting plan requires a response within 48 hours" yields a request
- * for that response. The instrument is not part of the result. Null when the text is
- * not that kind of instruction.
+ * The parent's request with the instrument removed.
+ * "Tell him the parenting plan requires a response within 48 hours" stays a request
+ * for that response. "Remind him he's required to share medical decisions under our
+ * court order" stays a request to decide together. Null when the text is not an
+ * instruction to assert an instrument, or nothing remains to ask.
  */
 export function requestWithoutInstrument(text: string): string | null {
-  const match = text.match(INSTRUMENT_REQUEST);
-  if (!match) return null;
-  const act = match[1].trim().replace(/[.?!]+$/, "");
-  if (act.length < 8) return null;
-  const draft = `I am asking for ${act}.`;
-  if (unsupportedObligations(draft, "").length > 0) return null;
-  return draft;
+  const direct = text.match(INSTRUMENT_REQUEST);
+  if (direct) return phraseAsRequest(direct[1]);
+  const instructed = text.match(INSTRUCTION);
+  if (!instructed) return null;
+  const remainder = instructed[1].trim();
+  if (unsupportedObligations(remainder, "").length === 0 && !INSTRUMENT_LEAD.test(remainder) && !INSTRUMENT_TRAIL.test(remainder)) {
+    return null;
+  }
+  const stripped = remainder
+    .replace(/^(?:he|she|they)'s\s+/i, "")
+    .replace(/^(?:he|she|they)\s+(?:is|are)\s+/i, "")
+    .replace(INSTRUMENT_LEAD, "")
+    .replace(/\b(?:required|obligated|obliged)\s+to\s+/i, "")
+    .replace(/\b(?:have|has)\s+to\s+(?:be\s+)?/i, "")
+    .replace(INSTRUMENT_TRAIL, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return phraseAsRequest(stripped);
+}
+
+function phraseAsRequest(act: string): string | null {
+  const text = act.replace(/\s+/g, " ").replace(/^[,.\s]+|[.?!,\s]+$/g, "").trim();
+  if (text.length < 8) return null;
+  const shared = text.match(/^share\s+(.+\bdecisions?)$/i);
+  if (shared) return `I'd like us to make ${shared[1]} together going forward.`;
+  const expenses = text.match(/^expenses\s+(?:have to be\s+|be\s+)?submitted\b(.*)$/i);
+  if (expenses) {
+    const when = expenses[1].replace(/\s+/g, " ").trim();
+    return `Please submit expenses${when ? ` ${when}` : ""}.`;
+  }
+  if (/^a\s+/i.test(text)) {
+    const draft = `I am asking for ${text}.`;
+    return unsupportedObligations(draft, "").length === 0 ? draft : null;
+  }
+  const draft = `I'd like ${text}.`;
+  return unsupportedObligations(draft, "").length === 0 ? draft : null;
 }
 
 /** Parent sentences only. An invented obligation, a draft command, or a private label is left out. */

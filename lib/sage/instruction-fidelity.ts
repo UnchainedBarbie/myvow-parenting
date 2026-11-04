@@ -149,9 +149,9 @@ export function parseFidelityVerdict(raw: string | null | undefined): FidelityVe
 }
 
 export function fidelityClarification(verdict: FidelityVerdict): string {
-  const missed = verdict.missed.find((line) => line.trim());
-  if (missed) {
-    return `I don't have a draft that does what you asked. ${missed} What should the message ask?`;
+  const missed = verdict.missed.map((line) => line.trim()).filter(Boolean);
+  if (missed.length > 0 || verdict.unsupported.length > 0) {
+    console.error("[sage/fidelity] review rejected", { missed, unsupported: verdict.unsupported });
   }
   return "I don't yet have a draft that matches what you described. What should the message ask?";
 }

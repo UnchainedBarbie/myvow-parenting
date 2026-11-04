@@ -31,6 +31,7 @@ import {
 } from "@/lib/sage/instruction-fidelity";
 import {
   factsOnlyDraft,
+  NO_DETAIL_REPLY,
   requestWithoutInstrument,
   unsupportedFacts,
   unsupportedObligations,
@@ -591,12 +592,22 @@ export async function decideConversationAction(input: DecideInput): Promise<Conv
         : framed;
     const checked = await enforceFaithfulDraft({ model, frame: reviewFrame, body: guarded });
     if (checked.status === "ask") {
-      // The reviewer may insist on an instrument the record does not contain. That claim stays out.
-      if (guarded !== body && unsupportedObligations(guarded, obligationRecord(framed)).length === 0) {
+      const sources = obligationRecord(framed);
+      const restated = requestWithoutInstrument(framed.requestText);
+      const guardedClean =
+        guarded !== NO_DETAIL_REPLY &&
+        unsupportedObligations(guarded, sources).length === 0 &&
+        unsupportedFacts(guarded, sources).length === 0;
+      const kept = restated ? (guardedClean ? guarded : restated) : null;
+      if (
+        kept &&
+        unsupportedObligations(kept, sources).length === 0 &&
+        unsupportedFacts(kept, sources).length === 0
+      ) {
         return {
           status: "draft",
           recipient,
-          body: guarded,
+          body: kept,
           interpretation,
           objective: reviewFrame.taskObjective ?? checked.objective,
           validation: "unreviewed",

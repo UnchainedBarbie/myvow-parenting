@@ -307,9 +307,13 @@ export function liveTaskOfKind(tasks: readonly OpenTask[], kind: OpenTaskKind): 
   return null;
 }
 
-/** Parent-facing question when more than one live message could be the target, or new vs revise is unclear. */
-export function whichOpenMessageQuestion(tasks: readonly OpenTask[]): string {
+/**
+ * Parent-facing question when a live message could be the target.
+ * Null when nothing eligible is open — callers must not invent a choice.
+ */
+export function whichOpenMessageQuestion(tasks: readonly OpenTask[]): string | null {
   const messages = liveTasksOfKind(tasks, "message");
+  if (messages.length === 0) return null;
   const lines = messages.map((task, index) => {
     const snippet = (task.outgoingBody ?? task.privateObjective ?? "an open draft").replace(/\s+/g, " ").trim();
     const clipped = snippet.length > 140 ? `${snippet.slice(0, 137)}...` : snippet;
@@ -318,10 +322,7 @@ export function whichOpenMessageQuestion(tasks: readonly OpenTask[]): string {
   if (messages.length === 1) {
     return `I already have a message in progress:\n${lines[0]}\nShould I change that one, or start a separate message?`;
   }
-  if (messages.length > 1) {
-    return `I have more than one message in progress. Which one should I use?\n${lines.join("\n")}`;
-  }
-  return "Which message should I work on? I will not guess.";
+  return `I have more than one message in progress. Which one should I use?\n${lines.join("\n")}`;
 }
 
 export function taskById(tasks: readonly OpenTask[], id: string | null | undefined): OpenTask | null {
@@ -334,4 +335,12 @@ export function taskById(tasks: readonly OpenTask[], id: string | null | undefin
 export function liveTaskById(tasks: readonly OpenTask[], id: string | null | undefined): OpenTask | null {
   const found = taskById(tasks, id);
   return isLiveTask(found) ? found : null;
+}
+
+/** Choices that still name a live message. A canceled, dismissed, or missing task is not a choice. */
+export function liveMessageChoices<T extends { taskId: string }>(
+  options: readonly T[],
+  tasks: readonly OpenTask[]
+): T[] {
+  return options.filter((option) => liveTaskById(tasks, option.taskId)?.kind === "message");
 }

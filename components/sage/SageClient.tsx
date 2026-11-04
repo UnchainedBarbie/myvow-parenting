@@ -35,6 +35,7 @@ import { DOCUMENT_ACCEPT, DOCUMENT_ACCEPT_LABEL, documentFileProblem } from "@/l
 import { attachmentInstruction, mentionsSeveralChildren } from "@/lib/sage/attachment-role";
 import { SageMessageAttachments } from "@/components/sage/sage-message-attachments";
 import { SageOriginalMessage } from "@/components/sage/sage-original-message";
+import { originalActionLabel } from "@/lib/sage/original-message";
 import { interpretDocumentTurn } from "@/lib/sage/document-intent";
 import { splitDocumentAnswer } from "@/lib/sage/document-search";
 import { notifySageProposalsChanged } from "@/lib/open-items";
@@ -1222,7 +1223,7 @@ export function SageClient({
                             key={messageId}
                             messageId={messageId}
                             own={msg.source_own_message === true}
-                            label={ids.length > 1 ? `View original ${index + 1}` : "View original"}
+                            label={originalActionLabel(index, ids.length)}
                           />
                         ))}
                       {!isUser &&

@@ -13,11 +13,14 @@ import {
 import { proposalState } from "@/lib/sage/proposal-lifecycle";
 import {
   askArbitration,
+  arbitrateTurn,
   parseArbitration,
   structuralArbitration,
   unreadArbitration,
   type ArbitrationModel,
 } from "@/lib/sage/turn-arbitration";
+import type { ConversationModel } from "@/lib/sage/conversation-reply";
+import { closeUnresolvedSelections } from "@/lib/sage/chat-intent";
 import { buildContextFrame } from "@/lib/sage/context-frame";
 import { draftExposesPrivateStrategy, draftMissesIntendedQuestion, parseSelectionAnswer } from "@/lib/sage/task-objective";
 import type { ConversationActionModel } from "@/lib/sage/conversation-action";
@@ -147,6 +150,7 @@ async function chat(
     arbitration?: ArbitrationModel | null;
     recentTurns?: { role: "parent" | "sage"; text: string }[];
     viewerId?: string;
+    conversationModel?: ConversationModel | null;
   } = {}
 ) {
   return processChatMessage({
@@ -163,7 +167,7 @@ async function chat(
     reasonAboutDocument: null,
     shadow: false,
     today: TODAY,
-    conversationModel: null,
+    conversationModel: over.conversationModel === undefined ? null : over.conversationModel,
     conversationActionModel: over.action === undefined ? actionModel() : over.action,
     arbitrationModel: over.arbitration === undefined ? null : over.arbitration,
   });
@@ -924,8 +928,16 @@ async function main() {
 
   {
     const parsed = parseArbitration('{"relation":"ask","taskId":null}', []);
-    assert.equal(parsed?.relation, "ask");
+    assert.equal(parsed?.relation, "conversation");
     assert.equal(parsed?.taskId, null);
+    const liveMessages = openTasksFromItems({
+      ownerId: PARENT,
+      caseId: CASE,
+      sessionId: SESSION,
+      items: twoMessageItems(),
+    });
+    const asked = parseArbitration('{"relation":"ask","taskId":null}', liveMessages);
+    assert.equal(asked?.relation, "ask");
   }
 
   // --- Pediatrician objective survives drafting, rejection, and a numbered selection ----------------
@@ -1188,6 +1200,291 @@ async function main() {
     assert.doesNotMatch(chosen?.draft ?? "", /vaccination|court/i);
     assert.equal(chosen?.private_objective, GLASSES_OBJECTIVE);
     assert.equal(chosen?.requires_approval, true);
+  }
+
+  // --- A canceled draft does not block a new one, and an empty choice is never asked ----------------
+  {
+    const VACCINATION_QUESTION =
+      "Is agreement to a new pediatrician conditional on vaccination consent?";
+    const turns = [
+      ...PEDIATRICIAN_TURNS,
+      { role: "parent" as const, text: `The question I need answered is: ${VACCINATION_QUESTION}` },
+    ];
+    const grounded = {
+      outcome: "Obtain his written position on a new pediatrician.",
+      question: VACCINATION_QUESTION,
+      turns: [],
+      facts: [],
+      uncertain: [],
+      private_constraints: [],
+      rejected: [],
+      last_guidance: "",
+      evidence_refs: [],
+    };
+    const canceledDraft = {
+      id: "item-msg",
+      itemType: "message",
+      proposals: [
+        {
+          id: "msg-1",
+          type: "reply_coparent",
+          draft: OPEN_QUESTION,
+          status: "canceled",
+          approved: false,
+          requires_approval: true,
+          private_objective: PED_OBJECTIVE,
+          grounded_in: grounded,
+        },
+      ],
+    };
+    const staleMenu = {
+      id: "item-select",
+      itemType: "note",
+      proposals: [
+        {
+          id: "sel-1",
+          type: "ask_clarification",
+          audience: "parent",
+          draft: "Which message should I work on? I will not guess.",
+          selection_options: [
+            { index: 1, taskId: "item-msg", itemId: "item-msg", proposalId: "msg-1" },
+            { index: 2, taskId: "item-missing", itemId: "item-missing", proposalId: "missing" },
+          ],
+        },
+      ],
+    };
+    const recovered = deriveWorkingMemory([
+      { itemId: staleMenu.id, itemType: staleMenu.itemType, proposals: staleMenu.proposals },
+      { itemId: canceledDraft.id, itemType: canceledDraft.itemType, proposals: canceledDraft.proposals },
+    ]);
+    assert.equal(recovered.clarification, null);
+
+    const drafting = {
+      interpret: async () => ({
+        kind: "message" as const,
+        outcome: "Ask whether a new pediatrician depends on vaccination consent.",
+        question: VACCINATION_QUESTION,
+        refersTo: "the pediatrician discussion",
+        grounding: "conversation" as const,
+        relevantFactIndexes: [],
+        uncertain: [],
+        disputed: [],
+        recipientName: "Kevin",
+        elicitation: "open_question" as const,
+      }),
+      draftMessage: async (frame: { taskObjective?: { question?: string } | null }) => {
+        const question = frame.taskObjective?.question ?? "";
+        if (!question.includes("conditional on vaccination consent")) {
+          throw new Error("the new draft lost the vaccination-consent objective");
+        }
+        return question;
+      },
+    };
+    const refuseChoice = {
+      classify: async () => {
+        throw new Error("choosing among messages is invalid when none are live");
+      },
+    };
+
+    const fresh = await chat("Draft a message about the pediatrician.", {
+      action: drafting,
+      arbitration: refuseChoice,
+      recentTurns: turns,
+      conversation: null,
+    });
+    const freshCard = fresh.result.plan.proposals.find((proposal) => proposal.type === "reply_coparent");
+    assert.equal(fresh.taskDecision.relation, "new_task");
+    assert.equal(freshCard?.draft, VACCINATION_QUESTION);
+    assert.equal(freshCard?.requires_approval, true);
+    assert.equal((freshCard as { approved?: boolean } | undefined)?.approved, undefined);
+    assert.equal((freshCard as { executed?: boolean } | undefined)?.executed, undefined);
+    assert.equal((freshCard as { result_message_id?: string } | undefined)?.result_message_id, undefined);
+    assert.doesNotMatch(fresh.reply, /which message should i work on|will not guess/i);
+
+    const afterCancel = await chat(
+      "Review the previous pediatrician discussion and create a new message.",
+      {
+        action: drafting,
+        arbitration: refuseChoice,
+        recentTurns: turns,
+        conversation: conversationWith(canceledDraft),
+      }
+    );
+    const replacement = afterCancel.result.plan.proposals.find((proposal) => proposal.type === "reply_coparent");
+    assert.equal(afterCancel.taskDecision.relation, "new_task");
+    assert.equal(afterCancel.taskDecision.taskId, null);
+    assert.equal(replacement?.draft, VACCINATION_QUESTION);
+    assert.equal(replacement?.grounded_in?.question, VACCINATION_QUESTION);
+    assert.equal(replacement?.requires_approval, true);
+    assert.equal((replacement as { approved?: boolean } | undefined)?.approved, undefined);
+    assert.equal((replacement as { executed?: boolean } | undefined)?.executed, undefined);
+    assert.equal((canceledDraft.proposals[0] as { status?: string }).status, "canceled");
+    assert.doesNotMatch(afterCancel.reply, /which message should i work on|will not guess/i);
+
+    const withStaleMenu = await chat(
+      "Review the previous pediatrician discussion and create a new message.",
+      {
+        action: drafting,
+        arbitration: refuseChoice,
+        recentTurns: turns,
+        conversation: conversationWith(staleMenu, canceledDraft),
+      }
+    );
+    const fromContext = withStaleMenu.result.plan.proposals.find(
+      (proposal) => proposal.type === "reply_coparent"
+    );
+    assert.equal(withStaleMenu.taskDecision.relation, "new_task");
+    assert.equal(fromContext?.draft, VACCINATION_QUESTION);
+    assert.equal((fromContext as { approved?: boolean } | undefined)?.approved, undefined);
+    assert.equal((fromContext as { executed?: boolean } | undefined)?.executed, undefined);
+    assert.equal((canceledDraft.proposals[0] as { status?: string }).status, "canceled");
+    assert.equal(
+      withStaleMenu.result.plan.proposals.some((proposal) => proposal.type === "ask_clarification"),
+      false
+    );
+    assert.doesNotMatch(withStaleMenu.reply, /which message should i work on|will not guess/i);
+
+    const aside = await chat("Can you explain what usually happens at a first visit?", {
+      action: {
+        interpret: async () => interpretation("conversation", "The parent wants an explanation."),
+        draftMessage: async () => {
+          throw new Error("an ordinary question must not become a draft");
+        },
+      },
+      conversationModel: {
+        reply: async () => "A first visit is usually a checkup and a chance to ask questions.",
+        readTurn: async () => null,
+      },
+      arbitration: {
+        classify: async () => askArbitration(),
+      },
+      conversation: null,
+    });
+    assert.equal(aside.taskDecision.relation, "conversation");
+    assert.match(aside.reply, /checkup/i);
+    assert.equal(aside.result.plan.proposals.some((proposal) => proposal.type === "reply_coparent"), false);
+    assert.doesNotMatch(aside.reply, /which message should i work on|will not guess/i);
+
+    const several = await chat("Please revise the message.", {
+      conversation: conversationWith(...twoMessageItems()),
+      action: {
+        interpret: async () => interpretation("message", "Revise the message.", null),
+        draftMessage: async () => {
+          throw new Error("ambiguous drafts must not be rewritten");
+        },
+      },
+    });
+    assert.equal(several.taskDecision.relation, "ask");
+    assert.match(several.reply, /more than one message/i);
+    assert.doesNotMatch(several.reply, /will not guess/i);
+    assert.equal(several.result.plan.proposals.some((proposal) => proposal.type === "reply_coparent"), false);
+    assert.equal(
+      several.result.plan.proposals.some((proposal) => (proposal as { approved?: boolean }).approved === true),
+      false
+    );
+    assert.equal(
+      several.result.plan.proposals.some((proposal) => (proposal as { executed?: boolean }).executed === true),
+      false
+    );
+
+    const closedChoices = closeUnresolvedSelections([
+      {
+        id: "item-msg",
+        proposals: [{ id: "msg-1", type: "reply_coparent", status: "canceled", draft: OPEN_QUESTION }],
+      },
+      {
+        id: "item-select",
+        proposals: [
+          {
+            id: "sel-1",
+            type: "ask_clarification",
+            selection_options: [{ index: 1, taskId: "item-msg", itemId: "item-msg", proposalId: "msg-1" }],
+          },
+        ],
+      },
+    ]);
+    assert.equal((closedChoices[0].proposals[0] as { status?: string }).status, "canceled");
+    assert.equal(closedChoices[1].changed, true);
+    assert.equal((closedChoices[1].proposals[0] as { status?: string }).status, "canceled");
+
+    const stillChoosing = closeUnresolvedSelections([
+      {
+        id: "item-msg",
+        proposals: [{ id: "msg-1", type: "reply_coparent", status: "dismissed", draft: OPEN_QUESTION }],
+      },
+      {
+        id: "item-glasses",
+        proposals: [{ id: "g1", type: "reply_coparent", draft: GLASSES_DRAFT }],
+      },
+      {
+        id: "item-select",
+        proposals: [
+          {
+            id: "sel-1",
+            type: "ask_clarification",
+            selection_options: [
+              { index: 1, taskId: "item-msg", itemId: "item-msg", proposalId: "msg-1" },
+              { index: 2, taskId: "item-glasses", itemId: "item-glasses", proposalId: "g1" },
+            ],
+          },
+        ],
+      },
+    ]);
+    assert.equal(stillChoosing[2].changed, false);
+    assert.notEqual((stillChoosing[1].proposals[0] as { status?: string }).status, "canceled");
+    assert.notEqual((stillChoosing[1].proposals[0] as { status?: string }).status, "dismissed");
+
+    const noMessages = await arbitrateTurn(
+      {
+        frame: buildContextFrame({
+          parentId: PARENT,
+          caseId: CASE,
+          sessionId: SESSION,
+          message: "Draft a message about the pediatrician.",
+        }),
+        tasks: [],
+        interpretation: interpretation(
+          "message",
+          "Ask whether agreement to a pediatrician is conditional on vaccination consent.",
+          "the pediatrician discussion"
+        ),
+        hasActionCard: false,
+        messageIntent: true,
+      },
+      refuseChoice
+    );
+    assert.equal(noMessages.relation, "new_task");
+
+    const calendarOnly = openTasksFromItems({
+      ownerId: PARENT,
+      caseId: CASE,
+      sessionId: SESSION,
+      items: [
+        {
+          id: "item-cal",
+          itemType: "calendar_event",
+          proposals: [
+            { id: "cal-1", type: "calendar_update", draft: "Add the visit.", requires_approval: true },
+          ],
+        },
+      ],
+    });
+    const notADraft = await arbitrateTurn(
+      {
+        frame: buildContextFrame({
+          parentId: PARENT,
+          caseId: CASE,
+          sessionId: SESSION,
+          message: "Thanks, that helps.",
+        }),
+        tasks: calendarOnly,
+        interpretation: null,
+        hasActionCard: false,
+        messageIntent: false,
+      },
+      { classify: async () => askArbitration() }
+    );
+    assert.equal(notADraft.relation, "conversation");
   }
 
   console.log("open-task tests passed");

@@ -2,6 +2,7 @@ import { applyRevisionToProposals } from "@/lib/sage/document-intent";
 import type { getServiceRoleClient } from "@/lib/supabase/server";
 import {
   cancelPendingMessages,
+  closeUnresolvedSelections,
   revisePendingCalendar,
   type ChatControl,
   type PendingRevision,
@@ -50,6 +51,7 @@ export async function applySessionControl(
   if (itemErr || !items) return null;
 
   let updated: { id: string; plan: Record<string, unknown> } | null = null;
+  const sessionItems: { id: string; plan: Record<string, unknown>; proposals: unknown[] }[] = [];
   for (const row of items as {
     id?: string;
     plan?: { proposals?: unknown[] } | null;
@@ -65,6 +67,11 @@ export async function applySessionControl(
             ? revisePendingCalendar(row.plan.proposals, revision)
             : { proposals: row.plan.proposals, changed: false, canceled: 0 };
     const changed = "canceled" in applied ? applied.canceled > 0 : applied.changed;
+    sessionItems.push({
+      id: row.id,
+      plan: row.plan,
+      proposals: changed ? applied.proposals : row.plan.proposals,
+    });
     if (!changed) continue;
     const plan = { ...row.plan, proposals: applied.proposals };
     const childId = revision?.document?.childId;
@@ -83,5 +90,57 @@ export async function applySessionControl(
     updated = { id: row.id, plan };
     if (control === "revise_pending" || control === "revise_document") break;
   }
+  if (control === "cancel_message") {
+    for (const closed of closeUnresolvedSelections(sessionItems)) {
+      if (!closed.changed) continue;
+      const source = sessionItems.find((item) => item.id === closed.id);
+      if (!source) continue;
+      const plan = { ...source.plan, proposals: closed.proposals };
+      const { error } = await admin
+        .from("sage_items")
+        .update({ plan })
+        .eq("id", closed.id)
+        .eq("visible_to", userId);
+      if (error) {
+        console.error("[sage/chat-control] selection close failed:", error.message);
+        continue;
+      }
+      updated = { id: closed.id, plan };
+    }
+  }
   return updated;
+}
+
+/** After a message is canceled or dismissed, close selection questions that no longer name a live draft. */
+export async function closeStaleMessageSelections(
+  admin: Admin,
+  userId: string,
+  caseId: string
+): Promise<void> {
+  const { data: rows, error } = await admin
+    .from("sage_items")
+    .select("id, plan")
+    .eq("case_id", caseId)
+    .eq("visible_to", userId);
+  if (error || !rows) return;
+  const items = (rows as { id?: string; plan?: { proposals?: unknown[] } | null }[])
+    .filter((row) => row.id && row.plan && Array.isArray(row.plan.proposals))
+    .map((row) => ({
+      id: row.id as string,
+      plan: row.plan as Record<string, unknown>,
+      proposals: (row.plan as { proposals: unknown[] }).proposals,
+    }));
+  for (const closed of closeUnresolvedSelections(items)) {
+    if (!closed.changed) continue;
+    const source = items.find((item) => item.id === closed.id);
+    if (!source) continue;
+    const { error: updateError } = await admin
+      .from("sage_items")
+      .update({ plan: { ...source.plan, proposals: closed.proposals } })
+      .eq("id", closed.id)
+      .eq("visible_to", userId);
+    if (updateError) {
+      console.error("[sage/chat-control] selection close failed:", updateError.message);
+    }
+  }
 }

@@ -239,7 +239,13 @@ function constrainMessageClassification(
   if (classified.relation === "cancel" && classified.cancelScope === "all") {
     return { ...bind(null, "cancel"), cancelScope: "all" };
   }
-  if (classified.relation === "ask" || classified.cancelScope === "ambiguous") return askArbitration();
+  if (classified.relation === "ask" || classified.cancelScope === "ambiguous") {
+    if (liveTasksOfKind(input.tasks, "message").length === 0) {
+      if (input.interpretation?.kind === "message" || input.messageIntent) return bind(null, "new_task");
+      return idleArbitration();
+    }
+    return askArbitration();
+  }
   if (
     classified.relation === "revise" ||
     classified.relation === "continue" ||
@@ -264,6 +270,7 @@ export const ARBITRATION_SYSTEM_PROMPT = [
   "conversation: a feeling, aside, insult, thanks, question, or anything that is not an instruction to change a task.",
   "cancel: the parent is calling off work. scope is all when they want every open message closed, one when they name a single draft, and ambiguous when it is unclear. Ambiguous cancel does not close unrelated tasks.",
   "ask: it is not clear which open message this is about, or whether this is a new message versus a change to an existing draft. Do not pick one.",
+  "Reply ask only when OPEN_TASKS lists at least one message. When it lists none, a request to create a message is new_task, and every other turn is conversation.",
   "separate is true only when they are explicitly asking for an additional message about something else. A repeated request to draft from the same discussion is not separate.",
   "One open message draft does not mean this request revises it. Name a task by its id only when this message is about that task.",
   "If several tasks could fit, or you are unsure, reply ask and no task id.",
@@ -331,8 +338,9 @@ export function parseArbitration(
       parsed.scope === "all" || parsed.scope === "one" || parsed.scope === "ambiguous" ? parsed.scope : null;
     const separate = parsed.separate === true;
     if (relation === "conversation") return idleArbitration();
-    if (relation === "ask") return askArbitration();
-    if (relation === "cancel" && scope === "ambiguous") return askArbitration();
+    if (relation === "ask" || (relation === "cancel" && scope === "ambiguous")) {
+      return liveTasksOfKind(tasks, "message").length > 0 ? askArbitration() : idleArbitration();
+    }
     if (relation === "cancel" && scope === "all") {
       return { ...bind(null, "cancel"), cancelScope: "all", separate: false };
     }
@@ -344,7 +352,7 @@ export function parseArbitration(
         relation === "change_outcome") &&
       !task
     ) {
-      return liveTasks(tasks).length > 0 ? askArbitration() : idleArbitration();
+      return liveTasksOfKind(tasks, "message").length > 0 ? askArbitration() : idleArbitration();
     }
     return { ...bind(task, relation as TurnRelation), cancelScope: relation === "cancel" ? scope ?? "one" : null, separate };
   } catch {
@@ -401,5 +409,11 @@ export async function arbitrateTurn(
   if (!model) return unreadArbitration();
   const classified = await model.classify(input).catch(() => null);
   if (!classified) return unreadArbitration();
+  if (
+    (classified.relation === "ask" || classified.cancelScope === "ambiguous") &&
+    liveTasksOfKind(input.tasks, "message").length === 0
+  ) {
+    return idleArbitration();
+  }
   return classified;
 }

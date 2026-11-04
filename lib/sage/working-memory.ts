@@ -158,8 +158,11 @@ export function settleParentChatPlan(
  */
 export function deriveWorkingMemory(items: MemorySource[]): WorkingMemory {
   const history: WorkingFocus[] = [];
-  let focus: WorkingFocus | null = null;
-  let clarification: WorkingClarification | null = null;
+  const ordered: {
+    entry: WorkingFocus;
+    source: Record<string, unknown> | undefined;
+    collected: CollectedFields;
+  }[] = [];
 
   for (const item of items) {
     const records = item.proposals
@@ -178,23 +181,54 @@ export function deriveWorkingMemory(items: MemorySource[]): WorkingMemory {
     for (let index = entries.length - 1; index >= 0; index -= 1) {
       const entry = entries[index];
       history.push(entry);
-      if (!focus && isCurrent(entry.status)) focus = entry;
-      if (!clarification && entry.status === "awaiting_clarification") {
-        const source = records[index];
-        clarification = {
-          proposalId: entry.proposalId,
-          itemId: entry.itemId,
-          kind: entry.kind,
-          question: entry.clarification ?? "",
-          collected,
-          missing: entry.missing,
-          selectionOptions: parseSelectionOptions(source?.selection_options),
-        };
-      }
+      ordered.push({ entry, source: records[index], collected });
+    }
+  }
+
+  const liveMessages = liveMessageKeys(history);
+  let focus: WorkingFocus | null = null;
+  let clarification: WorkingClarification | null = null;
+
+  for (const { entry, source, collected } of ordered) {
+    const storedOptions = parseSelectionOptions(source?.selection_options);
+    const hadSelection = Array.isArray(source?.selection_options) && source.selection_options.length > 0;
+    const liveOptions = storedOptions.filter((option) => selectionTargetIsLive(option, liveMessages));
+    const staleSelection = hadSelection && liveOptions.length === 0;
+    if (!focus && isCurrent(entry.status) && !staleSelection) focus = entry;
+    if (!clarification && entry.status === "awaiting_clarification" && !staleSelection) {
+      clarification = {
+        proposalId: entry.proposalId,
+        itemId: entry.itemId,
+        kind: entry.kind,
+        question: entry.clarification ?? "",
+        collected,
+        missing: entry.missing,
+        selectionOptions: hadSelection ? liveOptions : storedOptions,
+      };
     }
   }
 
   return { focus, clarification, history };
+}
+
+/** Item and proposal ids of message drafts the parent can still act on. */
+function liveMessageKeys(history: readonly WorkingFocus[]): Set<string> {
+  const keys = new Set<string>();
+  for (const entry of history) {
+    if (entry.kind !== "message" || !entry.draft) continue;
+    if (entry.status !== "pending" && entry.status !== "approved") continue;
+    if (entry.itemId) keys.add(entry.itemId);
+    if (entry.proposalId) keys.add(entry.proposalId);
+  }
+  return keys;
+}
+
+function selectionTargetIsLive(option: SelectionOption, live: Set<string>): boolean {
+  return (
+    live.has(option.taskId) ||
+    (!!option.itemId && live.has(option.itemId)) ||
+    (!!option.proposalId && live.has(option.proposalId))
+  );
 }
 
 function isCurrent(status: FocusStatus): boolean {

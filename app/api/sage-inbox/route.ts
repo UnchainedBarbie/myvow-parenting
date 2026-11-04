@@ -26,6 +26,7 @@ import {
 import { reviewGate, reviewGateFailure } from "@/lib/messages/review-receipt";
 import { attachmentIntent, type AttachmentOutcome } from "@/lib/messages/send-safety";
 import { waitUntil } from "@vercel/functions";
+import { closeStaleMessageSelections } from "@/lib/sage/chat-control";
 import { reopenOwnQuestions, resolveOwnQuestions } from "@/lib/sage/clarification-lifecycle";
 import { AMBIGUOUS_CASE_MESSAGE, resolveActiveCase } from "@/lib/cases/resolve-active-case";
 
@@ -637,6 +638,7 @@ export async function POST(req: NextRequest) {
 
     const now = new Date().toISOString();
     let waivedAskClarification = false;
+    let dismissedOutgoing = false;
     let undidWaivedAskClarification = false;
     const toolInput = toolInputRecord(
       (row as { tool_input?: unknown }).tool_input
@@ -880,6 +882,7 @@ export async function POST(req: NextRequest) {
           approved: false,
         };
         if (p.type === "reply_coparent") {
+          dismissedOutgoing = true;
           for (let other = 0; other < proposals.length; other += 1) {
             if (other === idx) continue;
             const sibling = proposals[other];
@@ -965,6 +968,9 @@ export async function POST(req: NextRequest) {
     const sageMessages: Record<string, unknown>[] = [];
     const sourceId = (row as { source_id?: string | null }).source_id ?? null;
     const caseId = (row as { case_id?: string | null }).case_id ?? null;
+    if (dismissedOutgoing && caseId) {
+      await closeStaleMessageSelections(admin, user.id, caseId);
+    }
     let sessionId: string | null = null;
     if (sourceId) {
       const { data: sourceMsg } = await admin

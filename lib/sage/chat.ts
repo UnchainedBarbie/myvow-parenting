@@ -27,7 +27,13 @@ import {
   interpretConversationTurn,
   type ConversationActionModel,
 } from "@/lib/sage/conversation-action";
-import { liveTaskById, liveTasksOfKind, whichOpenMessageQuestion, type OpenTask } from "@/lib/sage/open-task";
+import {
+  liveMessageChoices,
+  liveTaskById,
+  liveTasksOfKind,
+  whichOpenMessageQuestion,
+  type OpenTask,
+} from "@/lib/sage/open-task";
 import {
   mergeObjective,
   objectiveFromParts,
@@ -232,9 +238,12 @@ export async function processChatMessage(
       proposal.type === "log_expense" ||
       proposal.type === "log_document"
   );
-  const pendingSelection = input.conversation?.memory?.clarification?.selectionOptions ?? [];
-  const pickedIndex =
-    pendingSelection.length > 0 ? parseSelectionAnswer(input.message, pendingSelection.length) : null;
+  const pendingSelection = liveMessageChoices(
+    input.conversation?.memory?.clarification?.selectionOptions ?? [],
+    frame.openTasks
+  );
+  const selectionSpan = pendingSelection.reduce((max, option) => Math.max(max, option.index), 0);
+  const pickedIndex = selectionSpan > 0 ? parseSelectionAnswer(input.message, selectionSpan) : null;
   const picked = pickedIndex != null ? pendingSelection.find((option) => option.index === pickedIndex) ?? null : null;
   const pickedTask = picked ? liveTaskById(frame.openTasks, picked.taskId) : null;
   const shouldInterpret =
@@ -312,6 +321,19 @@ export async function processChatMessage(
       routed.result.plan.status = "no_action";
       taskDecision = askArbitration();
     }
+  }
+  if (taskDecision.relation === "ask" && liveTasksOfKind(frame.openTasks, "message").length === 0) {
+    taskDecision =
+      messageIntent || interpretation?.kind === "message"
+        ? {
+            relation: "new_task",
+            taskId: null,
+            currentProposalId: null,
+            currentItemId: null,
+            kind: "message",
+            unread: false,
+          }
+        : idleArbitration();
   }
   if (taskDecision.relation === "cancel") {
     taskDecision = { ...taskDecision, closeItemIds: messageCloseIds(frame.openTasks, taskDecision, input.conversation?.memory) };
@@ -410,12 +432,13 @@ export async function processChatMessage(
       itemId: task.currentItemId,
       proposalId: task.currentProposalId,
     }));
-    if (options.length > 0) {
+    const question = options.length > 0 ? whichOpenMessageQuestion(frame.openTasks) : null;
+    if (options.length > 0 && question) {
       Object.assign(
         routed,
         messageSelectionTurn({
           message: input.message,
-          question: whichOpenMessageQuestion(frame.openTasks),
+          question,
           options,
         })
       );
@@ -468,24 +491,24 @@ export async function processChatMessage(
     taskDecision.relation === "cancel" ||
     taskDecision.relation === "ask"
   ) {
-    const spoken =
-      taskDecision.relation === "ask"
-        ? whichOpenMessageQuestion(frame.openTasks)
-        : taskDecision.relation === "cancel"
-          ? taskDecision.cancelScope === "all"
-            ? "I canceled the open messages. Nothing was sent."
-            : "I canceled that message. Nothing was sent."
-          : model
-            ? await model.reply(packet()).catch(() => null)
-            : null;
+    const openMessageQuestion =
+      taskDecision.relation === "ask" ? whichOpenMessageQuestion(frame.openTasks) : null;
+    const spoken = openMessageQuestion
+      ? openMessageQuestion
+      : taskDecision.relation === "cancel"
+        ? taskDecision.cancelScope === "all"
+          ? "I canceled the open messages. Nothing was sent."
+          : "I canceled that message. Nothing was sent."
+        : model
+          ? await model.reply(packet()).catch(() => null)
+          : null;
     const observation = buildObservationFromChat(input.message, { id: input.source_id });
     return {
-      reply:
-        taskDecision.relation === "ask"
-          ? whichOpenMessageQuestion(frame.openTasks)
-          : taskDecision.relation === "cancel"
-            ? spoken ?? "I canceled that message. Nothing was sent."
-            : spoken?.trim()
+      reply: openMessageQuestion
+        ? openMessageQuestion
+        : taskDecision.relation === "cancel"
+          ? spoken ?? "I canceled that message. Nothing was sent."
+          : spoken?.trim()
             ? spoken.trim()
             : conversationFallbackReply(input.conversation?.memory?.clarification?.question),
       actions: [],

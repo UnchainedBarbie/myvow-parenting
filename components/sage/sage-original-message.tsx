@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { documentDownloadPath, documentPreviewNote } from "@/lib/documents-files";
+import { useEffect, useId, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { SageMessageAttachments } from "@/components/sage/sage-message-attachments";
 
 type OriginalPayload = {
   unavailable?: boolean;
@@ -48,128 +49,146 @@ export function SageOriginalMessage({
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [payload, setPayload] = useState<OriginalPayload | null>(null);
-  const scrollerRef = useRef<HTMLElement | null>(null);
-  const scrollTopRef = useRef<number | null>(null);
-
-  function rememberScroll(button: HTMLButtonElement) {
-    const scroller = button.closest("[data-radix-scroll-area-viewport]") as HTMLElement | null;
-    scrollerRef.current = scroller;
-    scrollTopRef.current = scroller?.scrollTop ?? null;
-  }
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const closeRef = useRef<HTMLButtonElement | null>(null);
+  const requestedRef = useRef(false);
+  const titleId = useId();
 
   useEffect(() => {
-    const scroller = scrollerRef.current;
-    const top = scrollTopRef.current;
-    if (!scroller || top == null) return;
-    scroller.scrollTop = top;
-  }, [open, loading, payload]);
-
-  async function toggle(button: HTMLButtonElement) {
-    rememberScroll(button);
-    if (open) {
-      setOpen(false);
-      return;
+    if (!open) return;
+    const previouslyFocused = triggerRef.current;
+    closeRef.current?.focus();
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") setOpen(false);
     }
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      previouslyFocused?.focus();
+    };
+  }, [open]);
+
+  async function openOriginal() {
     setOpen(true);
-    if (!payload) {
-      setLoading(true);
-      try {
-        const res = await fetch(`/api/sage/original-messages/${encodeURIComponent(messageId)}`);
-        const data = (await res.json().catch(() => ({}))) as OriginalPayload;
-        if (!res.ok && !data.unavailable && !data.message) {
-          setPayload({ unavailable: true, message: data.error || "The original message isn't available." });
-        } else {
-          setPayload(data);
-        }
-      } catch {
-        setPayload({ unavailable: true, message: "The original message isn't available." });
-      } finally {
-        setLoading(false);
+    if (payload || requestedRef.current) return;
+    requestedRef.current = true;
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/sage/original-messages/${encodeURIComponent(messageId)}`);
+      const data = (await res.json().catch(() => ({}))) as OriginalPayload;
+      if (!res.ok && !data.unavailable && !data.message) {
+        setPayload({ unavailable: true, message: data.error || "The original message isn't available." });
+      } else {
+        setPayload(data);
       }
+    } catch {
+      setPayload({ unavailable: true, message: "The original message isn't available." });
+    } finally {
+      setLoading(false);
     }
   }
+
+  const unavailable = Boolean(payload?.unavailable || payload?.error);
+  const title = own || payload?.ownMessage ? "Your original message" : "Original message";
+  const files = (payload?.attachments ?? []).map((file) => ({
+    id: file.id,
+    fileName: file.fileName,
+    mimeType: file.mimeType,
+  }));
 
   return (
     <div className="mt-2 max-w-full">
       <button
+        ref={triggerRef}
         type="button"
         className="inline-flex min-h-8 items-center gap-1 text-left text-[11px] text-[#5B7A52] hover:underline"
+        aria-haspopup="dialog"
         aria-expanded={open}
-        onClick={(event) => void toggle(event.currentTarget)}
+        onClick={() => void openOriginal()}
       >
-        <span aria-hidden>👁</span>
-        <span>{open ? "Hide original" : label}</span>
+        <span>{label}</span>
+        <span aria-hidden>↗</span>
       </button>
-      {open ? (
-        <div className="mt-2 w-full max-w-full overflow-hidden rounded-xl border border-[#E8E4DC] bg-[#FFF8F0] px-3 py-2 text-[12px] text-foreground [overflow-anchor:none]">
-          <p className="text-[10px] font-medium uppercase tracking-wide text-[#8A7A62]">
-            {own || payload?.ownMessage ? "Your original message" : "Co-parent’s original message"}
-          </p>
-          {loading ? (
-            <p className="mt-1 text-foreground-secondary">Loading the original…</p>
-          ) : payload?.unavailable || payload?.error ? (
-            <p className="mt-1 text-foreground-secondary">
-              {payload.message || payload.error || "The original message isn't available."}
-            </p>
-          ) : (
-            <div className="mt-1 space-y-1">
-              <p className="break-words">
-                <span className="text-foreground-secondary">From: </span>
-                {payload?.sender || "Co-parent"}
-              </p>
-              <p className="break-words">
-                <span className="text-foreground-secondary">To: </span>
-                {payload?.to || "Not recorded"}
-              </p>
-              {payload?.cc ? (
-                <p className="break-words">
-                  <span className="text-foreground-secondary">Cc: </span>
-                  {payload.cc}
-                </p>
-              ) : null}
-              <p className="break-words">
-                <span className="text-foreground-secondary">Date: </span>
-                {formatWhen(payload?.sentAt)}
-              </p>
-              <p className="break-words">
-                <span className="text-foreground-secondary">Subject: </span>
-                {payload?.subject || "No subject"}
-              </p>
-              <div className="whitespace-pre-wrap break-words pt-1">{payload?.body || ""}</div>
-              {(payload?.attachments ?? []).length > 0 ? (
-                <ul className="space-y-1 pt-1">
-                  {payload?.attachments?.map((file) => (
-                    <li key={file.id} className="flex flex-wrap items-center gap-2">
-                      <span className="min-w-0 break-all">{file.fileName}</span>
-                      {file.mimeType?.startsWith("image/") || file.mimeType === "application/pdf" ? (
-                        <a
-                          href={documentDownloadPath(file.id, true)}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-[11px] text-[#5B7A52] underline"
-                        >
-                          Preview
-                        </a>
-                      ) : null}
-                      <a
-                        href={documentDownloadPath(file.id, false)}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-[11px] text-[#5B7A52] underline"
-                      >
-                        Download
-                      </a>
-                      <span className="text-[10px] text-foreground-secondary">
-                        {file.previewNote ?? documentPreviewNote(file.fileName, file.mimeType) ?? ""}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
+      {open && typeof document !== "undefined"
+        ? createPortal(
+        <div
+          className="fixed inset-0 z-[70] flex items-end justify-center bg-black/40 sm:items-stretch sm:justify-end sm:bg-black/25"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) setOpen(false);
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby={titleId}
+            className="flex h-[min(92dvh,100%)] w-full flex-col rounded-t-2xl border border-[#E8E4DC] bg-[#FDFBF7] shadow-card sm:h-full sm:max-w-[440px] sm:rounded-none sm:border-y-0 sm:border-r-0"
+          >
+            <div className="flex items-start justify-between gap-3 border-b border-[#E8E4DC] px-4 py-3">
+              <div>
+                <h2 id={titleId} className="font-heading text-base font-semibold text-foreground">
+                  {title}
+                </h2>
+              </div>
+              <button
+                ref={closeRef}
+                type="button"
+                className="text-xs text-foreground-secondary underline hover:text-foreground"
+                onClick={() => setOpen(false)}
+              >
+                Close
+              </button>
             </div>
-          )}
-        </div>
-      ) : null}
+            <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3 text-[13px] text-foreground">
+              {loading ? (
+                <p className="text-foreground-secondary">Loading the original…</p>
+              ) : unavailable ? (
+                <p className="text-foreground-secondary">
+                  {payload?.message || payload?.error || "The original message isn't available."}
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  <p className="break-words">
+                    <span className="text-foreground-secondary">From: </span>
+                    {payload?.sender || "Co-parent"}
+                  </p>
+                  {payload?.to ? (
+                    <p className="break-words">
+                      <span className="text-foreground-secondary">To: </span>
+                      {payload.to}
+                    </p>
+                  ) : null}
+                  {payload?.cc ? (
+                    <p className="break-words">
+                      <span className="text-foreground-secondary">Cc: </span>
+                      {payload.cc}
+                    </p>
+                  ) : null}
+                  <p className="break-words">
+                    <span className="text-foreground-secondary">Date: </span>
+                    {formatWhen(payload?.sentAt)}
+                  </p>
+                  {payload?.subject ? (
+                    <p className="break-words">
+                      <span className="text-foreground-secondary">Subject: </span>
+                      {payload.subject}
+                    </p>
+                  ) : null}
+                  <div className="whitespace-pre-wrap break-words border-t border-[#E8E4DC] pt-3">
+                    {payload?.body?.trim() ? payload.body : "This message has no text."}
+                  </div>
+                  {files.length > 0 ? (
+                    <div className="border-t border-[#E8E4DC] pt-3">
+                      <SageMessageAttachments files={files} />
+                    </div>
+                  ) : null}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>,
+        document.body
+      )
+        : null}
     </div>
   );
 }

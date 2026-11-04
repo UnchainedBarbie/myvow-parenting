@@ -19,6 +19,12 @@ export function isMessageId(value: string | null | undefined): boolean {
   return MESSAGE_ID.test((value ?? "").trim());
 }
 
+/** One link per stored message. A single message stays unlabeled; several are numbered. */
+export function originalActionLabel(index: number, count: number): string {
+  if (count > 1) return `View Original ${index + 1}`;
+  return "View Original";
+}
+
 /**
  * Explicit links only: the journal source id, and a Sage item whose source is that message.
  * The same id is returned once. Nothing is chosen by time, subject, or text.

@@ -1494,6 +1494,54 @@ export function cancelPendingMessages(
   return { proposals: next, canceled };
 }
 
+function selectionStillNamesLiveMessage(
+  options: unknown,
+  live: Set<string>
+): boolean {
+  if (!Array.isArray(options)) return false;
+  return options.some((option) => {
+    if (!option || typeof option !== "object") return false;
+    const row = option as { taskId?: unknown; itemId?: unknown; proposalId?: unknown };
+    return [row.taskId, row.itemId, row.proposalId].some(
+      (value) => typeof value === "string" && live.has(value.trim())
+    );
+  });
+}
+
+/**
+ * A selection question is kept only while one of its choices is still a live message.
+ * When every choice is canceled, dismissed, or missing, the question itself is canceled.
+ */
+export function closeUnresolvedSelections(
+  items: { id: string; proposals: unknown[] }[]
+): { id: string; proposals: unknown[]; changed: boolean }[] {
+  const live = new Set<string>();
+  for (const item of items) {
+    for (const raw of item.proposals) {
+      if (!raw || typeof raw !== "object") continue;
+      const row = raw as { type?: unknown; id?: unknown };
+      if (row.type !== "reply_coparent") continue;
+      const state = proposalState(row);
+      if (state !== "open" && state !== "approved") continue;
+      live.add(item.id);
+      if (typeof row.id === "string" && row.id.trim()) live.add(row.id.trim());
+    }
+  }
+  return items.map((item) => {
+    let changed = false;
+    const proposals = item.proposals.map((raw) => {
+      if (!raw || typeof raw !== "object") return raw;
+      const row = raw as Record<string, unknown>;
+      if (row.type !== "ask_clarification" || !Array.isArray(row.selection_options)) return raw;
+      if (row.selection_options.length === 0 || proposalState(row) !== "open") return raw;
+      if (selectionStillNamesLiveMessage(row.selection_options, live)) return raw;
+      changed = true;
+      return { ...row, status: "canceled", approved: false };
+    });
+    return { id: item.id, proposals, changed };
+  });
+}
+
 export function revisePendingCalendar(
   proposals: unknown[],
   revision: PendingRevision

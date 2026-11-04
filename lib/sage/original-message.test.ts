@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import {
   isMessageId,
   linkedIncomingMessageIds,
+  originalActionLabel,
   originalMessageAccess,
   originalViewPolicy,
   safeOriginalBody,
@@ -37,6 +38,9 @@ assert.deepEqual(
   []
 );
 assert.equal(isMessageId("not-an-id"), false);
+assert.equal(originalActionLabel(0, 1), "View Original");
+assert.equal(originalActionLabel(0, 2), "View Original 1");
+assert.equal(originalActionLabel(1, 2), "View Original 2");
 
 const rows = [
   { id: first, created_at: "2026-10-01T00:00:00Z", body: "First note" },

@@ -114,7 +114,11 @@ export type RouteChatIntentInput = {
    * "conversation" keeps free text from becoming the answer to that question.
    * Omitted keeps the existing slot filling.
    */
-  taskTurn?: "conversation";
+  /**
+   * conversation: this turn is not the message the open question asked for.
+   * unreadable: the turn could not be read, so the parent's sentence is not a draft.
+   */
+  taskTurn?: "conversation" | "unreadable";
 };
 
 const WEEKDAY =
@@ -810,7 +814,7 @@ export function messageAnswerCandidate(
 function completeOpenDetail(
   message: string,
   memory: WorkingMemory | null | undefined,
-  taskTurn?: "conversation"
+  taskTurn?: "conversation" | "unreadable"
 ): RoutedTurn | null {
   const clarification = memory?.clarification;
   if (!clarification || isExplicitNoteRequest(message)) return null;
@@ -835,6 +839,20 @@ function completeOpenDetail(
   if (clarification.kind === "message") {
     // The caller read this turn as conversation. The question stays open.
     if (taskTurn === "conversation") return null;
+    // A failed reading is not permission to send the parent's private sentence.
+    if (taskTurn === "unreadable") {
+      return turn({
+        handled: true,
+        reply: "I didn't understand that request, so I haven't drafted anything.",
+        message,
+        summary: "The turn could not be read.",
+        itemType: "note",
+        proposals: [],
+        status: "no_action",
+        reasoning:
+          "Turn-reading failed. The parent's sentence was not used as a co-parent message.",
+      });
+    }
     const candidate = messageAnswerCandidate(message, memory);
     if (!candidate) return null;
     const { name, email, body } = candidate;

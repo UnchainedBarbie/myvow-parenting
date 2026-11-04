@@ -10,8 +10,11 @@ import { draftNeedsCorrection, type GroundedIn } from "@/lib/sage/task-objective
 import {
   composeFactualReply,
   droppedFactLabels,
+  factsOnlyDraft,
+  isObligationProblem,
   NO_DETAIL_REPLY,
   unsupportedFacts,
+  unsupportedObligations,
   voiceProblems,
 } from "@/lib/sage/outbound-facts";
 import { coparentShareInvolves } from "@/lib/expenses-share";
@@ -174,6 +177,7 @@ No red flags, shame, or escalation. No markdown. No quotes around the sentences.
 
 This text is a written record that will be sent to the other parent. A reply may state only facts present in one of: the inbound message, the conversation context, the current draft, or the case ledgers supplied in the allowed sources (calendar_events, expenses, documents).
 Do not supply a time, date, place, amount, or name that is not in those sources.
+Do not assert what an agreement, parenting plan, court order, or law requires, permits, or forbids unless that text is in the allowed sources.
 Do not claim that the parent or Sage checked, confirmed, looked up, verified, or spoke to anyone.
 If the co-parent asked for a detail that is not in those sources, say only that you will confirm and follow up. Never state a missing value as if it were known.
 
@@ -399,14 +403,16 @@ function draftProblems(
 ): string[] {
   return [
     ...unsupportedFacts(text, sources),
+    ...unsupportedObligations(text, sources),
     ...voiceProblems(text, userAsked),
     ...(retain ? droppedFactLabels(text, retain.draft, retain.guidance).map((label) => `dropped ${label}`) : []),
   ];
 }
 
 /**
- * Two generations at most. A draft that invents a fact, drops a kept fact,
- * or breaks the voice rules is not returned.
+ * Two generations at most. A draft that invents a fact, asserts an obligation
+ * the sources do not contain, drops a kept fact, or breaks the voice rules is not returned.
+ * An obligation is regenerated once without the claim, then replaced with the parent's own facts.
  */
 async function draftCheckedOutbound(
   userPrompt: string,
@@ -425,12 +431,23 @@ async function draftCheckedOutbound(
       missing: firstMissing,
     });
   }
-  const retryPrompt = first
-    ? `${base}\n\nThe previous draft was rejected: ${firstMissing?.join("; ")}. Keep every fact already in the current draft unless the user retracted it, and add the new fact. An arrival time does not replace a start time. No exclamation points. No "actually", "just a heads-up", "just so you know", or "FYI". Write declarative sentences. If a requested detail is missing from the sources, say only that you will confirm and follow up.`
-    : base;
+  const obligation = (firstMissing ?? []).some(isObligationProblem);
+  const retryPrompt = !first
+    ? base
+    : obligation
+      ? `${base}\n\nThe previous draft was rejected because it asserted an obligation that is not in the sources: ${firstMissing?.join("; ")}. Rewrite that draft without the claim. State only the parent's own facts and request. Do not assert what an agreement, parenting plan, court order, or law requires, permits, or forbids unless that text is in the sources. No exclamation points. No "actually", "just a heads-up", "just so you know", or "FYI".`
+      : `${base}\n\nThe previous draft was rejected: ${firstMissing?.join("; ")}. Keep every fact already in the current draft unless the user retracted it, and add the new fact. An arrival time does not replace a start time. No exclamation points. No "actually", "just a heads-up", "just so you know", or "FYI". Write declarative sentences. If a requested detail is missing from the sources, say only that you will confirm and follow up.`;
   const second = await callAnthropicDraft(retryPrompt, OUTBOUND_DRAFT_SYSTEM);
   const secondMissing = second ? draftProblems(second, sources, opts?.retain, userAsked) : null;
   if (second && secondMissing && secondMissing.length === 0) return second;
+  const obligationRemains = (secondMissing ?? firstMissing ?? []).some(isObligationProblem);
+  if (obligationRemains) {
+    console.error("[sage/outbound] obligation check failed twice; facts-only fallback", {
+      draft: second ?? first,
+      missing: secondMissing ?? firstMissing ?? ["no draft"],
+    });
+    return factsOnlyDraft(sources, userAsked);
+  }
   console.error("[sage/outbound] fact check failed twice; fallback", {
     draft: second ?? first,
     missing: secondMissing ?? firstMissing ?? ["no draft"],

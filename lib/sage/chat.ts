@@ -197,11 +197,17 @@ export async function processChatMessage(
       children: input.children,
       coparents: input.coparents,
     });
-  // Free text is the answer to an open message question only when the parent is answering it.
-  let taskTurn: "conversation" | undefined;
-  if (chatTurn && model && messageAnswerCandidate(input.message, input.conversation?.memory)) {
-    const reading = await model.readTurn(packet()).catch(() => null);
-    if (reading === "other") taskTurn = "conversation";
+  // Free text becomes the message only after a reading says the parent is answering the open question.
+  // A missing or failed reading produces no draft.
+  let taskTurn: "conversation" | "unreadable" | undefined;
+  if (chatTurn && messageAnswerCandidate(input.message, input.conversation?.memory)) {
+    if (!model) {
+      taskTurn = "unreadable";
+    } else {
+      const reading = await model.readTurn(packet()).catch(() => null);
+      if (reading === "other") taskTurn = "conversation";
+      else if (reading !== "answers_pending_question") taskTurn = "unreadable";
+    }
   }
   const routed = routeChatIntent({
     message: input.message,

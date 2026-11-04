@@ -4,7 +4,7 @@
  * or a placeholder reply for event (full flow comes later).
  */
 
-import { runClassify, type ClassifyPayload } from "@/lib/ai-classify";
+import { isClassifyFailure, runClassify, type ClassifyPayload } from "@/lib/ai-classify";
 import { mapExpenseCategoryFromClassify } from "@/lib/expenses-share";
 import { processChatMessage } from "@/lib/sage/chat";
 import { buildObservationFromChat } from "@/lib/sage/observation-builder";
@@ -209,6 +209,10 @@ export async function loadAndClassifyDocument(opts: {
   const mimeType = (doc.mime_type as string) || "application/octet-stream";
   const fileName = (doc.file_name as string) || "receipt";
   const classify = await runClassify(buf, mimeType, fileName);
+  if (isClassifyFailure(classify)) {
+    console.error("[chat-attach] classification failed:", classify.error);
+    return { error: classify.error, status: 502 };
+  }
   console.log("[chat-attach] type:", classify.type, "confidence:", classify.confidence);
 
   if (classify.confidence > 0 && !opts.preserveMetadata) {

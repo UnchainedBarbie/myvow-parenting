@@ -235,14 +235,28 @@ async function main() {
     assert.equal(answering.replies.length, 0, "the answer is not also answered conversationally");
     assert.match(answer.reply, /Nothing is sent until you review it and choose Send/);
 
-    // When the turn cannot be read, the existing slot filling stands. The draft still needs approval.
+    // A failed or missing reading does not turn the parent's sentence into the draft.
     const unread = double({ readings: {} });
-    const fallback = await chat("asshole", { model: unread.model, conversation: context({ memory }) });
-    // Text with no content for a message is never turned into a draft, even when the turn is unread.
+    const fallback = await chat("I can take Friday.", { model: unread.model, conversation: context({ memory }) });
     assert.equal(fallback.result.plan.proposals.length, 0);
-    assert.match(fallback.reply, /What do you want your co-parent to know or do\?/);
+    assert.match(fallback.reply, /didn't understand that request/i);
+    assert.doesNotMatch(fallback.reply, /I can take Friday/);
     const withoutModel = await chat("I can take Friday.", { model: null, conversation: context({ memory }) });
-    assert.ok(withoutModel.result.plan.proposals.some((proposal) => proposal.type === "reply_coparent"));
+    assert.equal(withoutModel.result.plan.proposals.some((proposal) => proposal.type === "reply_coparent"), false);
+    assert.match(withoutModel.reply, /didn't understand that request/i);
+    const thrownRead: ConversationModel = {
+      reply: async () => "should not be used",
+      readTurn: async () => {
+        throw new Error("turn reader down");
+      },
+    };
+    const thrown = await chat("He skipped the process and I want that on the record.", {
+      model: thrownRead,
+      conversation: context({ memory }),
+    });
+    assert.equal(thrown.result.plan.proposals.some((proposal) => proposal.type === "reply_coparent"), false);
+    assert.match(thrown.reply, /didn't understand that request/i);
+    assert.doesNotMatch(thrown.reply, /skipped the process/);
     assert.equal(messageAnswerCandidate("asshole", memory)?.name, "Kevin");
     assert.equal(messageAnswerCandidate("add it to the calendar for friday", memory), null);
     assert.equal(messageAnswerCandidate("hello", deriveWorkingMemory([])), null);

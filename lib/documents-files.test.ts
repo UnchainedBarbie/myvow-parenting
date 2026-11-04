@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { unreadDocumentClassification, runClassify } from "@/lib/ai-classify";
+import { isClassifyFailure, parseClassifyResponse, unreadDocumentClassification, runClassify } from "@/lib/ai-classify";
 import { documentAuthorizedForViewer } from "@/lib/documents-tab";
 import {
   DOCUMENT_MAX_BYTES,
@@ -122,7 +122,17 @@ assert.equal(
 );
 
 async function main() {
+  const empty = parseClassifyResponse("", "Ashley OT Evaluation.pdf");
+  const broken = parseClassifyResponse("not json", "Ashley OT Evaluation.pdf");
+  assert.equal(isClassifyFailure(empty), true);
+  assert.equal(isClassifyFailure(broken), true);
+  if (isClassifyFailure(empty)) assert.match(empty.error, /no readable result/i);
+  if (isClassifyFailure(broken)) assert.match(broken.error, /could not be read/i);
+  assert.equal("type" in empty, false);
+  assert.equal("type" in broken, false);
+
   const unread = await runClassify(Buffer.from(xlsx), "application/vnd.ms-excel", "Ashley OT Evaluation.xlsx");
+  if (isClassifyFailure(unread)) throw new Error(unread.error);
   assert.equal(unread.contentsRead, false);
   assert.equal(unread.type, "document");
   assert.equal(unread.amount, null);

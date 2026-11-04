@@ -154,20 +154,28 @@ async function main() {
       "You never showed up on Friday and I'm furious about it.",
       "You're an asshole for missing Emma's pickup.",
     ]) {
-      for (const model of [reading("answers_pending_question"), reading(null), null]) {
-        const result = await chat(text, { model, conversation: context({ memory }) });
-        const cards = messageCards(result);
-        assert.equal(cards.length, 1, "the parent's message becomes one card");
-        const card = cards[0];
-        assert.equal(card.draft, text, "the parent's words are kept exactly");
-        assert.equal(card.draft_origin, "parent_text");
-        assert.equal("revised_text" in card, false, "no rewrite is attached");
-        assert.equal(card.recipient_email, "kevin@example.com");
-        assert.equal(card.requires_approval, true);
-        assert.equal("executed" in card, false);
-        assert.match(result.reply, /your own words/i);
-        assert.match(result.reply, /review it and choose Send/);
-        assert.doesNotMatch(result.reply, /Sage (suggests|recommends)/i);
+      const supplied = await chat(text, {
+        model: reading("answers_pending_question"),
+        conversation: context({ memory }),
+      });
+      const cards = messageCards(supplied);
+      assert.equal(cards.length, 1, "the parent's message becomes one card");
+      const card = cards[0];
+      assert.equal(card.draft, text, "the parent's words are kept exactly");
+      assert.equal(card.draft_origin, "parent_text");
+      assert.equal("revised_text" in card, false, "no rewrite is attached");
+      assert.equal(card.recipient_email, "kevin@example.com");
+      assert.equal(card.requires_approval, true);
+      assert.equal("executed" in card, false);
+      assert.match(supplied.reply, /your own words/i);
+      assert.match(supplied.reply, /review it and choose Send/);
+      assert.doesNotMatch(supplied.reply, /Sage (suggests|recommends)/i);
+
+      for (const model of [reading(null), null]) {
+        const unread = await chat(text, { model, conversation: context({ memory }) });
+        assert.equal(messageCards(unread).length, 0, "a failed reading does not draft the parent's sentence");
+        assert.match(unread.reply, /didn't understand that request/i);
+        assert.doesNotMatch(unread.reply, new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"));
       }
     }
 

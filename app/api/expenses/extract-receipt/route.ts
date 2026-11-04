@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
-import { runClassify } from "@/lib/ai-classify";
+import { isClassifyFailure, runClassify } from "@/lib/ai-classify";
 
 type ReceiptExtraction = {
   description: string | null;
@@ -75,6 +75,9 @@ export async function POST(request: NextRequest) {
 
     // Reuse the existing classification pipeline to keep behavior aligned.
     const payload = await runClassify(buf, contentType, file.name);
+    if (isClassifyFailure(payload)) {
+      return NextResponse.json({ message: payload.error }, { status: 502 });
+    }
 
     const result: ReceiptExtraction = {
       description:

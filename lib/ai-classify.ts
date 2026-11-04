@@ -133,6 +133,21 @@ Respond ONLY in JSON format with no other text. For non-court documents, omit th
   "is_all_day": false (if event)
 }`;
 
+/** A classification that did not happen. This is not a document. */
+export type ClassifyFailure = {
+  failed: true;
+  error: string;
+};
+
+export function classificationFailure(error: string): ClassifyFailure {
+  console.error(`[ai-classify] ${error}`);
+  return { failed: true, error };
+}
+
+export function isClassifyFailure(value: ClassifyPayload | ClassifyFailure): value is ClassifyFailure {
+  return (value as ClassifyFailure).failed === true;
+}
+
 export type ClassifyPayload = {
   type: "document" | "expense" | "event";
   confidence: number;
@@ -191,29 +206,17 @@ export function unreadDocumentClassification(fileName: string): ClassifyPayload 
   };
 }
 
-export function parseClassifyResponse(content: string | undefined, fallbackFileName: string): ClassifyPayload {
-  const defaultPayload: ClassifyPayload = {
-    type: "document",
-    confidence: 0.3,
-    title: fallbackFileName,
-    description: "",
-    category: "other",
-    child_names: [],
-    date: null,
-    amount: null,
-    vendor: null,
-    start_time: null,
-    end_time: null,
-    location: null,
-    is_all_day: false,
-  };
-  if (!content?.trim()) return defaultPayload;
+export function parseClassifyResponse(
+  content: string | undefined,
+  fallbackFileName: string
+): ClassifyPayload | ClassifyFailure {
+  if (!content?.trim()) return classificationFailure("Classification returned no readable result.");
   let parsed: Record<string, unknown>;
   try {
     const cleaned = content.replace(/^```json?\s*|\s*```$/g, "").trim();
     parsed = JSON.parse(cleaned) as Record<string, unknown>;
   } catch {
-    return defaultPayload;
+    return classificationFailure("Classification returned a result that could not be read.");
   }
   const type = parsed.type === "expense" ? "expense" : parsed.type === "event" ? "event" : "document";
   const confidence = typeof parsed.confidence === "number" ? parsed.confidence : 0.5;
@@ -283,36 +286,20 @@ export function parseClassifyResponse(content: string | undefined, fallbackFileN
 
 /**
  * Run AI classification on a file buffer. Uses the same prompt and parsing as the inbox classify route.
- * Returns a default payload with empty child_names when ANTHROPIC_API_KEY is not set.
+ * A missing key, a thrown call, or an empty result is a failure, not a document.
  */
 export async function runClassify(
   buf: Buffer,
   contentType: string,
   fileName: string
-): Promise<ClassifyPayload> {
+): Promise<ClassifyPayload | ClassifyFailure> {
   const storedType = documentContentType(fileName, contentType);
   const imageType = anthropicImageType(storedType);
   if (!imageType && storedType !== PDF_TYPE) {
     return unreadDocumentClassification(fileName);
   }
   const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
-    return {
-      type: "document",
-      confidence: 0,
-      title: fileName,
-      description: "No AI classification (ANTHROPIC_API_KEY not set).",
-      category: "other",
-      child_names: [],
-      date: null,
-      amount: null,
-      vendor: null,
-      start_time: null,
-      end_time: null,
-      location: null,
-      is_all_day: false,
-    };
-  }
+  if (!apiKey) return classificationFailure("Classification is unavailable.");
 
   const anthropic = new Anthropic({ apiKey });
   let text = "";
@@ -382,21 +369,7 @@ export async function runClassify(
     }
   } catch (err) {
     console.error("[ai-classify] Anthropic API call failed:", err);
-    return {
-      type: "document",
-      confidence: 0,
-      title: fileName,
-      description: "AI classification failed.",
-      category: "other",
-      child_names: [],
-      date: null,
-      amount: null,
-      vendor: null,
-      start_time: null,
-      end_time: null,
-      location: null,
-      is_all_day: false,
-    };
+    return classificationFailure("Classification failed.");
   }
 
   return parseClassifyResponse(text.trim(), fileName);

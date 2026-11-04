@@ -1,6 +1,6 @@
 /**
  * Correctness gate for text the parent will send to the co-parent.
- * A time, date, or amount in that sentence must already be in the sources.
+ * A time, date, amount, or legal obligation in that sentence must already be in the sources.
  */
 
 import { eventSubjectFromTexts } from "@/lib/sage/event-subject";
@@ -241,6 +241,84 @@ export function soleFactLabel(text: string, kind: "time" | "date" | "amount"): s
  * Times, dates, dollar amounts, and "I checked" claims in the draft
  * that are not supported by the source text. Empty means the draft may be shown.
  */
+const OBLIGATION_PATTERNS: { re: RegExp; label: string }[] = [
+  {
+    re: /\b(our|the) agreement\b[^.?!]{0,100}\b(requires|require|required|says|states|provides|permits|permit|forbids|forbid|prohibits|prohibit|mandates|mandate|must|have to)\b/i,
+    label: "agreement obligation",
+  },
+  {
+    re: /\bparenting plan\b[^.?!]{0,100}\b(requires|require|required|says|states|provides|permits|permit|forbids|forbid|prohibits|prohibit|mandates|mandate|must|have to)\b/i,
+    label: "parenting plan obligation",
+  },
+  {
+    re: /\b(court order|the order|decree|statute|the law)\b[^.?!]{0,100}\b(requires|require|required|says|states|provides|permits|permit|forbids|forbid|prohibits|prohibit|mandates|mandate|must|have to)\b/i,
+    label: "court or legal obligation",
+  },
+  {
+    re: /\b(under|per) (our |the )?(agreement|parenting plan|court order|order|law|decree)\b/i,
+    label: "per the order or agreement",
+  },
+  { re: /\byou are required to\b/i, label: "you are required to" },
+  { re: /\byou are (not )?(allowed|permitted) to\b/i, label: "permitted or forbidden" },
+  {
+    re: /\b(required|obligated|obliged) (by|under) (the |our )?(agreement|plan|order|law|decree)\b/i,
+    label: "required by an instrument",
+  },
+  { re: /\bas required by\b/i, label: "as required by" },
+];
+
+const OBLIGATION_LABELS = new Set(OBLIGATION_PATTERNS.map((pattern) => pattern.label));
+
+/** Claims that an agreement, plan, order, or law requires, permits, or forbids something the sources do not contain. */
+export function unsupportedObligations(draft: string, sources: string): string[] {
+  const source = sources.toLowerCase().replace(/\s+/g, " ");
+  const problems: string[] = [];
+  for (const pattern of OBLIGATION_PATTERNS) {
+    const match = draft.match(pattern.re);
+    if (!match) continue;
+    const clause = match[0].toLowerCase().replace(/\s+/g, " ").trim();
+    if (clause && source.includes(clause)) continue;
+    problems.push(pattern.label);
+  }
+  return problems;
+}
+
+export function isObligationProblem(label: string): boolean {
+  return OBLIGATION_LABELS.has(label);
+}
+
+/** Parent sentences only. An invented obligation, a draft command, or a private label is left out. */
+export function factsOnlyDraft(sources: string, request = ""): string {
+  const kept: string[] = [];
+  const seen = new Set<string>();
+  for (const text of [sources, request]) {
+    for (const sentence of text.split(/(?<=[.?!])\s+/)) {
+      const line = sentence.trim();
+      if (line.length < 12) continue;
+      if (/\b(draft a message|make it more direct|make it shorter|cancel that message)\b/i.test(line)) continue;
+      if (/^(can you|please )?(draft|cancel|make)\b/i.test(line)) continue;
+      if (/\b(coercive control|litigation|for court)\b/i.test(line)) continue;
+      if (unsupportedObligations(line, sources).length > 0) continue;
+      if (unsupportedFacts(line, sources).length > 0) continue;
+      if (voiceProblems(line, request).length > 0) continue;
+      const key = line.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      kept.push(line);
+    }
+  }
+  const body = kept.join(" ");
+  if (
+    !body ||
+    unsupportedObligations(body, sources).length > 0 ||
+    unsupportedFacts(body, sources).length > 0 ||
+    voiceProblems(body, request).length > 0
+  ) {
+    return NO_DETAIL_REPLY;
+  }
+  return body;
+}
+
 export function unsupportedFacts(draft: string, sources: string): string[] {
   const draftText = normalizeSpaces(draft);
   const sourceText = normalizeSpaces(sources);

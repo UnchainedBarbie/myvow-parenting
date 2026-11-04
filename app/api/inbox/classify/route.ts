@@ -220,21 +220,9 @@ export async function POST(request: NextRequest) {
     let payload: ClassifyPayload;
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) {
-      payload = {
-        type: "document",
-        confidence: 0,
-        title: file.name,
-        description: "No AI classification (ANTHROPIC_API_KEY not set).",
-        category: "other",
-        child_names: [],
-        date: null,
-        amount: null,
-        vendor: null,
-        start_time: null,
-        end_time: null,
-        location: null,
-        is_all_day: false,
-      };
+      console.error("[classify] Classification is unavailable.");
+      await admin.storage.from(BUCKET).remove([storagePath]);
+      return NextResponse.json({ error: "Classification is unavailable." }, { status: 503 });
     } else {
       const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
       let text = "";
@@ -332,7 +320,16 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: "AI classification failed", details: String(anthropicError) }, { status: 500 });
       }
 
-      payload = parseClassifyResponse(text.trim(), file.name);
+      const parsed = parseClassifyResponse(text.trim(), file.name);
+      if (!parsed) {
+        console.error("[classify] Classification returned no readable result.");
+        await admin.storage.from(BUCKET).remove([storagePath]);
+        return NextResponse.json(
+          { error: "Classification returned no readable result." },
+          { status: 502 }
+        );
+      }
+      payload = parsed;
     }
 
     console.log("[classify] Parsed classification:", JSON.stringify(payload).slice(0, 300));
@@ -500,29 +497,14 @@ export async function POST(request: NextRequest) {
   }
 }
 
-function parseClassifyResponse(content: string | undefined, fallbackFileName: string): ClassifyPayload {
-  const defaultPayload: ClassifyPayload = {
-    type: "document",
-    confidence: 0.3,
-    title: fallbackFileName,
-    description: "",
-    category: "other",
-    child_names: [],
-    date: null,
-    amount: null,
-    vendor: null,
-    start_time: null,
-    end_time: null,
-    location: null,
-    is_all_day: false,
-  };
-  if (!content?.trim()) return defaultPayload;
+function parseClassifyResponse(content: string | undefined, fallbackFileName: string): ClassifyPayload | null {
+  if (!content?.trim()) return null;
   let parsed: Record<string, unknown>;
   try {
     const cleaned = content.replace(/^```json?\s*|\s*```$/g, "").trim();
     parsed = JSON.parse(cleaned) as Record<string, unknown>;
   } catch {
-    return defaultPayload;
+    return null;
   }
   const type = parsed.type === "expense" ? "expense" : parsed.type === "event" ? "event" : "document";
   const confidence = typeof parsed.confidence === "number" ? parsed.confidence : 0.5;

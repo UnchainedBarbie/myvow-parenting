@@ -15,7 +15,8 @@ import { TitleFilterPopover } from "@/components/documents/title-filter-popover"
 import { Filter, Pencil, Download, FileSpreadsheet, FileText, Trash2 } from "lucide-react";
 import { RecordSelectionBar } from "@/components/reports/record-selection-bar";
 import { SelectionReportDialog } from "@/components/reports/selection-report-dialog";
-import { downloadSelectionReport } from "@/lib/reports/download-selection-report";
+import { downloadSelectionReport, SelectionDownloadError } from "@/lib/reports/download-selection-report";
+import { namedUnavailableMessage } from "@/lib/reports/selection-report-shared";
 import { showErrorToast, showSuccessToast } from "@/components/ui/toaster";
 import { DOCUMENT_CATEGORY_LABELS, DOCUMENT_VISIBILITY_LABELS } from "@/lib/documents-tab";
 import { documentDownloadPath } from "@/lib/documents-files";
@@ -476,7 +477,16 @@ export function DocumentList({ documents, children = [], caseId }: DocumentListP
       );
       setReportOpen(false);
     } catch (error) {
-      setReportError(error instanceof Error ? error.message : "The report could not be created.");
+      const labels = new Map(
+        documents.map((doc) => [doc.id, doc.title?.trim() || doc.file_name.trim() || "Untitled document"])
+      );
+      setReportError(
+        error instanceof SelectionDownloadError
+          ? namedUnavailableMessage(error.message, error.unavailableIds, labels)
+          : error instanceof Error
+            ? error.message
+            : "The report could not be created."
+      );
     } finally {
       setCreatingReport(false);
     }

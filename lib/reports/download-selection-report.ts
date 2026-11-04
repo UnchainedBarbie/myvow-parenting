@@ -4,6 +4,16 @@ import {
   type SelectionReportKind,
 } from "@/lib/reports/selection-report-shared";
 
+export class SelectionDownloadError extends Error {
+  readonly unavailableIds: string[];
+
+  constructor(message: string, unavailableIds: string[]) {
+    super(message);
+    this.name = "SelectionDownloadError";
+    this.unavailableIds = unavailableIds;
+  }
+}
+
 export async function downloadSelectionReport(input: {
   caseId: string;
   reportType: SelectionReportKind;
@@ -21,8 +31,17 @@ export async function downloadSelectionReport(input: {
     }),
   });
   if (!response.ok) {
-    const data = (await response.json().catch(() => ({}))) as { message?: string };
-    throw new Error(selectionFailureMessage(response.status, data.message ?? null));
+    const data = (await response.json().catch(() => ({}))) as {
+      message?: string;
+      unavailable_ids?: unknown;
+    };
+    const unavailableIds = Array.isArray(data.unavailable_ids)
+      ? data.unavailable_ids.filter((id): id is string => typeof id === "string" && id.trim().length > 0)
+      : [];
+    throw new SelectionDownloadError(
+      selectionFailureMessage(response.status, data.message ?? null),
+      unavailableIds
+    );
   }
   const blob = await response.blob();
   if (!blob || blob.size === 0) {

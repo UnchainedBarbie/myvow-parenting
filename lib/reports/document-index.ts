@@ -21,6 +21,8 @@ export type DocumentIndexSource = {
   hasStoredFile: boolean;
   /** Description already saved on the document. Not generated for a report. */
   description?: string | null;
+  /** Incoming attachments stay unfiled. The report does not change that status. */
+  filing?: "incoming" | "filed";
 };
 
 export type DocumentIndexOptions = {
@@ -103,13 +105,14 @@ export function prepareDocumentIndex(input: {
   const rows = sorted.map((doc) => {
     const title = doc.title?.trim() || doc.fileName.trim() || "—";
     const id = formatDocumentNumber(doc.documentNumber);
+    const evidenceKey = id === "—" ? doc.fileName.trim() || doc.id : id;
     const links = [
       ...doc.linkedExpenses,
       ...doc.linkedMessages,
     ];
     const includePages = input.evidenceLabels != null && input.options.includeFiles;
     const evidence =
-      (includePages ? input.evidenceLabels?.get(id) : null) ??
+      (includePages ? input.evidenceLabels?.get(evidenceKey) : null) ??
       supportingEvidenceCell({
         linked: true,
         documentLabel: id === "—" ? null : id,
@@ -121,7 +124,7 @@ export function prepareDocumentIndex(input: {
       id,
       title,
       doc.fileName.trim() || "—",
-      documentCategoryLabel(doc.category),
+      doc.filing === "incoming" ? "Incoming attachment" : documentCategoryLabel(doc.category),
       doc.childName.trim() || "All children",
       uploadDate(doc.createdAt, input.timeZone),
       doc.uploadedByName?.trim() || "Not recorded",
@@ -182,10 +185,16 @@ export function prepareDocumentIndex(input: {
       const id = formatDocumentNumber(doc.documentNumber);
       const title = doc.title?.trim() || doc.fileName.trim() || "Untitled document";
       const stored = doc.description?.trim() || "";
+      const category = doc.filing === "incoming" ? "Incoming attachment" : documentCategoryLabel(doc.category);
+      const filing =
+        doc.filing === "incoming"
+          ? "Filing: Incoming attachment. Not filed. This report does not file the attachment or change the original file."
+          : null;
       return [
         `${id} — ${title}`,
-        `Date: ${uploadDate(doc.createdAt, input.timeZone)}. Category: ${documentCategoryLabel(doc.category)}. Child: ${doc.childName.trim() || "All children"}.`,
+        `Date: ${uploadDate(doc.createdAt, input.timeZone)}. Category: ${category}. Child: ${doc.childName.trim() || "All children"}.`,
         `Source: ${doc.fileName.trim() || "No filename stored"}.`,
+        ...(filing ? [filing] : []),
         stored
           ? `Stored description: ${stored}`
           : "Stored description: No description is stored.",
@@ -288,7 +297,7 @@ export function buildDocumentIndexCsv(documents: DocumentIndexSource[], timeZone
       id,
       doc.title?.trim() || doc.fileName.trim() || "—",
       doc.fileName.trim() || "—",
-      documentCategoryLabel(doc.category),
+      doc.filing === "incoming" ? "Incoming attachment" : documentCategoryLabel(doc.category),
       doc.childName.trim() || "All children",
       uploadDate(doc.createdAt, timeZone),
       doc.uploadedByName?.trim() || "Not recorded",

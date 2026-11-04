@@ -12,7 +12,8 @@ import { getCategoryColor } from "@/lib/categoryColors";
 import { Download, FileSpreadsheet, FileText, Check, XCircle, Filter, Paperclip, Pencil, Lock, ChevronUp, ChevronDown, Trash2 } from "lucide-react";
 import { RecordSelectionBar } from "@/components/reports/record-selection-bar";
 import { SelectionReportDialog } from "@/components/reports/selection-report-dialog";
-import { downloadSelectionReport } from "@/lib/reports/download-selection-report";
+import { downloadSelectionReport, SelectionDownloadError } from "@/lib/reports/download-selection-report";
+import { namedUnavailableMessage } from "@/lib/reports/selection-report-shared";
 import { showErrorToast, showSuccessToast } from "@/components/ui/toaster";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { coparentShareInvolves } from "@/lib/expenses-share";
@@ -864,7 +865,14 @@ export function ExpenseList({
       );
       setReportOpen(false);
     } catch (error) {
-      setReportError(error instanceof Error ? error.message : "The report could not be created.");
+      const labels = new Map(expenses.map((expense) => [expense.id, expense.description?.trim() || "Untitled expense"]));
+      setReportError(
+        error instanceof SelectionDownloadError
+          ? namedUnavailableMessage(error.message, error.unavailableIds, labels)
+          : error instanceof Error
+            ? error.message
+            : "The report could not be created."
+      );
     } finally {
       setCreatingReport(false);
     }

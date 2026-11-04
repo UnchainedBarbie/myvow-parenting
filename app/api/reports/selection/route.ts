@@ -100,7 +100,10 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     if (error instanceof SelectionAccessError) {
-      return NextResponse.json({ message: error.message }, { status: 403 });
+      return NextResponse.json(
+        { message: error.message, unavailable_ids: error.unavailableIds },
+        { status: 403 }
+      );
     }
     console.error("[reports/selection]", error);
     return NextResponse.json(
@@ -133,9 +136,8 @@ async function buildSelection(
       embedInPdf: true,
       recordIds: input.ids,
     });
-    if (loaded.expenses.length !== input.ids.length) {
-      throw new SelectionAccessError(input.ids.length - loaded.expenses.length);
-    }
+    const missingExpenses = input.ids.filter((id) => !loaded.expenses.some((expense) => expense.id === id));
+    if (missingExpenses.length > 0) throw new SelectionAccessError(missingExpenses);
     let warnings: string[] = [];
     const assembled = await assembleLabeledPdf({
       files: loaded.receiptFiles,
@@ -178,9 +180,8 @@ async function buildSelection(
     options,
     recordIds: input.ids,
   });
-  if (loaded.documents.length !== input.ids.length) {
-    throw new SelectionAccessError(input.ids.length - loaded.documents.length);
-  }
+  const missingDocuments = input.ids.filter((id) => !loaded.documents.some((doc) => doc.id === id));
+  if (missingDocuments.length > 0) throw new SelectionAccessError(missingDocuments);
   const assembled = await assembleLabeledPdf({
     files: loaded.files,
     includeFiles: options.includeFiles,

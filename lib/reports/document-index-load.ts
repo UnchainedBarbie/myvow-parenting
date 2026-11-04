@@ -6,7 +6,9 @@ import {
   supportingFileSentence,
   type SupportingFile,
 } from "@/lib/reports/embed-attachments";
+import type { IncomingMessageLink } from "@/lib/documents/incoming-attachments";
 import type { DocumentIndexOptions, DocumentIndexSource } from "@/lib/reports/document-index";
+import { documentsForSelection } from "@/lib/reports/document-selection";
 import { SelectionAccessError, uniqueSelectedIds } from "@/lib/reports/selection-access";
 
 type Admin = ReturnType<typeof getServiceRoleClient>;
@@ -102,16 +104,43 @@ export async function loadDocumentIndex(input: {
 
   const role = (viewerMemberResult.data as { role?: string | null } | null)?.role ?? null;
   const raw = (documentResult.data ?? []) as RawDocument[];
-  let visible = raw.filter((doc) =>
+  const authorizedActive = raw.filter((doc) =>
     documentAuthorizedForViewer({ visibility: doc.visibility, uploadedBy: doc.uploaded_by }, { userId, role })
   );
-  let withheldCount = raw.length - visible.length;
+  let visible = authorizedActive;
+  let incomingIds = new Set<string>();
+  let withheldCount = raw.length - authorizedActive.length;
   if (input.recordIds) {
     const wanted = uniqueSelectedIds(input.recordIds);
-    const byId = new Map(visible.map((doc) => [doc.id, doc]));
-    const missing = wanted.filter((id) => !byId.has(id));
-    if (missing.length > 0) throw new SelectionAccessError(missing.length);
-    visible = wanted.map((id) => byId.get(id)!);
+    const activeIds = new Set(authorizedActive.map((doc) => doc.id));
+    const pendingIds = wanted.filter((id) => !activeIds.has(id));
+    const pendingResult =
+      pendingIds.length > 0
+        ? await admin
+            .from("documents")
+            .select(
+              "id, title, description, file_name, mime_type, category, created_at, visibility, document_number, uploaded_by, related_comm_id, storage_path"
+            )
+            .eq("case_id", caseId)
+            .eq("status", "pending")
+            .is("deleted_at", null)
+            .in("id", pendingIds)
+        : { data: [] as RawDocument[], error: null };
+    if (pendingResult.error) throw new Error(pendingResult.error.message);
+    const pending = (pendingResult.data ?? []) as RawDocument[];
+    const links = await incomingMessageLinks(admin, pending.map((doc) => doc.id));
+    const selected = documentsForSelection({
+      active: authorizedActive.map(selectableDocument),
+      pending: pending.map((doc) => ({ ...selectableDocument(doc), status: "pending" })),
+      links,
+      caseId,
+      viewer: { userId, role },
+      recordIds: wanted,
+    });
+    if (selected.missing.length > 0) throw new SelectionAccessError(selected.missing);
+    const byId = new Map([...authorizedActive, ...pending].map((doc) => [doc.id, doc]));
+    visible = selected.included.map((doc) => byId.get(doc.id)).filter((doc): doc is RawDocument => Boolean(doc));
+    incomingIds = selected.incomingIds;
     withheldCount = 0;
   }
   const visibleIds = visible.map((doc) => doc.id);
@@ -373,7 +402,10 @@ export async function loadDocumentIndex(input: {
     title: doc.title ?? null,
     fileName: doc.file_name?.trim() || "Untitled file",
     category: doc.category ?? "",
-    childName: childNameByDocument.get(doc.id) || "All children",
+    childName:
+      incomingIds.has(doc.id) && !childNameByDocument.get(doc.id)
+        ? "Not filed"
+        : childNameByDocument.get(doc.id) || "All children",
     createdAt: doc.created_at ?? "",
     visibility: doc.visibility ?? "private",
     conversations: [...(conversationsByDocument.get(doc.id) ?? [])].sort((a, b) => a.localeCompare(b)),
@@ -387,6 +419,7 @@ export async function loadDocumentIndex(input: {
     ],
     hasStoredFile: Boolean(doc.storage_path?.trim()),
     description: typeof doc.description === "string" ? doc.description : null,
+    filing: incomingIds.has(doc.id) ? "incoming" : "filed",
   }));
 
   const files: SupportingFile[] = [];
@@ -399,7 +432,8 @@ export async function loadDocumentIndex(input: {
     for (const doc of ordered) {
       const rawDoc = visible.find((item) => item.id === doc.id);
       const record = formatDocumentNumber(doc.documentNumber);
-      const supports = [record === "—" ? doc.id : record, ...doc.linkedExpenses];
+      const recordLabel = record === "—" ? doc.fileName.trim() || "Incoming attachment" : record;
+      const supports = [recordLabel, ...doc.linkedExpenses];
       const file: SupportingFile = {
         key: doc.id,
         records: supports,
@@ -411,7 +445,7 @@ export async function loadDocumentIndex(input: {
       };
       const path = rawDoc?.storage_path?.trim();
       if (!path) {
-        file.unavailableReason = "No file is stored for this document.";
+        file.unavailableReason = "Attachment unavailable. No file is stored for this document.";
       } else {
         const { data, error } = await admin.storage.from("documents").download(path);
         if (error || !data) {
@@ -458,4 +492,60 @@ export async function loadDocumentIndex(input: {
     linkWarning,
     files,
   };
+}
+
+function selectableDocument(doc: RawDocument) {
+  return {
+    id: doc.id,
+    fileName: doc.file_name?.trim() || "",
+    status: "active",
+    visibility: doc.visibility ?? null,
+    uploadedBy: doc.uploaded_by ?? null,
+  };
+}
+
+async function incomingMessageLinks(admin: Admin, documentIds: string[]): Promise<IncomingMessageLink[]> {
+  if (documentIds.length === 0) return [];
+  const { data: linkRows, error } = await admin
+    .from("message_documents")
+    .select("document_id, message_id")
+    .in("document_id", documentIds);
+  if (error) throw new Error(error.message);
+  const messageIds = [
+    ...new Set(
+      (linkRows ?? [])
+        .map((row) => (row as { message_id?: string }).message_id)
+        .filter((id): id is string => typeof id === "string" && id.length > 0)
+    ),
+  ];
+  const { data: messageRows, error: messageError } =
+    messageIds.length > 0
+      ? await admin
+          .from("messages")
+          .select("id, case_id, conversation_id, direction, created_at, sender_external_email")
+          .in("id", messageIds)
+      : { data: [], error: null };
+  if (messageError) throw new Error(messageError.message);
+  const messageById = new Map((messageRows ?? []).map((row) => [(row as { id: string }).id, row]));
+  return (linkRows ?? []).map((row) => {
+    const messageId = (row as { message_id?: string }).message_id ?? "";
+    const message = messageById.get(messageId) as
+      | {
+          case_id?: string | null;
+          conversation_id?: string | null;
+          direction?: string | null;
+          created_at?: string | null;
+          sender_external_email?: string | null;
+        }
+      | undefined;
+    return {
+      documentId: (row as { document_id?: string }).document_id ?? "",
+      messageId,
+      conversationId: message?.conversation_id ?? null,
+      sender: (message?.sender_external_email ?? "").trim() || null,
+      receivedAt: message?.created_at ?? null,
+      direction: message?.direction ?? null,
+      caseId: message?.case_id ?? null,
+    };
+  });
 }

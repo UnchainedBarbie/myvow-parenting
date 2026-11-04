@@ -1,11 +1,19 @@
 /** Raised when a requested id is missing from the records this parent can access. */
 export class SelectionAccessError extends Error {
   readonly unavailableCount: number;
+  readonly unavailableIds: string[];
 
-  constructor(count: number) {
-    super("Some selected records are not available.");
+  constructor(unavailable: string[] | number) {
+    const ids = Array.isArray(unavailable) ? uniqueSelectedIds(unavailable) : [];
+    const count = Array.isArray(unavailable) ? ids.length : Math.max(0, unavailable);
+    super(
+      count === 1
+        ? "1 selected record is not available."
+        : `${count} selected records are not available.`
+    );
     this.name = "SelectionAccessError";
     this.unavailableCount = count;
+    this.unavailableIds = ids;
   }
 }
 

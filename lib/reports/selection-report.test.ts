@@ -296,6 +296,82 @@ assert.match(docPdf.buffer.toString("latin1"), /Document Index/);
 assert.match(docPdf.buffer.toString("latin1"), /School note/);
 assert.doesNotMatch(docPdf.buffer.toString("latin1"), /Not selected/);
 
+const incomingDoc = document({
+  id: "incoming-1",
+  documentNumber: null,
+  title: "Pediatrician listing",
+  fileName: "Pediatrician listing.xlsx",
+  hasStoredFile: false,
+  filing: "incoming",
+  childName: "Not filed",
+  description: null,
+});
+const filedDoc = document({
+  id: "filed-1",
+  documentNumber: 12,
+  title: "School form",
+  fileName: "form.pdf",
+  hasStoredFile: true,
+});
+const mixed = prepareDocumentIndex({
+  documents: [filedDoc, incomingDoc],
+  parents: [{ name: "Alex Rivera" }],
+  caseLabel: "FAM-100",
+  timeZone: "America/Denver",
+  generatedAt: new Date("2026-11-04T16:00:00.000Z"),
+  options: selectionDocumentOptions({ index: true, metadata: true, files: true }),
+  withheldCount: 0,
+  scope: "selected",
+  fileLines: [
+    "DOC-012 — form.pdf — appended after this report.",
+    "Pediatrician listing.xlsx — Pediatrician listing.xlsx — not available. Attachment unavailable. No file is stored for this document. It is not included in the download bundle.",
+  ],
+  linkWarning: null,
+});
+assert.equal(mixed.includedCount, 2);
+assert.match(JSON.stringify(mixed.document), /Pediatrician listing/);
+assert.match(JSON.stringify(mixed.document), /DOC-012/);
+assert.match(JSON.stringify(mixed.document), /Not filed/);
+assert.match(JSON.stringify(mixed.document), /does not file the attachment/);
+assert.doesNotMatch(JSON.stringify(mixed.document), /Private other|secret\.pdf/);
+const mixedCsv = buildDocumentIndexCsv([filedDoc, incomingDoc], "America/Denver");
+assert.match(mixedCsv, /DOC-012/);
+assert.match(mixedCsv, /Pediatrician listing\.xlsx/);
+assert.match(mixedCsv, /Attachment unavailable/);
+assert.match(mixedCsv, /—/);
+const originalListing = Buffer.from("original-listing-bytes");
+const formPdf = await tinyPdf();
+const mixedFiles = await assembleLabeledPdf({
+  files: [
+    file({
+      key: "filed-1",
+      fileName: "form.pdf",
+      mimeType: "application/pdf",
+      bytes: formPdf,
+      records: ["DOC-012"],
+      documentLabel: "DOC-012",
+    }),
+    file({
+      key: "incoming-1",
+      fileName: "Pediatrician listing.xlsx",
+      records: ["Pediatrician listing.xlsx"],
+      documentLabel: null,
+      unavailableReason: "Attachment unavailable. No file is stored for this document.",
+      bytes: null,
+    }),
+  ],
+  includeFiles: true,
+  bundleFolder: "documents",
+  build: () => buildDocumentIndexPdf(mixed.document, "FAM-100", mixed.verificationPayload),
+});
+assert.equal(mixedFiles.bundle.some((entry) => entry.name.includes("Pediatrician listing")), false);
+assert.ok(mixedFiles.warnings.some((warning) => warning.includes("Pediatrician listing.xlsx")));
+assert.equal(originalListing.equals(Buffer.from("original-listing-bytes")), true);
+const mixedPdf = mixedFiles.pdf.toString("latin1");
+assert.match(mixedPdf, /Pediatrician listing/);
+assert.match(mixedPdf, /School form/);
+assert.doesNotMatch(mixedPdf, /secret\.pdf/);
+
 assert.equal(selectionFailureMessage(401, null), "Sign in again to create this report.");
 assert.match(selectionFailureMessage(403, "Some selected records are not available."), /not available/);
 assert.match(selectionFailureMessage(500, ""), /could not be created/);

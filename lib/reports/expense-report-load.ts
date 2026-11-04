@@ -149,7 +149,7 @@ export async function loadExpenseReport(input: {
     const wanted = uniqueSelectedIds(input.recordIds);
     const byId = new Map(rawExpenses.map((expense) => [String((expense as { id: string }).id), expense]));
     const missing = wanted.filter((id) => !byId.has(id));
-    if (missing.length > 0) throw new SelectionAccessError(missing.length);
+    if (missing.length > 0) throw new SelectionAccessError(missing);
     rawExpenses = wanted.map((id) => byId.get(id)!);
   }
   const relatedIds = [

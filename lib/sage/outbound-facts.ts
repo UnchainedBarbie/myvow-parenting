@@ -287,6 +287,25 @@ export function isObligationProblem(label: string): boolean {
   return OBLIGATION_LABELS.has(label);
 }
 
+const INSTRUMENT_REQUEST =
+  /\b(?:tell|ask)\s+(?:him|her|them|my co-parent)\b(?:\s+that)?\s+(?:our agreement|the agreement|the parenting plan|parenting plan|the court order|court order|the decree|the statute|the law|the order)\s+(?:requires|require|required|says|states|provides|permits|permit|forbids|forbid|prohibits|prohibit|mandates|mandate|must|have to)\s+([^.?!]+)/i;
+
+/**
+ * The act inside an instruction to assert an instrument.
+ * "Tell him the parenting plan requires a response within 48 hours" yields a request
+ * for that response. The instrument is not part of the result. Null when the text is
+ * not that kind of instruction.
+ */
+export function requestWithoutInstrument(text: string): string | null {
+  const match = text.match(INSTRUMENT_REQUEST);
+  if (!match) return null;
+  const act = match[1].trim().replace(/[.?!]+$/, "");
+  if (act.length < 8) return null;
+  const draft = `I am asking for ${act}.`;
+  if (unsupportedObligations(draft, "").length > 0) return null;
+  return draft;
+}
+
 /** Parent sentences only. An invented obligation, a draft command, or a private label is left out. */
 export function factsOnlyDraft(sources: string, request = ""): string {
   const kept: string[] = [];

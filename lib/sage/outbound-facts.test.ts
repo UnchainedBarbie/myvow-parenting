@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { factsOnlyDraft, unsupportedObligations } from "@/lib/sage/outbound-facts";
+import { factsOnlyDraft, requestWithoutInstrument, unsupportedObligations } from "@/lib/sage/outbound-facts";
 
 const SENTENCE =
   "Our agreement requires that decisions about the girls' medical care go through the designated decision-maker process";
@@ -22,6 +22,14 @@ assert.deepEqual(
   unsupportedObligations("Please tell me why you emailed the office yourself.", "He emailed the office."),
   []
 );
+
+const told =
+  "Tell him the parenting plan requires a response within 48 hours.";
+const withoutPlan = requestWithoutInstrument(told);
+assert.equal(withoutPlan, "I am asking for a response within 48 hours.");
+assert.deepEqual(unsupportedObligations(withoutPlan ?? "", ""), []);
+assert.ok(unsupportedObligations("The parenting plan requires a response within 48 hours.", "").length > 0);
+assert.equal(requestWithoutInstrument("Please tell me why you emailed the office yourself."), null);
 
 const fallback = factsOnlyDraft(noPlan, "Please tell me why you emailed the office yourself.");
 assert.equal(fallback.includes("agreement"), false);

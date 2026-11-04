@@ -126,6 +126,8 @@ export type ContextFrame = {
   taskObjective?: GroundedIn | null;
   /** True when an earlier draft in this turn did not ask taskObjective.question. */
   correctingMissedQuestion?: boolean;
+  /** Labels from the obligation check, set only on the one rewrite of a rejected draft. */
+  rejectedObligation?: string;
   capabilities: readonly ActionKind[];
 };
 
@@ -293,11 +295,16 @@ export function hasConversationSubstance(frame: ContextFrame): boolean {
   return frame.facts.some((fact) => fact.speaker === "parent" && fact.text.trim().length > 12);
 }
 
+function substantive(text: string | null | undefined): boolean {
+  return (text ?? "").trim().length > 12;
+}
+
 /**
- * True when this frame already holds a discussion a message can continue.
- * A later request may point at that discussion with "him", "that", or "what we discussed"
- * without restating it. Clarification is for when this is false.
+ * True when this frame can ground a message.
+ * A prior parent fact, or an outcome the interpreter found in this turn, counts.
+ * The length of the request does not. A stored objective from earlier work does not.
  */
 export function conversationSupportsDraft(frame: ContextFrame): boolean {
-  return relevantParentFacts(frame).some((fact) => fact.text.trim().length > 12);
+  if (relevantParentFacts(frame).some((fact) => substantive(fact.text))) return true;
+  return (frame.interpretation?.outcome ?? "").trim().length > 0;
 }

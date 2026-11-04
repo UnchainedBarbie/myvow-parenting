@@ -212,6 +212,65 @@ async function main() {
     assert.ok(frame.capabilities.includes("message"));
     assert.equal(hasConversationSubstance(frame), true);
     assert.equal(conversationSupportsDraft(frame), true);
+    const firstTurn = buildContextFrame({
+      parentId: "parent-ashley",
+      caseId: "case-1",
+      message: "Tell him the parenting plan requires a response within 48 hours.",
+      recentTurns: [],
+      coparents: [kevin],
+    });
+    assert.equal(conversationSupportsDraft(firstTurn), false);
+    assert.equal(
+      conversationSupportsDraft({
+        ...firstTurn,
+        interpretation: {
+          kind: "message",
+          outcome: firstTurn.requestText,
+          refersTo: null,
+          grounding: "conversation",
+          relevantFactIndexes: [],
+          uncertain: [],
+          disputed: [],
+          recipientName: "Kevin",
+        },
+      }),
+      true
+    );
+    assert.equal(hasConversationSubstance(firstTurn), false);
+    const bareRequest = buildContextFrame({
+      parentId: "parent-ashley",
+      caseId: "case-1",
+      message: "Please draft a message to Kevin.",
+      recentTurns: [],
+      coparents: [kevin],
+    });
+    assert.equal(conversationSupportsDraft(bareRequest), false);
+    assert.equal(
+      conversationSupportsDraft({
+        ...bareRequest,
+        taskObjective: {
+          outcome: "Ask about the pediatrician disagreement from earlier.",
+          question: "Ask about the pediatrician disagreement from earlier.",
+          turns: [],
+          facts: [],
+          uncertain: [],
+          private_constraints: [],
+          rejected: [],
+          last_guidance: "",
+          evidence_refs: [],
+          history: [],
+        },
+      }),
+      false
+    );
+    const thin = buildContextFrame({
+      parentId: "parent-ashley",
+      caseId: "case-1",
+      message: "Draft it",
+      recentTurns: [],
+      coparents: [kevin],
+    });
+    assert.equal(conversationSupportsDraft(thin), false);
     assert.ok(relevantParentFacts(frame).some((fact) => /have not agreed on a new pediatrician/i.test(fact.text)));
     assert.ok(sageOnlyFacts(frame).every((fact) => fact.speaker === "sage"));
     assert.ok(sageOnlyFacts(frame).some((fact) => /That sounds hard/i.test(fact.text)));
@@ -410,6 +469,26 @@ async function main() {
     assert.equal(ashleyFrame.facts.some((fact) => /soccer/i.test(fact.text)), false);
     assert.ok(kevinFrame.facts.some((fact) => /soccer/i.test(fact.text)));
     assert.equal(kevinFrame.facts.some((fact) => /pediatrician/i.test(fact.text)), false);
+  }
+
+  // --- A first message is grounding, and an unsupported plan claim does not survive ----------------
+  {
+    const REQUEST = "Tell him the parenting plan requires a response within 48 hours.";
+    const spoken = actionModel({
+      draft: "The parenting plan requires a response within 48 hours.",
+      outcome: REQUEST,
+    });
+    const result = await chat(REQUEST, {
+      action: spoken.model,
+      recentTurns: [],
+      conversation: emptyConversation(),
+    });
+    const card = result.result.plan.proposals.find((proposal) => proposal.type === "reply_coparent");
+    assert.ok(card, "a first message that states the request is drafted");
+    assert.match(card.draft ?? "", /response within 48 hours/i);
+    assert.doesNotMatch(card.draft ?? "", /parenting plan/i);
+    assert.doesNotMatch(card.draft ?? "", /requires/i);
+    assert.doesNotMatch(result.reply, /conversation we just had/i);
   }
 
   // --- Missing or conflicting context --------------------------------------------------------------

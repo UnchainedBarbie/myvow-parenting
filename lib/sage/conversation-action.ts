@@ -29,6 +29,12 @@ import {
   settleDraftReview,
   type FidelityModel,
 } from "@/lib/sage/instruction-fidelity";
+import {
+  factsOnlyDraft,
+  requestWithoutInstrument,
+  unsupportedFacts,
+  unsupportedObligations,
+} from "@/lib/sage/outbound-facts";
 import { draftExposesPrivateStrategy, draftMissesIntendedQuestion, questionCoverage, type GroundedIn } from "@/lib/sage/task-objective";
 
 export type ConversationActionModel = {
@@ -189,9 +195,11 @@ export function draftRequestBody(frame: ContextFrame) {
           ),
           block("PRIVATE_OBJECTIVE", [frame.taskObjective?.outcome || interpretation?.outcome || ""]),
           block("PARENT_REQUEST", [frame.requestText]),
-          frame.correctingMissedQuestion
-            ? "The previous attempt missed QUESTION_TO_ASK or copied private strategy. Write a new message that asks QUESTION_TO_ASK. Do not paraphrase the previous attempt. Do not copy STORED_OBJECTIVE, PRIVATE_CONSTRAINTS, or REJECTED_FEEDBACK."
-            : "Write the recipient-facing message body only. Do not include private strategy, coaching, or legal conclusions.",
+          frame.rejectedObligation
+            ? `The previous draft was rejected because it asserted an obligation that is not in the sources: ${frame.rejectedObligation}. Rewrite that draft without the claim. Keep the parent's request. Do not assert what an agreement, parenting plan, court order, or law requires, permits, or forbids unless that text is in PARENT_FACTS or PARENT_CONTEXT.`
+            : frame.correctingMissedQuestion
+              ? "The previous attempt missed QUESTION_TO_ASK or copied private strategy. Write a new message that asks QUESTION_TO_ASK. Do not paraphrase the previous attempt. Do not copy STORED_OBJECTIVE, PRIVATE_CONSTRAINTS, or REJECTED_FEEDBACK."
+              : "Write the recipient-facing message body only. Do not include private strategy, coaching, or legal conclusions.",
         ].join("\n"),
       },
     ],
@@ -371,11 +379,66 @@ export function anthropicConversationActionModel(): ConversationActionModel {
   };
 }
 
-function askForPurpose(recipient: KnownCoparent | null): string {
-  if (recipient) {
-    return `What should I tell ${YOUR_CO_PARENT}? I want to use the conversation we just had, and I will not invent the details.`;
+function hasPriorTurns(frame: ContextFrame): boolean {
+  return frame.recentTurns.length > 0 || (frame.parentContext ?? []).some((line) => line.trim().length > 0);
+}
+
+function askForPurpose(frame: ContextFrame, recipient: KnownCoparent | null): string {
+  if (!recipient) {
+    return "Who should I write to, and what should the message ask them? I will not invent the details.";
   }
-  return "Who should I write to, and what should the message ask them? I will not invent the details.";
+  if (!hasPriorTurns(frame)) {
+    return `What should I tell ${YOUR_CO_PARENT}? There is no earlier conversation to use, and I will not invent the details.`;
+  }
+  return `What should I tell ${YOUR_CO_PARENT}? I want to use the conversation we just had, and I will not invent the details.`;
+}
+
+/** Facts already held. The instruction to assert an instrument is not one of them. */
+function obligationRecord(frame: ContextFrame): string {
+  return [...factsForDraft(frame), ...(frame.parentContext ?? []), ...(frame.taskObjective?.evidence_refs ?? [])]
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join("\n");
+}
+
+/**
+ * Reject a draft that asserts an agreement, plan, order, or law the record does not contain.
+ * One rewrite, then the parent's request with that claim removed.
+ */
+async function dropUnsupportedObligation(
+  body: string,
+  frame: ContextFrame,
+  model: ConversationActionModel | null
+): Promise<string> {
+  const sources = obligationRecord(frame);
+  const problems = unsupportedObligations(body, sources);
+  if (problems.length === 0) return body;
+  console.error("[sage/outbound] draft rejected", { draft: body, missing: problems });
+  const act = requestWithoutInstrument(frame.requestText);
+  const retryFrame: ContextFrame = {
+    ...frame,
+    rejectedObligation: problems.join("; "),
+    taskObjective: frame.taskObjective
+      ? { ...frame.taskObjective, question: act || frame.taskObjective.question }
+      : frame.taskObjective,
+    interpretation: frame.interpretation
+      ? { ...frame.interpretation, question: act || frame.interpretation.question }
+      : frame.interpretation,
+  };
+  const retried = model
+    ? acceptedDraft(await model.draftMessage(retryFrame).catch(() => null), retryFrame)
+    : null;
+  if (retried && unsupportedObligations(retried, sources).length === 0 && unsupportedFacts(retried, sources).length === 0) {
+    return retried;
+  }
+  console.error("[sage/outbound] obligation check failed twice; facts-only fallback", {
+    draft: retried ?? body,
+    missing: retried ? unsupportedObligations(retried, sources) : problems,
+  });
+  if (act && unsupportedObligations(act, sources).length === 0 && unsupportedFacts(act, sources).length === 0) {
+    return act;
+  }
+  return factsOnlyDraft(sources, frame.requestText);
 }
 
 function interpretationForDraft(
@@ -479,13 +542,21 @@ export async function decideConversationAction(input: DecideInput): Promise<Conv
   }
 
   const recipient = matchRecipient(frame, interpretation?.recipientName ?? null);
+  if (interpretation && interpretation.kind === "message" && !interpretation.outcome.trim()) {
+    return {
+      status: "ask",
+      question: askForPurpose(frame, recipient),
+      recipient,
+      interpretation,
+    };
+  }
   const usable = interpretationForDraft(frame, interpretation);
   const framed: ContextFrame = { ...frame, interpretation: usable };
 
   if (!canDraftFromFrame && (!usable.outcome.trim() || grounding === "insufficient" || !interpretation)) {
     return {
       status: "ask",
-      question: askForPurpose(recipient),
+      question: askForPurpose(frame, recipient),
       recipient,
       interpretation,
     };
@@ -512,8 +583,25 @@ export async function decideConversationAction(input: DecideInput): Promise<Conv
     body: string,
     interpretation: ActionInterpretation
   ): Promise<ConversationActionDecision> => {
-    const checked = await enforceFaithfulDraft({ model, frame: framed, body });
+    const guarded = await dropUnsupportedObligation(body, framed, model);
+    const act = requestWithoutInstrument(framed.requestText);
+    const reviewFrame: ContextFrame =
+      act && guarded !== body && framed.taskObjective
+        ? { ...framed, taskObjective: { ...framed.taskObjective, question: act } }
+        : framed;
+    const checked = await enforceFaithfulDraft({ model, frame: reviewFrame, body: guarded });
     if (checked.status === "ask") {
+      // The reviewer may insist on an instrument the record does not contain. That claim stays out.
+      if (guarded !== body && unsupportedObligations(guarded, obligationRecord(framed)).length === 0) {
+        return {
+          status: "draft",
+          recipient,
+          body: guarded,
+          interpretation,
+          objective: reviewFrame.taskObjective ?? checked.objective,
+          validation: "unreviewed",
+        };
+      }
       return {
         status: "ask",
         question: checked.question,
@@ -522,10 +610,11 @@ export async function decideConversationAction(input: DecideInput): Promise<Conv
         objective: checked.objective,
       };
     }
+    const finalBody = await dropUnsupportedObligation(checked.body, framed, model);
     return {
       status: "draft",
       recipient,
-      body: checked.body,
+      body: finalBody,
       interpretation,
       objective: checked.objective,
       validation: checked.validation,
@@ -567,7 +656,7 @@ export async function decideConversationAction(input: DecideInput): Promise<Conv
   if (!body) {
     return {
       status: "ask",
-      question: askForPurpose(recipient),
+      question: askForPurpose(frame, recipient),
       recipient,
       interpretation,
     };
@@ -617,7 +706,9 @@ async function enforceFaithfulDraft(opts: {
         taskObjective: repaired,
         correctingMissedQuestion: true,
       };
-      return acceptedDraft(await opts.model.draftMessage(retryFrame).catch(() => null), retryFrame);
+      const repairedDraft = acceptedDraft(await opts.model.draftMessage(retryFrame).catch(() => null), retryFrame);
+      if (!repairedDraft) return null;
+      return dropUnsupportedObligation(repairedDraft, retryFrame, opts.model);
     },
   });
 }

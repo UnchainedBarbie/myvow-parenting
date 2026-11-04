@@ -56,7 +56,7 @@ assert.deepEqual(
   calendar.result.plan.proposals.map((p) => p.type),
   ["calendar_update"]
 );
-assert.match(calendar.reply, /notify Kevin/i);
+assert.match(calendar.reply, /notify your co-parent/i);
 assert.equal(calendar.result.plan.proposals[0].date, "2026-10-22");
 assert.doesNotMatch(calendar.result.plan.proposals[0].draft, /Kevin/);
 
@@ -71,7 +71,7 @@ assert.equal(
   explicit.result.plan.proposals.some((p) => p.type === "reply_coparent"),
   false
 );
-assert.match(explicit.reply, /What should I tell Kevin/i);
+assert.match(explicit.reply, /What should I tell your co-parent/i);
 
 const followUp = routeChatIntent({
   message: "Can you let him know?",

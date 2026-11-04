@@ -16,7 +16,12 @@ import type { KnownChild } from "@/lib/sage/calendar-chat";
 import type { ConversationContext } from "@/lib/sage/conversation-context";
 import type { ConversationTurn } from "@/lib/sage/conversation-reply";
 import { proposalId } from "@/lib/sage/proposal-lifecycle";
-import { openTasksFromMemory, type OpenTask } from "@/lib/sage/open-task";
+import {
+  establishedMessageObjectives,
+  openTasksFromMemory,
+  type EstablishedObjective,
+  type OpenTask,
+} from "@/lib/sage/open-task";
 import type { GroundedIn } from "@/lib/sage/task-objective";
 import { focusKindOf } from "@/lib/sage/working-memory";
 
@@ -57,6 +62,13 @@ export type ActionInterpretation = {
    *                            write that trap; it asks about the factual topic instead.
    */
   elicitation?: "open_question" | "predetermined_admission" | null;
+  /**
+   * True only when the parent explicitly replaces the requested outcome.
+   * Absent means the established objective continues.
+   */
+  outcomeChanged?: boolean;
+  /** Id of the established objective this request continues, or null. */
+  establishedTaskId?: string | null;
 };
 
 export type OpenWork = {
@@ -103,6 +115,8 @@ export type ContextFrame = {
   completed: CompletedWork[];
   /** Live and closed tasks derived from this session's proposals. Historical sessions are not mixed in. */
   openTasks: OpenTask[];
+  /** Message goals already stored in this session, including closed drafts. */
+  establishedObjectives: EstablishedObjective[];
   /**
    * Outgoing drafts this turn may revise. Undefined keeps every open message proposal.
    * Empty means this turn starts a new message and must not rewrite another draft.
@@ -198,6 +212,11 @@ function completedWork(conversation: ConversationContext | null | undefined): Co
 export function buildContextFrame(input: BuildContextFrameInput): ContextFrame {
   const recentTurns = (input.recentTurns ?? []).filter((turn) => turn.text.trim());
   const { proposals, clarification } = openWork(input.conversation);
+  const openTasks = openTasksFromMemory(input.conversation?.memory, {
+    ownerId: input.parentId,
+    caseId: input.caseId,
+    sessionId: input.sessionId ?? null,
+  });
   return {
     parentId: input.parentId,
     caseId: input.caseId,
@@ -219,11 +238,8 @@ export function buildContextFrame(input: BuildContextFrameInput): ContextFrame {
     openProposals: proposals,
     openClarification: clarification,
     completed: completedWork(input.conversation),
-    openTasks: openTasksFromMemory(input.conversation?.memory, {
-      ownerId: input.parentId,
-      caseId: input.caseId,
-      sessionId: input.sessionId ?? null,
-    }),
+    openTasks,
+    establishedObjectives: establishedMessageObjectives(openTasks),
     capabilities: SESSION_CAPABILITIES,
   };
 }
@@ -241,6 +257,27 @@ export function relevantParentFacts(frame: ContextFrame): ConversationalFact[] {
     .map((index) => frame.facts[index])
     .filter((fact): fact is ConversationalFact => !!fact && fact.speaker === "parent");
   return picked.length > 0 ? picked : parentFacts;
+}
+
+/**
+ * Facts a draft and its fidelity review may use.
+ * Lines that ground an established objective stay even when relevantFactIndexes names a later discussion.
+ */
+export function factsForDraft(frame: ContextFrame): string[] {
+  const seen = new Set<string>();
+  const lines: string[] = [];
+  const add = (text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed || seen.has(trimmed)) return;
+    seen.add(trimmed);
+    lines.push(trimmed);
+  };
+  for (const fact of relevantParentFacts(frame)) add(fact.text);
+  for (const fact of frame.taskObjective?.facts ?? []) add(fact.text);
+  for (const objective of frame.establishedObjectives ?? []) {
+    for (const fact of objective.facts) add(fact.text);
+  }
+  return lines;
 }
 
 export function sageOnlyFacts(frame: ContextFrame): ConversationalFact[] {

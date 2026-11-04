@@ -174,9 +174,9 @@ export function buildIncomingContext(input: IncomingContextInput): IncomingConte
 /** Text for a model. Roles are stated from the recipient's side so "we" and "you" resolve in context. */
 export function formatIncomingContext(ctx: IncomingContext): string {
   const lines: string[] = [
-    "COMMUNICATION CONTEXT (you are speaking to the RECIPIENT parent)",
-    "Sender: the recipient's co-parent (the other parent on this case).",
-    "Recipient: the parent who is using Sage and reading this message.",
+    "COMMUNICATION CONTEXT (you are speaking with the account holder)",
+    "Sender: your co-parent (the other parent on this case).",
+    "Account holder: you. This is the parent reading the message.",
     ctx.provenance.subject ? `Thread subject: ${ctx.provenance.subject}` : "",
     ctx.children.length ? `Children on the case: ${ctx.children.join(", ")}` : "Children on the case: none listed",
   ].filter(Boolean);
@@ -184,7 +184,7 @@ export function formatIncomingContext(ctx: IncomingContext): string {
   if (ctx.history.length > 0) {
     lines.push("", "Earlier in this thread (oldest first):");
     for (const turn of ctx.history) {
-      const who = turn.from === "sender" ? "Co-parent (sender)" : turn.from === "recipient" ? "Recipient" : "Unknown";
+      const who = turn.from === "sender" ? "your co-parent" : turn.from === "recipient" ? "you" : "Unknown";
       lines.push(`- ${who}: ${turn.text}`);
     }
   }

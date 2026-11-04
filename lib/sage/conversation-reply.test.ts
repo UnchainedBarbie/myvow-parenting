@@ -240,7 +240,7 @@ async function main() {
     const fallback = await chat("asshole", { model: unread.model, conversation: context({ memory }) });
     // Text with no content for a message is never turned into a draft, even when the turn is unread.
     assert.equal(fallback.result.plan.proposals.length, 0);
-    assert.match(fallback.reply, /What do you want Kevin to know or do\?/);
+    assert.match(fallback.reply, /What do you want your co-parent to know or do\?/);
     const withoutModel = await chat("I can take Friday.", { model: null, conversation: context({ memory }) });
     assert.ok(withoutModel.result.plan.proposals.some((proposal) => proposal.type === "reply_coparent"));
     assert.equal(messageAnswerCandidate("asshole", memory)?.name, "Kevin");
@@ -357,8 +357,11 @@ async function main() {
     assert.match(kevinPrompt, /Parent: KEVIN-SAID-THIS/);
     assert.match(kevinPrompt, /Sage: SAGE-TO-KEVIN/);
     assert.doesNotMatch(kevinPrompt, /ASHLEY-SAID-THIS|SAGE-TO-ASHLEY|KEVIN-STRAY-ROW/);
-    assert.equal(forAshley.replies[0].coparent, "Kevin");
-    assert.equal(forKevin.replies[0].coparent, "Ashley");
+    assert.equal(forAshley.replies[0].otherParentCount, 1);
+    assert.equal(forKevin.replies[0].otherParentCount, 1);
+    assert.match(ashleyPrompt, /Refer to that person as your co-parent/);
+    assert.doesNotMatch(ashleyPrompt, /Co-parent: Kevin/);
+    assert.doesNotMatch(kevinPrompt, /Co-parent: Ashley/);
     // An open question belongs to one parent's session only.
     assert.match(ashleyPrompt, /What should I tell Kevin/);
     assert.doesNotMatch(kevinPrompt, /What should I tell Kevin/);
@@ -380,13 +383,15 @@ async function main() {
       children: [{ name: "Ashley Example" }],
       coparents: [{ name: "Kevin Example" }],
     });
-    assert.equal(packet.coparent, "Kevin");
+    assert.equal(packet.otherParentCount, 1);
     assert.deepEqual(packet.children, ["Ashley"]);
     assert.deepEqual(packet.pendingCards, [{ kind: "calendar_update", text: "Add to calendar: dentist." }]);
     const body = replyRequestBody(packet);
     assert.equal("tools" in body, false, "the reply request carries no tools");
     assert.equal("tool_choice" in body, false);
     const text = JSON.stringify(body);
+    assert.match(text, /your co-parent/);
+    assert.doesNotMatch(text, /Kevin Example/);
     assert.match(text, /PENDING_QUESTION_BEGIN\\nWhat should I tell Kevin/);
     assert.match(text, /WAITING_FOR_APPROVAL_BEGIN\\ncalendar_update: Add to calendar: dentist\./);
     assert.match(text, /COMPLETED_BY_THE_SYSTEM_BEGIN\\n\(none\)/, "a waiting card is not listed as completed");

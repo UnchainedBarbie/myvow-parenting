@@ -141,9 +141,9 @@ function main() {
   };
   assert.equal(presentMessageForViewer(kevinSent, ashley.userId).direction, "incoming");
   assert.equal(presentMessageForViewer(kevinSent, kevin.userId).direction, "outgoing");
-  assert.match(incomingNoticeCopy("Kevin"), /Kevin sent you a message/);
+  assert.match(incomingNoticeCopy("Kevin"), /Message from your co-parent/);
   assert.match(incomingNoticeCopy("Kevin"), /Messages/);
-  assert.doesNotMatch(incomingNoticeCopy("Kevin"), /appointment|private/i);
+  assert.doesNotMatch(incomingNoticeCopy("Kevin"), /Kevin|appointment|private/i);
 
   assert.equal(parentDeliveryKind({ deliveryStatus: "sent", deliveredAt: null }), "saved");
   assert.equal(parentDeliveryLabel("saved"), "Saved in Messages");

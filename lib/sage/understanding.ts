@@ -66,7 +66,7 @@ When source_type is "chat" (the parent is speaking to Sage — a USER COMMAND):
 When source_type is email or any inbound co-parent source:
 - Prefer natural phrasing: "It looks like your co-parent is asking whether…", "Your co-parent shared that…", "It sounds like a coordination question about…"
 - Avoid stiff phrasing: "Co-Parent is noting that…", "Co-Parent has indicated…", "The sender requests…"
-- Refer to the other parent as "Co-Parent" — never use their name or email, even if provided.
+- Refer to the account holder as you or your, and to the other parent as your co-parent. Never use an account display name or email in the summary, even if one is provided. A name inside evidence_excerpt stays verbatim.
 
 Classification:
 - item_type: one of schedule_change | needs_response | information_only | calendar_update | expense | document_summary | medical_update | school_update | concern | agreement | dispute | emergency | needs_review
@@ -186,8 +186,8 @@ function buildUserPrompt(event: NormalizedEvent): string {
     source_type: event.source_type,
   });
   const senderLine = command
-    ? `Sender identity: ${event.sender} (the parent using Sage). This is a USER COMMAND to Sage, not an inbound Co-Parent message. Frame intent.summary as the user's own request ("You'd like to…"). Do NOT write as if Co-Parent is asking or sharing.`
-    : `Sender identity (for context only — refer to them as Co-Parent in output): ${event.sender}`;
+    ? `Sender identity: you (the parent using Sage). This is a USER COMMAND to Sage, not an inbound message from your co-parent. Frame intent.summary as the user's own request ("You'd like to…"). Do NOT write as if your co-parent is asking or sharing.`
+    : `Sender identity (for context only — refer to them as your co-parent in output, not by an account name): ${event.sender}`;
 
   return `Interpret this ${command ? "user command to Sage" : "co-parenting input"}.
 

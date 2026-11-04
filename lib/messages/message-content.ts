@@ -43,7 +43,7 @@ export function proposalListHeading(
     cards.length > 0 &&
     cards.every((c) => c.type === "reply_coparent" && draftOriginLabel(c) === "Your wording")
   ) {
-    return "Your message";
+    return "Your message to your co-parent";
   }
   return "Sage suggests";
 }

@@ -10,7 +10,7 @@
  */
 
 import { proposalId, proposalState, type ProposalState } from "@/lib/sage/proposal-lifecycle";
-import { parseGroundedIn, type GroundedIn } from "@/lib/sage/task-objective";
+import { parseGroundedIn, type GroundedFact, type GroundedIn, type ObjectiveRecord } from "@/lib/sage/task-objective";
 import type { MemorySource, WorkingFocus, WorkingMemory } from "@/lib/sage/working-memory";
 import { focusKindOf, type FocusKind } from "@/lib/sage/working-memory";
 
@@ -335,6 +335,56 @@ export function taskById(tasks: readonly OpenTask[], id: string | null | undefin
 export function liveTaskById(tasks: readonly OpenTask[], id: string | null | undefined): OpenTask | null {
   const found = taskById(tasks, id);
   return isLiveTask(found) ? found : null;
+}
+
+/** A message goal already set in this session, including one whose draft is closed. */
+export type EstablishedObjective = {
+  taskId: string;
+  status: OpenTaskStatus;
+  question: string;
+  outcome: string;
+  facts: GroundedFact[];
+  history: ObjectiveRecord[];
+};
+
+/**
+ * Message objectives already stored on a task. Closed drafts stay here so a later
+ * request can continue the same goal. Recency does not choose among them.
+ */
+export function establishedMessageObjectives(tasks: readonly OpenTask[]): EstablishedObjective[] {
+  const found: EstablishedObjective[] = [];
+  for (const task of tasks) {
+    if (task.kind !== "message") continue;
+    const grounded = task.groundedIn;
+    const question = grounded?.question?.trim() || "";
+    const outcome = grounded?.outcome?.trim() || task.privateObjective?.trim() || "";
+    if (!question && !outcome) continue;
+    found.push({
+      taskId: task.id,
+      status: task.status,
+      question: question || outcome,
+      outcome: outcome || question,
+      facts: grounded?.facts ?? [],
+      history: grounded?.history ?? [],
+    });
+  }
+  return found;
+}
+
+/**
+ * The objective this turn continues. One stored objective is that objective.
+ * A named id selects among several. Several unnamed objectives are not guessed.
+ */
+export function objectiveForContinuity(
+  objectives: readonly EstablishedObjective[],
+  namedTaskId: string | null | undefined
+): EstablishedObjective | null {
+  const named = namedTaskId?.trim()
+    ? objectives.find((item) => item.taskId === namedTaskId) ?? null
+    : null;
+  if (named) return named;
+  if (objectives.length === 1) return objectives[0];
+  return null;
 }
 
 /** Choices that still name a live message. A canceled, dismissed, or missing task is not a choice. */

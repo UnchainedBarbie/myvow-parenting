@@ -455,6 +455,14 @@ export function ProposalCardList({
                     {originLabel}
                   </p>
                 ) : null}
+                {p.validation_status === "unverified" ? (
+                  <p
+                    className="text-[11px] leading-snug text-foreground-secondary"
+                    data-testid="proposal-validation-status"
+                  >
+                    Not verified against your request. Nothing is sent until you approve it.
+                  </p>
+                ) : null}
                 <p
                   className={cn(
                     "text-[12px] leading-snug text-foreground",

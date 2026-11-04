@@ -9,6 +9,13 @@
 
 export type GroundedFact = { text: string; status: string };
 
+/** An earlier objective kept after the parent replaces it. */
+export type ObjectiveRecord = {
+  question: string;
+  outcome: string;
+  provenance: string;
+};
+
 export type GroundedIn = {
   outcome: string;
   question: string;
@@ -19,6 +26,8 @@ export type GroundedIn = {
   rejected: string[];
   last_guidance: string;
   evidence_refs: string[];
+  /** Earlier objectives for this work. The current question is not a silent replacement of these. */
+  history?: ObjectiveRecord[];
 };
 
 export type SelectionOption = {
@@ -39,6 +48,7 @@ export function emptyObjective(outcome = ""): GroundedIn {
     rejected: [],
     last_guidance: "",
     evidence_refs: [],
+    history: [],
   };
 }
 
@@ -78,7 +88,27 @@ export function parseGroundedIn(raw: unknown): GroundedIn | null {
     rejected: stringList(row.rejected),
     last_guidance: text(row.last_guidance),
     evidence_refs: stringList(row.evidence_refs).length > 0 ? stringList(row.evidence_refs) : evidenceRefsFrom(facts.map((fact) => fact.text).join("\n")),
+    history: parseObjectiveHistory(row.history),
   };
+}
+
+function parseObjectiveHistory(value: unknown): ObjectiveRecord[] {
+  if (!Array.isArray(value)) return [];
+  const records: ObjectiveRecord[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object") continue;
+    const row = item as Record<string, unknown>;
+    const question = text(row.question);
+    const outcome = text(row.outcome);
+    const provenance = text(row.provenance);
+    if (!question && !outcome) continue;
+    records.push({
+      question: question || outcome,
+      outcome: outcome || question,
+      provenance: provenance || "prior objective",
+    });
+  }
+  return records;
 }
 
 export function evidenceRefsFrom(text: string): string[] {
@@ -123,7 +153,45 @@ export function objectiveFromParts(parts: ObjectiveParts): GroundedIn {
     rejected: [],
     last_guidance: "",
     evidence_refs: evidenceRefsFrom(facts.map((fact) => fact.text).join("\n")),
+    history: [],
   };
+}
+
+/**
+ * Keep a stored objective until the parent explicitly replaces it.
+ * A replacement stays in history with its provenance. It is not deleted.
+ */
+export function continueEstablishedObjective(
+  turn: GroundedIn,
+  established: {
+    question: string;
+    outcome: string;
+    facts: GroundedFact[];
+    history?: ObjectiveRecord[];
+    provenance: string;
+  } | null,
+  outcomeChanged: boolean
+): GroundedIn {
+  if (!established || (!established.question && !established.outcome)) return turn;
+  if (!outcomeChanged) {
+    return {
+      ...turn,
+      question: established.question || turn.question,
+      outcome: established.outcome || turn.outcome,
+      facts: uniqueFacts([...established.facts, ...turn.facts]),
+      history: established.history ?? [],
+    };
+  }
+  const record: ObjectiveRecord = {
+    question: established.question,
+    outcome: established.outcome,
+    provenance: established.provenance,
+  };
+  const history = [...(established.history ?? [])];
+  if (!history.some((item) => item.question === record.question)) {
+    history.push(record);
+  }
+  return { ...turn, history };
 }
 
 function unique(lines: string[]): string[] {
@@ -152,8 +220,18 @@ export function mergeObjective(
   const note = guidance.trim();
   if (!prior) return { ...turn, last_guidance: "", rejected: [] };
   if (changeOutcome) {
+    const record: ObjectiveRecord = {
+      question: prior.question,
+      outcome: prior.outcome,
+      provenance: "previous objective on this task",
+    };
+    const history = [...(prior.history ?? []), ...(turn.history ?? [])];
+    if (record.question && !history.some((item) => item.question === record.question)) {
+      history.push(record);
+    }
     return {
       ...turn,
+      history,
       last_guidance: note || turn.last_guidance,
       rejected: note ? [note] : [],
     };
@@ -174,6 +252,7 @@ export function mergeObjective(
     rejected,
     last_guidance: note || prior.last_guidance,
     evidence_refs: unique([...prior.evidence_refs, ...turn.evidence_refs]),
+    history: prior.history ?? turn.history ?? [],
   };
 }
 

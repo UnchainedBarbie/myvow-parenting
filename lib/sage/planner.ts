@@ -5,7 +5,7 @@
  */
 
 import { isUserCommand } from "@/lib/sage/observation-builder";
-import { anthropicFidelityModel, objectiveAfterVerdict, parentTurnsForFidelity } from "@/lib/sage/instruction-fidelity";
+import { anthropicFidelityModel, parentTurnsForFidelity, settleDraftReview } from "@/lib/sage/instruction-fidelity";
 import { draftNeedsCorrection, type GroundedIn } from "@/lib/sage/task-objective";
 import {
   composeFactualReply,
@@ -114,7 +114,13 @@ export type Proposal = {
     rejected?: string[];
     last_guidance?: string;
     evidence_refs?: string[];
+    history?: { question: string; outcome: string; provenance: string }[];
   };
+  /**
+   * Set when a fidelity review was unavailable. The draft is still shown and still
+   * requires approval. It is not part of the co-parent-facing body.
+   */
+  validation_status?: "unverified";
   /** Ordered live tasks when Sage asked which message the parent means. */
   selection_options?: { index: number; taskId: string; itemId: string | null; proposalId: string | null }[];
   /** Set when the approved save should change the event status, such as canceled. */
@@ -155,14 +161,14 @@ export type Plan = {
 
 const DRAFT_SYSTEM = `You are Sage drafting ONE short sentence for a co-parenting app.
 Voice: warm, calm, trusted assistant — never corporate, never blaming.
-Always refer to the other parent as "Co-Parent" (never a name or email).
+Always refer to the account holder as "you" or "your", and to the other parent as "your co-parent" (never an account name or email).
 No red flags, shame, or escalation. No markdown. No quotes around the sentence.
 Respond with ONLY the single sentence — no preamble.`;
 
 /** Text the parent will send. Address the co-parent as "you"; do not name them. */
 const OUTBOUND_DRAFT_SYSTEM = `You are drafting the message the parent will send to their co-parent.
 Write in the parent's first-person voice. Address the co-parent directly as "you".
-Never refer to the co-parent in the third person. Never use their name or email.
+Never refer to the co-parent in the third person. A name may appear when it is already in the allowed sources, such as a child's name or a name the parent used. Do not invent a name, and do not add an email address.
 Voice: plain, calm, factual.
 No red flags, shame, or escalation. No markdown. No quotes around the sentences.
 
@@ -243,12 +249,12 @@ function describeBlockers(ctx: PlanContext): string {
 }
 
 function templateNote(ctx: PlanContext): string {
-  const summary = ctx.summary.trim() || "an update from Co-Parent";
+  const summary = ctx.summary.trim() || "an update from your co-parent";
   return `Noted for awareness: ${summary}`;
 }
 
 function templateReviewDocument(ctx: PlanContext): string {
-  const summary = ctx.summary.trim() || "a document from Co-Parent";
+  const summary = ctx.summary.trim() || "a document from your co-parent";
   return `A document came in that needs a look: ${summary}`;
 }
 
@@ -263,7 +269,7 @@ function templateCalendar(ctx: PlanContext): string {
     const summary = ctx.summary.trim().replace(/\.$/, "") || "this event";
     return `Add to your calendar${when}: ${summary}.`;
   }
-  return `Propose calendar update${when} based on: ${ctx.summary.trim() || "schedule change from Co-Parent"}.`;
+  return `Propose calendar update${when} based on: ${ctx.summary.trim() || "schedule change from your co-parent"}.`;
 }
 
 function templateExpense(ctx: PlanContext): string {
@@ -291,11 +297,11 @@ function templateExpense(ctx: PlanContext): string {
       return `${base}. Split ${split}. The other parent's share is $0.00.`;
     }
     if (notify) {
-      return `${base} for your records. You'll notify Co-Parent even though their share is $0.`;
+      return `${base} for your records. You'll notify your co-parent even though their share is $0.`;
     }
     return `${base} for your records.`;
   }
-  return `Propose logging expense from Co-Parent: ${summary || "expense shared by Co-Parent"}.`;
+  return `Propose logging expense from your co-parent: ${summary || "expense shared by your co-parent"}.`;
 }
 
 function fallbackAsk(ctx: PlanContext): string {
@@ -452,7 +458,7 @@ async function draftWithLlm(
   const userPrompt =
     kind === "ask_clarification"
       ? userCommand(ctx)
-        ? `Draft ONE short calm question asking the parent (who just told Sage this) for the missing detail. Address them as "you". Do not ask Co-Parent.
+        ? `Draft ONE short calm question asking the parent (who just told Sage this) for the missing detail. Address them as "you". Do not address your co-parent.
 Context summary: ${ctx.summary}
 What needs clarifying: ${blocker}
 Unresolved children: ${ctx.unresolved_children.join(", ") || "(none)"}
@@ -503,6 +509,8 @@ export async function redraftMessage(params: {
   parentTurns?: string[];
   /** Filled when the review replaces a stored question that was too broad. */
   repairedObjective?: { current: GroundedIn | null };
+  /** Set when a review was unavailable. A rejection does not set this; the draft is not returned. */
+  validation?: { current: "unreviewed" | "verified" | "unverified" };
 }): Promise<string | null> {
   const parentFacingClarification = isParentFacingQuestion(
     { type: params.proposalType, audience: params.audience },
@@ -568,35 +576,28 @@ User guidance: ${guidance}`;
     objective,
   });
   if (drafted && parentTurns.length > 0 && (process.env.ANTHROPIC_API_KEY ?? "").trim()) {
-    const verdict = await anthropicFidelityModel()
-      .evaluate({
-        parentTurns,
-        request: guidance,
-        objective: objective ?? null,
-        draft: drafted,
-      })
-      .catch(() => null);
-    if (verdict && (!verdict.fulfills || verdict.privateLeak)) {
-      const repairedObjective = objectiveAfterVerdict(objective ?? null, verdict);
-      if (params.repairedObjective) params.repairedObjective.current = repairedObjective;
-      const question = repairedObjective?.question || objective?.question || "";
-      const repaired = await draftCheckedOutbound(
-        `${userPrompt}\nThe draft did not fulfill the parent's request. Ask this question instead: ${question}\nDo not paraphrase the previous attempt. Do not copy private strategy.`,
-        sources,
-        { retain, userAsked: guidance }
-      );
-      if (!repaired) return null;
-      const again = await anthropicFidelityModel()
-        .evaluate({
-          parentTurns,
-          request: guidance,
-          objective: objective ?? null,
-          draft: repaired,
-        })
-        .catch(() => null);
-      if (again && (!again.fulfills || again.privateLeak)) return null;
-      return repaired;
-    }
+    const settled = await settleDraftReview({
+      evaluate: (input) => anthropicFidelityModel().evaluate(input),
+      draft: drafted,
+      objective: objective ?? null,
+      parentTurns,
+      request: guidance,
+      established: objective?.question
+        ? [{ taskId: "", status: "current", question: objective.question, outcome: objective.outcome }]
+        : [],
+      repair: async (repairedObjective) => {
+        if (params.repairedObjective) params.repairedObjective.current = repairedObjective;
+        const question = repairedObjective?.question || objective?.question || "";
+        return draftCheckedOutbound(
+          `${userPrompt}\nThe draft did not fulfill the parent's request. Ask this question instead: ${question}\nDo not paraphrase the previous attempt. Do not copy private strategy.`,
+          sources,
+          { retain, userAsked: guidance }
+        );
+      },
+    });
+    if (params.validation && settled.status === "draft") params.validation.current = settled.validation;
+    if (settled.status === "ask") return null;
+    return settled.body;
   }
   return drafted;
 }

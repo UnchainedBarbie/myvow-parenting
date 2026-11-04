@@ -38,11 +38,9 @@ export function proposalTypeLabel(
 ): string {
   switch (type) {
     case "ask_clarification":
-      return proposal?.audience === "parent" ? "Ask you" : "Ask Co-Parent";
+      return proposal?.audience === "parent" ? "Ask you" : "Ask your co-parent";
     case "reply_coparent":
-      return proposal?.recipient_name || proposal?.recipient_email
-        ? "Send message"
-        : "Reply to Co-Parent";
+      return "Your message to your co-parent";
     case "calendar_update":
       return proposal?.calendar_intent === "offer" ? "Add to calendar" : "Update calendar";
     case "expense":

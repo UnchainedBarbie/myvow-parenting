@@ -31,10 +31,12 @@ import {
   liveMessageChoices,
   liveTaskById,
   liveTasksOfKind,
+  objectiveForContinuity,
   whichOpenMessageQuestion,
   type OpenTask,
 } from "@/lib/sage/open-task";
 import {
+  continueEstablishedObjective,
   mergeObjective,
   objectiveFromParts,
   parseSelectionAnswer,
@@ -149,7 +151,7 @@ function buildReply(result: ProcessObservationResult): string {
     return "I can log that.";
   }
   if (plan.proposals.some((p) => p.type === "reply_coparent")) {
-    return "I can draft that for Co-Parent.";
+    return "I can draft that for your co-parent.";
   }
   if (plan.proposals.some((p) => p.type === "note_only")) {
     return "Got it — noted.";
@@ -215,6 +217,11 @@ export async function processChatMessage(
     timezone: input.timezone,
     today: input.today,
   });
+  // A turn the router already resolved is not arbitrated. control is the signal.
+  // handled alone is not: a draft request is handled with a placeholder the conversation still replaces.
+  // cancel_message still closes every open reply in the session. That is the existing
+  // session control. This path does not add another choice among drafts.
+  const routerResolved = routed.control !== "none";
   const frame = buildContextFrame({
     parentId: input.viewerId ?? "",
     caseId: input.case_id,
@@ -247,6 +254,7 @@ export async function processChatMessage(
   const picked = pickedIndex != null ? pendingSelection.find((option) => option.index === pickedIndex) ?? null : null;
   const pickedTask = picked ? liveTaskById(frame.openTasks, picked.taskId) : null;
   const shouldInterpret =
+    !routerResolved &&
     chatTurn &&
     actionModel &&
     !pickedTask &&
@@ -280,7 +288,9 @@ export async function processChatMessage(
     );
   const arbitrationModel =
     input.arbitrationModel === undefined ? anthropicArbitrationModel() : input.arbitrationModel;
-  let taskDecision: TurnArbitration = pickedTask
+  let taskDecision: TurnArbitration = routerResolved
+    ? idleArbitration()
+    : pickedTask
     ? {
         relation: "revise",
         taskId: pickedTask.id,
@@ -302,7 +312,8 @@ export async function processChatMessage(
           arbitrationModel
         );
   if (
-    pendingSelection.length > 0 &&
+    !routerResolved &&
+    pendingSelection.length > 1 &&
     !picked &&
     !taskDecision.separate &&
     (taskDecision.relation === "new_task" ||
@@ -312,7 +323,7 @@ export async function processChatMessage(
   ) {
     taskDecision = askArbitration();
   }
-  if (routed.control === "cancel_message") {
+  if (!routerResolved && routed.control === "cancel_message") {
     const openMessages = liveTasksOfKind(frame.openTasks, "message");
     if (openMessages.length > 1 && taskDecision.cancelScope !== "all") {
       routed.control = "none";
@@ -357,12 +368,34 @@ export async function processChatMessage(
     uncertain: interpretation?.uncertain,
     privateConstraints: interpretation?.privateConstraints,
   });
+  // A new message started while another draft is live is separate work. Its question
+  // is the new request. Continuity still applies when nothing else is live, including
+  // a closed draft whose goal the parent has not replaced.
+  const startingSeparate =
+    taskDecision.relation === "new_task" && liveTasksOfKind(frame.openTasks, "message").length > 0;
+  const applicable = startingSeparate
+    ? null
+    : objectiveForContinuity(frame.establishedObjectives, interpretation?.establishedTaskId);
+  const outcomeChanged = interpretation?.outcomeChanged === true;
+  const continued = continueEstablishedObjective(
+    turnObjective,
+    applicable
+      ? {
+          question: applicable.question,
+          outcome: applicable.outcome,
+          facts: applicable.facts,
+          history: applicable.history,
+          provenance: `task ${applicable.taskId} (${applicable.status})`,
+        }
+      : null,
+    outcomeChanged
+  );
   const storedObjective = mergeObjective(
     taskDecision.relation === "new_task" ? null : boundTask?.groundedIn ?? null,
-    turnObjective,
+    continued,
     input.message,
     boundTask?.outgoingBody ?? null,
-    taskDecision.relation === "change_outcome"
+    taskDecision.relation === "change_outcome" || outcomeChanged
   );
   const framedForDraft = {
     ...(taskDecision.relation === "new_task"
@@ -401,6 +434,7 @@ export async function processChatMessage(
         keep: routedOtherAction ? routed.result.plan.proposals : [],
         taskId: taskDecision.relation === "new_task" ? undefined : taskDecision.taskId ?? undefined,
         answers: picked ? input.conversation?.memory?.clarification?.proposalId ?? null : null,
+        unverified: actionDecision.validation === "unverified",
       })
     );
   } else if (applyAction && actionDecision?.status === "ask" && !routedMessage) {

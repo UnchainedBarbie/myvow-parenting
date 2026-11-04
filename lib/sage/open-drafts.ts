@@ -30,8 +30,8 @@ export function revisionReply(
 ): string {
   if (proposalType === "calendar_update") return "Updated that calendar suggestion.";
   return proposalType === "ask_clarification"
-    ? "Added that to your question to Co-Parent."
-    : "Added that to your reply to Co-Parent.";
+    ? "Added that to your question to your co-parent."
+    : "Added that to your message to your co-parent.";
 }
 
 export function isClosedProposal(raw: unknown): boolean {
@@ -244,6 +244,7 @@ export async function revisePendingDraft(opts: {
     ? mergeObjective(priorObjective, priorObjective, opts.guidance, opts.target.currentDraft, false)
     : null;
   const repairedObjective = { current: null as GroundedIn | null };
+  const validation: { current: "unreviewed" | "verified" | "unverified" } = { current: "unreviewed" };
   const redraft = await (opts.redraft ?? redraftMessage)({
     summary: opts.target.summary,
     proposalType: opts.target.proposalType,
@@ -256,6 +257,7 @@ export async function revisePendingDraft(opts: {
     child: opts.child,
     objective,
     repairedObjective,
+    validation,
   });
   const revisedText = restoreDroppedEvidence(
     redraft?.trim() ?? "",
@@ -276,6 +278,7 @@ export async function revisePendingDraft(opts: {
           private_objective: (repairedObjective.current ?? objective)!.outcome,
         }
       : {}),
+    ...(validation.current === "unverified" ? { validation_status: "unverified" } : {}),
     ...(opts.clearDependsOn ? { depends_on: null, date_supplied: true } : {}),
   });
   if (!revised) return null;

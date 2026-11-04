@@ -13,7 +13,18 @@ export type FidelityInput = {
   request: string;
   objective: GroundedIn | null;
   draft: string;
+  /** Goals the parent already set. A later discussion does not replace these by itself. */
+  established?: { taskId: string; status: string; question: string; outcome: string }[];
 };
+
+export type DraftValidation = "unreviewed" | "verified" | "unverified";
+
+export type SettledDraft =
+  | { status: "draft"; body: string; objective: GroundedIn | null; validation: DraftValidation }
+  | { status: "ask"; question: string; objective: GroundedIn | null };
+
+/** Shown beside an unverified draft. It is not part of the co-parent-facing body. */
+export const UNVERIFIED_DRAFT_NOTE = "I could not verify that this draft matches what you asked.";
 
 export type FidelityVerdict = {
   fulfills: boolean;
@@ -56,6 +67,7 @@ export const FIDELITY_SYSTEM_PROMPT = [
   "You check a draft message a parent may send to their co-parent.",
   "Parent turns are what the parent actually said. They are the authority for the requested outcome.",
   "The stored question and outcome are Sage's earlier reading. They can be too broad or wrong. Do not treat them as correct just because they exist.",
+  "ESTABLISHED_OBJECTIVES are goals the parent already set. Fail the draft when it asks a different question and PARENT_REQUEST does not replace that goal.",
   "A draft that mentions the right topic but asks an easier or more general question does not fulfill the request.",
   "Fail the draft when it omits a material condition or question the parent stated, adds a fact or conclusion the parent did not state, copies private strategy, or repeats an approach the parent already rejected.",
   "An open question can be specific. Asking whether something depends on a condition does not assert that the condition is true.",
@@ -81,6 +93,12 @@ export function fidelityRequestBody(input: FidelityInput) {
         content: [
           block("PARENT_TURNS", input.parentTurns),
           block("PARENT_REQUEST", [input.request]),
+          block(
+            "ESTABLISHED_OBJECTIVES",
+            (input.established ?? []).map(
+              (item) => `id=${item.taskId}; status=${item.status}; question=${item.question}; outcome=${item.outcome}`
+            )
+          ),
           block("STORED_QUESTION", [objective?.question ?? ""]),
           block("STORED_OUTCOME", [objective?.outcome ?? ""]),
           block("PARENT_FACTS", (objective?.facts ?? []).map((fact) => fact.text)),
@@ -128,6 +146,89 @@ export function parseFidelityVerdict(raw: string | null | undefined): FidelityVe
   } catch {
     return null;
   }
+}
+
+export function fidelityClarification(verdict: FidelityVerdict): string {
+  const missed = verdict.missed.find((line) => line.trim());
+  if (missed) {
+    return `I don't have a draft that does what you asked. ${missed} What should the message ask?`;
+  }
+  return "I don't yet have a draft that matches what you described. What should the message ask?";
+}
+
+/**
+ * Read one review. A missing, malformed, or thrown review is a failure, not a pass.
+ * The caller decides whether to show the draft. This does not retry.
+ */
+export async function readFidelityVerdict(
+  evaluate: FidelityModel["evaluate"],
+  input: FidelityInput
+): Promise<{ verdict: FidelityVerdict } | { unavailable: true }> {
+  try {
+    const verdict = await evaluate(input);
+    if (!verdict || typeof verdict.fulfills !== "boolean") {
+      console.error("[sage/fidelity] review unavailable: empty or malformed response");
+      return { unavailable: true };
+    }
+    return { verdict };
+  } catch (error) {
+    console.error("[sage/fidelity] review failed:", error);
+    return { unavailable: true };
+  }
+}
+
+/**
+ * At most one review and one repaired draft.
+ * A rejection is corrected once, then clarified if it is still wrong.
+ * An unavailable review is labeled unverified when the draft is shown. It is not reviewed again.
+ * A missing reviewer means the draft was not reviewed. That is not a service failure.
+ */
+export async function settleDraftReview(opts: {
+  evaluate: FidelityModel["evaluate"] | null | undefined;
+  draft: string;
+  objective: GroundedIn | null;
+  parentTurns: string[];
+  request: string;
+  established?: FidelityInput["established"];
+  repair: (objective: GroundedIn | null, verdict: FidelityVerdict) => Promise<string | null>;
+}): Promise<SettledDraft> {
+  const base = {
+    parentTurns: opts.parentTurns,
+    request: opts.request,
+    objective: opts.objective,
+    established: opts.established,
+  };
+  if (!opts.evaluate) {
+    return { status: "draft", body: opts.draft, objective: opts.objective, validation: "unreviewed" };
+  }
+  const first = await readFidelityVerdict(opts.evaluate, { ...base, draft: opts.draft });
+  if ("unavailable" in first) {
+    return { status: "draft", body: opts.draft, objective: opts.objective, validation: "unverified" };
+  }
+  if (first.verdict.fulfills && !first.verdict.privateLeak) {
+    return { status: "draft", body: opts.draft, objective: opts.objective, validation: "verified" };
+  }
+  const repairedObjective = objectiveAfterVerdict(opts.objective, first.verdict);
+  const next = await opts.repair(repairedObjective, first.verdict);
+  if (!next?.trim()) {
+    return { status: "ask", question: fidelityClarification(first.verdict), objective: repairedObjective };
+  }
+  const second = await readFidelityVerdict(opts.evaluate, {
+    ...base,
+    objective: repairedObjective,
+    draft: next,
+  });
+  if ("unavailable" in second) {
+    return { status: "draft", body: next, objective: repairedObjective, validation: "unverified" };
+  }
+  if (second.verdict.fulfills && !second.verdict.privateLeak) {
+    return { status: "draft", body: next, objective: repairedObjective, validation: "verified" };
+  }
+  return {
+    status: "ask",
+    question: fidelityClarification(second.verdict),
+    objective: objectiveAfterVerdict(repairedObjective, second.verdict),
+  };
 }
 
 export function anthropicFidelityModel(): FidelityModel {

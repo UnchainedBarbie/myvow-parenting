@@ -36,12 +36,14 @@ export function ReviseProposalModal({
   const [redrafting, setRedrafting] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
     if (open) {
       setText(initialText);
       setGuidance("");
       setError(null);
+      setNotice(null);
     }
   }, [open, initialText]);
 
@@ -49,12 +51,13 @@ export function ReviseProposalModal({
 
   const title =
     proposalType === "ask_clarification"
-      ? "Revise question to Co-Parent"
-      : "Revise reply to Co-Parent";
+      ? "Revise question to your co-parent"
+      : "Revise your message to your co-parent";
 
   async function handleRedraft() {
     setRedrafting(true);
     setError(null);
+    setNotice(null);
     try {
       const res = await fetch("/api/sage-inbox/redraft", {
         method: "POST",
@@ -66,13 +69,18 @@ export function ReviseProposalModal({
         }),
       });
       const data = (await res.json().catch(() => null)) as
-        | { success?: boolean; draft?: string; error?: string }
+        | { success?: boolean; draft?: string; error?: string; validation?: string }
         | null;
       if (!res.ok || !data?.draft) {
         setError(data?.error ?? "Redraft failed");
         return;
       }
       setText(data.draft);
+      setNotice(
+        data.validation === "unverified"
+          ? "Not verified against your request. Nothing is sent until you approve it."
+          : null
+      );
     } catch {
       setError("Redraft failed");
     } finally {
@@ -171,6 +179,11 @@ export function ReviseProposalModal({
           />
         </div>
 
+        {notice && (
+          <p className="mt-2 text-[11px] text-foreground-secondary" data-testid="redraft-validation-status">
+            {notice}
+          </p>
+        )}
         {error && (
           <p className="mt-2 text-[11px] text-foreground-secondary">{error}</p>
         )}

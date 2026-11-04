@@ -44,6 +44,8 @@ export type SageProposal = {
   subject?: string | null;
   /** Author of a message draft. Absent on cards saved before this field existed. */
   draft_origin?: "parent_text" | "sage_wording";
+  /** A fidelity review was unavailable. Approval is still required. Not part of the sent body. */
+  validation_status?: "unverified";
   /**
    * Set when a destination save or the follow-up "mark done" write failed.
    * Stored on the same proposal so a retry can reuse result_* ids and not insert again.

@@ -196,7 +196,8 @@ async function main() {
     const ctx = context();
     const text = formatIncomingContext(ctx);
     assert.ok(text.includes(ORIGINAL));
-    assert.ok(/recipient's co-parent/.test(text) && /RECIPIENT|Recipient/.test(text));
+    assert.match(text, /Sender: your co-parent/);
+    assert.match(text, /Account holder: you/);
     assert.ok(text.includes("Pediatrician listing.xlsx"));
     assert.ok(/none on file\. Who decides is unknown/.test(text));
     assert.ok(/untrusted data/.test(text));
@@ -279,7 +280,7 @@ async function main() {
     const reading = normalizeReading(MULTI, ctx)!;
     const briefing = composeBriefing(reading, ctx);
     assert.match(briefing, /Co-Parent wants the two of you to choose a new doctor/);
-    assert.match(briefing, /Co-Parent is asking you to review the list and share your feedback\./);
+    assert.match(briefing, /Your co-parent is asking you to review the list and share your feedback\./);
     assert.match(briefing, /Open decision: choosing a new doctor for the children\./);
     assert.match(briefing, /inviting you to decide it together/);
     assert.match(briefing, /No parenting arrangement is on file/);
@@ -358,7 +359,7 @@ async function main() {
     assert.equal(packets.length, 1);
     assert.equal(packets[0].question, own, "the parent's own question is not replaced by the sender's message");
     assert.equal(packets[0].communication?.block, brief.block);
-    assert.match(reply.reply, /^Pediatrician listing\.xlsx came with Co-Parent's request that you review the list and share your feedback\./);
+    assert.match(reply.reply, /^Pediatrician listing\.xlsx came with your co-parent's request that you review the list and share your feedback\./);
     assert.match(reply.reply, /Nothing is decided by this answer\./);
     assert.ok(!/303-555/.test(reply.reply), "contact details are not dumped");
 

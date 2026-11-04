@@ -474,7 +474,7 @@ async function main() {
       redraft: async () => "I can take Friday and pick up at 4.",
     });
     assert.ok(result);
-    assert.match(result.reply, /Added that to your reply to Co-Parent/);
+    assert.match(result.reply, /Added that to your message to your co-parent/);
     const stored = (outgoing.table("sage_items").find((row) => row.id === "item-msg")!.plan as {
       proposals: Record<string, unknown>[];
     }).proposals;

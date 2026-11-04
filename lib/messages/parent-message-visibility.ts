@@ -203,7 +203,6 @@ export function unassignedParentRepair(input: {
   return { conversationId: matches[0].id, recipientUserId: resolved.userId };
 }
 
-export function incomingNoticeCopy(senderName: string | null | undefined): string {
-  const name = (senderName ?? "").trim() || "Your co-parent";
-  return `${name} sent you a message. It is saved in Messages.`;
+export function incomingNoticeCopy(_senderName?: string | null): string {
+  return "Message from your co-parent. It is saved in Messages.";
 }

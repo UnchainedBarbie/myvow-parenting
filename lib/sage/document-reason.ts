@@ -278,8 +278,8 @@ function communicationLead(packet: ReasonPacket): string {
   if (!packet.communication) return "";
   const asks = packet.communication.asks;
   return asks
-    ? `${packet.fileName} came with Co-Parent's request that you ${asks}. Here is how it bears on that request.`
-    : `${packet.fileName} came with a message from Co-Parent. Here is how it bears on that message.`;
+    ? `${packet.fileName} came with your co-parent's request that you ${asks}. Here is how it bears on that request.`
+    : `${packet.fileName} came with a message from your co-parent. Here is how it bears on that message.`;
 }
 
 export function localDocumentReply(question: string, fileName: string, extracted: ExtractionResult): string {

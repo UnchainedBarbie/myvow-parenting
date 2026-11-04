@@ -89,7 +89,7 @@ export function SageOriginalMessage({
   }
 
   const unavailable = Boolean(payload?.unavailable || payload?.error);
-  const title = own || payload?.ownMessage ? "Your original message" : "Original message";
+  const title = own || payload?.ownMessage ? "Your message to your co-parent" : "Message from your co-parent";
   const files = (payload?.attachments ?? []).map((file) => ({
     id: file.id,
     fileName: file.fileName,

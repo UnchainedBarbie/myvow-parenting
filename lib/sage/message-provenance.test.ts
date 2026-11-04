@@ -141,7 +141,7 @@ async function main() {
       }
       // When nothing reads the turn as conversation, Sage asks what the parent wants to say.
       const asked = await chat(text, { model: reading("answers_pending_question"), conversation: context({ memory }) });
-      assert.match(asked.reply, /What do you want Kevin to know or do\?/);
+      assert.match(asked.reply, /What do you want your co-parent to know or do\?/);
       assert.match(asked.reply, /haven't drafted anything/);
       assert.doesNotMatch(asked.reply, /sent|filed|logged/i);
     }
@@ -214,7 +214,7 @@ async function main() {
     const own = { type: "reply_coparent", draft_origin: "parent_text" };
     const sage = { type: "reply_coparent", draft_origin: "sage_wording" };
     const calendar = { type: "calendar_update" };
-    assert.equal(proposalListHeading([own]), "Your message");
+    assert.equal(proposalListHeading([own]), "Your message to your co-parent");
     assert.equal(proposalListHeading([sage]), "Sage suggests");
     assert.equal(proposalListHeading([own, calendar]), "Sage suggests");
     assert.equal(proposalListHeading([{ type: "reply_coparent" }]), "Sage suggests");

@@ -20,6 +20,7 @@ import {
 import { answerDocumentQuestion, reasonWithModel } from "@/lib/sage/document-reason";
 import { extractDocument } from "@/lib/documents/extract-document";
 import type { KnownCoparent } from "@/lib/sage/chat-intent";
+import { YOUR_CO_PARENT } from "@/lib/sage/relationship-voice";
 import {
   attachmentFilingText,
   attachmentRouteKind,
@@ -531,7 +532,7 @@ async function directedAttachmentResult(
     if (!email) {
       proposals.push({
         type: "ask_clarification",
-        draft: `I don't have a delivery email for ${recipient.coparent.name}. Add one and I can prepare the message.`,
+        draft: `I don't have a delivery email for ${YOUR_CO_PARENT}. Add one and I can prepare the message.`,
         depends_on: null,
         requires_approval: true,
         audience: "parent",
@@ -557,8 +558,8 @@ async function directedAttachmentResult(
   const saved = proposals.some((proposal) => proposal.type === "log_document");
   const reply = message?.recipient_name
     ? saved
-      ? `I prepared a message to ${message.recipient_name} with ${fileName} attached, and a separate save in Documents. Nothing is sent or filed until you approve each one.`
-      : `Here is a message to ${message.recipient_name} with ${fileName} attached. Nothing is sent until you choose Send.`
+      ? `I prepared a message to ${YOUR_CO_PARENT} with ${fileName} attached, and a separate save in Documents. Nothing is sent or filed until you approve each one.`
+      : `Here is your message to ${YOUR_CO_PARENT} with ${fileName} attached. Nothing is sent until you choose Send.`
     : proposals.find((proposal) => proposal.type === "ask_clarification")?.draft ??
       "Who should I send that to?";
   const observation = buildObservationFromChat(opts.caption.trim() || reply, { id: opts.sourceId });

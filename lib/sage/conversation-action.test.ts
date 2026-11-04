@@ -477,13 +477,13 @@ async function main() {
     const asked = await chat(DRAFT_REQUEST, { action: draftFailed.model });
     assert.equal(asked.result.plan.proposals.some((proposal) => proposal.type === "reply_coparent"), false);
     assert.doesNotMatch(asked.reply, APPOINTMENT_TEMPLATE);
-    assert.match(asked.reply, /What should I tell Kevin|will not invent/i);
+    assert.match(asked.reply, /What should I tell your co-parent|will not invent/i);
 
     const bothFailed = actionModel({ failInterpret: true, failDraft: true });
     const bothAsked = await chat(DRAFT_REQUEST, { action: bothFailed.model });
     assert.equal(bothAsked.result.plan.proposals.some((proposal) => proposal.type === "reply_coparent"), false);
     assert.doesNotMatch(bothAsked.reply, APPOINTMENT_TEMPLATE);
-    assert.match(bothAsked.reply, /What should I tell Kevin|will not invent/i);
+    assert.match(bothAsked.reply, /What should I tell your co-parent|will not invent/i);
   }
 
   // --- Established calendar notify still works -----------------------------------------------------

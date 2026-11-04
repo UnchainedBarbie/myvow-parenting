@@ -5,6 +5,7 @@
  */
 
 import { bareCorrection, type ConversationContext } from "@/lib/sage/conversation-context";
+import { YOUR_CO_PARENT } from "@/lib/sage/relationship-voice";
 import { hasMessageSubstance } from "@/lib/messages/message-content";
 import type { Observation } from "@/lib/sage/observation-builder";
 import type { Plan, Proposal } from "@/lib/sage/planner";
@@ -632,6 +633,8 @@ export function messageDraftTurn(opts: {
   groundedIn?: Proposal["grounded_in"];
   /** Closes a pending selection question by id. */
   answers?: string | null;
+  /** A review was unavailable. The note stays out of the co-parent-facing draft. */
+  unverified?: boolean;
 }): RoutedTurn {
   const privateObjective = opts.groundedIn?.outcome?.trim() || opts.outcome;
   const messageCard = proposal("reply_coparent", opts.body, {
@@ -641,13 +644,16 @@ export function messageDraftTurn(opts: {
     ...(privateObjective ? { private_objective: privateObjective } : {}),
     ...(opts.groundedIn ? { grounded_in: opts.groundedIn } : {}),
     ...(opts.taskId ? { task_id: opts.taskId } : {}),
+    ...(opts.unverified ? { validation_status: "unverified" as const } : {}),
   });
   const kept = (opts.keep ?? []).filter((item) => item.type !== "reply_coparent" && item.type !== "note_only");
   const proposals = [...kept, messageCard];
   const hasCalendar = proposals.some((item) => item.type === "calendar_update");
+  const approval = "Nothing is sent until you review it and choose Send.";
+  const unverifiedNote = opts.unverified ? " I could not verify that this draft matches what you asked." : "";
   const reply = hasCalendar
-    ? `I prepared a calendar event and a separate message to ${opts.recipient.name}. Each one needs your approval.`
-    : `Here is a message to ${opts.recipient.name}. Nothing is sent until you review it and choose Send.`;
+    ? `I prepared a calendar event and a separate message to ${YOUR_CO_PARENT}. Each one needs your approval.${unverifiedNote}`
+    : `Here is your message to ${YOUR_CO_PARENT}. ${approval}${unverifiedNote}`;
   return turn({
     handled: true,
     reply,
@@ -836,9 +842,9 @@ function completeOpenDetail(
     if (!hasMessageSubstance(body)) {
       return turn({
         handled: true,
-        reply: `That doesn't give me a message for ${name} yet, so I haven't drafted anything. What do you want ${name} to know or do?`,
+        reply: `That doesn't give me a message for ${YOUR_CO_PARENT} yet, so I haven't drafted anything. What do you want ${YOUR_CO_PARENT} to know or do?`,
         message,
-        summary: `No message content for ${name}`,
+        summary: `No message content for ${YOUR_CO_PARENT}`,
         itemType: "note",
         proposals: [],
         status: "no_action",
@@ -850,9 +856,9 @@ function completeOpenDetail(
     return turn({
       handled: true,
       answers: clarification.proposalId,
-      reply: `Here is your message to ${name}, in your own words. Nothing is sent until you review it and choose Send.`,
+      reply: `Here is your message to ${YOUR_CO_PARENT}, in your own words. Nothing is sent until you review it and choose Send.`,
       message,
-      summary: `Message to ${name}`,
+      summary: `Message to ${YOUR_CO_PARENT}`,
       itemType: "message",
       proposals: [
         proposal("reply_coparent", body, {
@@ -1339,7 +1345,7 @@ export function routeChatIntent(input: RouteChatIntentInput): RoutedTurn {
       proposals.push(
         proposal(
           "ask_clarification",
-          `I don't have a delivery email for ${notify.coparent.name}. Add one and I can prepare the message.`,
+          `I don't have a delivery email for ${YOUR_CO_PARENT}. Add one and I can prepare the message.`,
           { audience: "parent", clarifies: "message", recipient_name: notify.coparent.name }
         )
       );
@@ -1362,7 +1368,7 @@ export function routeChatIntent(input: RouteChatIntentInput): RoutedTurn {
         proposals.push(
           proposal(
             "ask_clarification",
-            `What should I tell ${notify.coparent.name}? I won't invent the details.`,
+            `What should I tell ${YOUR_CO_PARENT}? I won't invent the details.`,
             {
               audience: "parent",
               clarifies: "message",
@@ -1414,14 +1420,13 @@ export function routeChatIntent(input: RouteChatIntentInput): RoutedTurn {
   } else if (hasExpense && timeAsk?.draft) {
     reply = `${timeAsk.draft} I can also log the expense once you approve it.`;
   } else if (hasCalendar && hasMessage && recipient?.recipient_name) {
-    reply = `I prepared a calendar event and a separate message to ${recipient.recipient_name}. Each one needs your approval.`;
+    reply = `I prepared a calendar event and a separate message to ${YOUR_CO_PARENT}. Each one needs your approval.`;
   } else if (hasMessage && recipient?.recipient_name) {
-    reply = `Here is a message to ${recipient.recipient_name}. Nothing is sent until you choose Send.`;
+    reply = `Here is your message to ${YOUR_CO_PARENT}. Nothing is sent until you choose Send.`;
   } else if (hasCalendar) {
     reply = "I can add that to the calendar.";
-    const named = coparents.length === 1 ? coparents[0].name : null;
-    if (!hasMessage && named && transitionEvent(message) && notify.kind === "none") {
-      reply += ` Would you also like to notify ${named}?`;
+    if (!hasMessage && coparents.length === 1 && transitionEvent(message) && notify.kind === "none") {
+      reply += ` Would you also like to notify ${YOUR_CO_PARENT}?`;
     }
   } else if (proposals.some((p) => p.type === "log_document")) {
     reply = "I can save that as a document once you approve it.";

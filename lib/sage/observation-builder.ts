@@ -99,9 +99,9 @@ export function isUserCommand(opts: {
 }
 
 function formatSenderLabel(from: string): string {
-  if (isUserSender(from)) return "You";
+  if (isUserSender(from)) return "you";
   const f = from.trim().toLowerCase();
-  if (f === "coparent" || f === "co-parent") return "Co-Parent";
+  if (f === "coparent" || f === "co-parent" || f === "your co-parent") return "your co-parent";
   return from.trim() || "Unknown";
 }
 

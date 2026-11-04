@@ -287,9 +287,7 @@ export async function processInboxItem(
       };
     }
 
-    const sender =
-      (inboxRow.source_email_from ?? inboxRow.coparent_email ?? "Co-Parent").trim() ||
-      "Co-Parent";
+    const sender = "your co-parent";
 
     const rawItem: RawItem = {
       id: inboxRow.id,
@@ -314,7 +312,7 @@ export async function processInboxItem(
       source_type: "email",
       source_id: inboxItemId,
       sender,
-      plan_sender: "Co-Parent",
+      plan_sender: "your co-parent",
     });
 
     const { intent, entities } = processed.interpretation;
@@ -427,16 +425,9 @@ function asSentence(text: string): string {
   return /[.!?]$/.test(trimmed) ? trimmed : `${trimmed}.`;
 }
 
-/** Inbound summaries say "your co-parent"; Sage's narration uses the Co-Parent label. */
-function coparentLabel(text: string): string {
-  return text
-    .replace(/\byour\s+co-parent\b/gi, "Co-Parent")
-    .replace(/\bco-parent\b/gi, "Co-Parent");
-}
-
 /**
  * Sage speaking to the parent. Never the outbound draft: reply_coparent and the
- * clarification this path asks Co-Parent are the parent's message to send.
+ * clarification this path asks the co-parent are the parent's message to send.
  */
 function hasOutboundDraft(plan: Plan): boolean {
   return plan.proposals.some((p) => {
@@ -446,12 +437,12 @@ function hasOutboundDraft(plan: Plan): boolean {
 }
 
 function narrationFor(plan: Plan, summary: string): string {
-  const about = asSentence(coparentLabel(summary));
-  const topic = about || "Co-Parent sent a message.";
+  const about = asSentence(summary);
+  const topic = about || "Message from your co-parent.";
   if (hasOutboundDraft(plan)) {
     return `${topic} A reply is ready for you to review.`;
   }
-  return about || "Co-Parent sent something that needs a look.";
+  return about || "Message from your co-parent. It needs a look.";
 }
 
 function logMsgSage(messageId: string, detail: string): void {
@@ -788,7 +779,7 @@ export async function processInboundMessageForSage(
     const rawItem: RawItem = {
       id: message.id,
       reply_to_id: null,
-      from: "Co-Parent",
+      from: "your co-parent",
       timestamp: message.created_at ?? new Date().toISOString(),
       text,
       source: "message",
@@ -802,8 +793,8 @@ export async function processInboundMessageForSage(
         timezone,
         source_type: "message",
         source_id: message.id,
-        sender: "Co-Parent",
-        plan_sender: "Co-Parent",
+        sender: "your co-parent",
+        plan_sender: "your co-parent",
       }),
       incoming ? readIncomingCommunication(incoming) : Promise.resolve(null),
     ]);

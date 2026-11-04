@@ -130,6 +130,7 @@ export async function POST(req: NextRequest) {
         ? proposal.audience
         : null;
 
+    const validation: { current: "unreviewed" | "verified" | "unverified" } = { current: "unreviewed" };
     const draft = await redraftMessage({
       summary: item.summary ?? "",
       proposalType: proposal.type as "reply_coparent" | "ask_clarification",
@@ -139,6 +140,7 @@ export async function POST(req: NextRequest) {
       audience,
       sources,
       objective: parseGroundedIn(proposal.grounded_in),
+      validation,
     });
 
     if (!draft) {
@@ -148,7 +150,11 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    return NextResponse.json({ success: true, draft });
+    return NextResponse.json({
+      success: true,
+      draft,
+      ...(validation.current === "unverified" ? { validation: "unverified" } : {}),
+    });
   } catch (e) {
     console.error("[sage-inbox/redraft] Unhandled error:", e);
     return NextResponse.json({ success: false, error: "Internal server error" }, { status: 500 });

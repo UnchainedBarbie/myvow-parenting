@@ -296,7 +296,7 @@ async function ensureIncomingNotice(
       case_id: input.caseId,
       user_id: input.recipientUserId,
       type: "coparent_message",
-      title: "New message",
+      title: "Message from your co-parent",
       message: withMessageRef(incomingNoticeCopy(input.senderName), input.messageId),
       priority: "normal",
     });

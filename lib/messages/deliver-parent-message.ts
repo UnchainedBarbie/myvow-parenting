@@ -115,6 +115,7 @@ async function conversationForParents(
     recipientEmail: string;
     senderEmails: string[];
     subject?: string | null;
+    emailThreadId?: string | null;
   }
 ): Promise<{ id: string; subject: string; emailThreadId: string | null } | { error: string }> {
   const { data } = await admin
@@ -135,10 +136,12 @@ async function conversationForParents(
         id: row.id as string,
         coparentEmail: row.coparent_email ?? null,
         subject: row.subject ?? null,
+        emailThreadId: row.email_thread_id ?? null,
       })),
     recipientEmail: input.recipientEmail,
     senderEmails: input.senderEmails,
     subject: input.subject,
+    emailThreadId: input.emailThreadId,
   });
   const existing = rows.find((row) => row.id === existingId);
   if (existing?.id) {

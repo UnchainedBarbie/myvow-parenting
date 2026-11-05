@@ -80,13 +80,32 @@ function main() {
 
   const threadFromAshleyInbound = chooseSharedConversation({
     conversations: [
+      { id: "conv-newer", coparentEmail: "ashley.reply@example.com", subject: "Pediatrician listing" },
       { id: "conv-ashley-sent", coparentEmail: "ashley.reply@example.com", subject: "Schedule" },
     ],
     recipientEmail: "kevin@example.com",
     senderEmails: ashley.emails,
     subject: "Something else",
   });
-  assert.equal(threadFromAshleyInbound, "conv-ashley-sent");
+  assert.equal(threadFromAshleyInbound, null);
+
+  assert.equal(
+    chooseSharedConversation({
+      conversations: [
+        {
+          id: "conv-thread",
+          coparentEmail: "someone@example.com",
+          subject: "Other",
+          emailThreadId: "<msg-1@myvow.in>",
+        },
+      ],
+      recipientEmail: kevin.emails[0],
+      senderEmails: ashley.emails,
+      subject: "Schedule",
+      emailThreadId: "<msg-1@myvow.in>",
+    }),
+    "conv-thread"
+  );
 
   assert.equal(
     chooseSharedConversation({

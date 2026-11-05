@@ -124,6 +124,41 @@ type SagePlan = {
 const SAGE_ITEM_SELECT =
   "id, item_type, domain, summary, evidence_excerpt, urgency, action_required, child_ids, tool_input, plan, status, flagged, created_at";
 
+/** Matches the title written when a chat is created, before a topic title replaces it. */
+const DEFAULT_SAGE_SESSION_TITLE =
+  /^Sage Session — [A-Z][a-z]{2} \d{1,2}, \d{4}$/;
+
+/** The Sage chat title, set once for the session. Later turns do not rewrite it. */
+async function sageChatTitle(
+  admin: ReturnType<typeof getServiceRoleClient>,
+  userId: string,
+  sourceId: string | null
+): Promise<string | null> {
+  if (!sourceId) return null;
+  const { data: source } = await admin
+    .from("sage_journal_messages")
+    .select("session_id")
+    .eq("id", sourceId)
+    .maybeSingle();
+  const sessionId =
+    typeof (source as { session_id?: string | null } | null)?.session_id === "string"
+      ? (source as { session_id: string }).session_id
+      : null;
+  if (!sessionId) return null;
+  const { data: session } = await admin
+    .from("sage_sessions")
+    .select("title")
+    .eq("id", sessionId)
+    .eq("user_id", userId)
+    .maybeSingle();
+  const title =
+    typeof (session as { title?: string | null } | null)?.title === "string"
+      ? (session as { title: string }).title.trim()
+      : "";
+  if (!title || DEFAULT_SAGE_SESSION_TITLE.test(title)) return null;
+  return title;
+}
+
 function asClassifyPayload(value: unknown): ClassifyPayload | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const o = value as Record<string, unknown>;
@@ -652,6 +687,7 @@ export async function POST(req: NextRequest) {
           classify: ClassifyPayload | null;
         };
     const chatFollowUps: ChatFollowUp[] = [];
+    let chatTitle: string | null | undefined;
 
     for (const idx of indexes) {
       if (idx >= proposals.length) continue;
@@ -800,12 +836,20 @@ export async function POST(req: NextRequest) {
           };
           continue;
         }
+        const proposalSubject = (p.subject ?? "").trim();
+        if (!proposalSubject && chatTitle === undefined) {
+          chatTitle = await sageChatTitle(
+            admin,
+            user.id,
+            (row as { source_id?: string | null }).source_id ?? null
+          );
+        }
         const sent = await deliverParentMessage(admin, {
           caseId,
           senderId: user.id,
           body: sendBody,
           recipientEmail,
-          subject: p.subject ?? null,
+          subject: proposalSubject || chatTitle || null,
           proposalId: (p.id ?? "").trim() || null,
           attachment: attachmentIntent(p),
           acknowledgeAttachmentOmission: body?.acknowledge_attachment_omission === true,

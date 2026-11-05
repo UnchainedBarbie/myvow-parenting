@@ -13,6 +13,7 @@ export type SharedConversationChoice = {
   id: string;
   coparentEmail: string | null;
   subject: string | null;
+  emailThreadId?: string | null;
 };
 
 export function normalizeMessageEmail(value: string | null | undefined): string {
@@ -53,26 +54,32 @@ function subjectKey(value: string | null | undefined): string {
 /**
  * A conversation stores one co-parent address, from whichever parent last received mail.
  * Match either parent's address so a reply in the other direction stays on the same thread.
+ * No match returns null. A message is never attached to an unrelated thread.
  */
 export function chooseSharedConversation(input: {
   conversations: SharedConversationChoice[];
   recipientEmail: string;
   senderEmails: string[];
   subject?: string | null;
+  emailThreadId?: string | null;
 }): string | null {
+  const threadId = (input.emailThreadId ?? "").trim();
+  if (threadId) {
+    const threadHit = input.conversations.find((row) => (row.emailThreadId ?? "").trim() === threadId);
+    if (threadHit) return threadHit.id;
+  }
   const needles = new Set(
     [input.recipientEmail, ...input.senderEmails].map((email) => normalizeMessageEmail(email)).filter(Boolean)
   );
   const matches = input.conversations.filter((row) =>
     needles.has(normalizeMessageEmail(row.coparentEmail))
   );
-  if (matches.length === 0) return null;
   const wanted = subjectKey(input.subject);
   if (wanted) {
     const subjectHit = matches.find((row) => subjectKey(row.subject) === wanted);
     if (subjectHit) return subjectHit.id;
   }
-  return matches[0]?.id ?? null;
+  return null;
 }
 
 export function presentMessageForViewer(

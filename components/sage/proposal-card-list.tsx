@@ -313,6 +313,8 @@ export function ProposalCardList({
                     Cancel
                   </button>
                 </div>
+              ) : sendReview?.index === idx ? (
+                <span className="mt-0.5 w-12 shrink-0" aria-hidden />
               ) : multiSelect ? (
                 <input
                   type="checkbox"

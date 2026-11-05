@@ -240,7 +240,7 @@ async function main() {
     const other = context({ authority: [{ category: "Education", authority: "joint", notes: null }] });
     const otherReading = normalizeReading(MULTI, other);
     assert.deepEqual(otherReading?.pendingDecisions[0].authority, { status: "not_established" });
-    assert.match(authorityLine(otherReading!.pendingDecisions[0], true), /lists no category/);
+    assert.equal(authorityLine(otherReading!.pendingDecisions[0], true), "");
 
     const none = normalizeReading(MULTI, context());
     assert.match(authorityLine(none!.pendingDecisions[0], false), /No parenting arrangement is on file/);
@@ -286,7 +286,7 @@ async function main() {
     assert.match(briefing, /No parenting arrangement is on file/);
     assert.match(briefing, /Pediatrician listing\.xlsx came with it\. I have not opened it yet\./);
     assert.match(briefing, /Ways to respond: share your feedback on the list; ask Co-Parent which practices they prefer\./);
-    assert.match(briefing, /Nothing has been decided, sent, or saved\.$/);
+    assert.doesNotMatch(briefing, /Nothing has been decided, sent, or saved/);
     assert.ok(!/303-555|Row \d|Alpha|Beta/.test(briefing), "the briefing carries no spreadsheet contents");
     assert.ok(!/\byou (asked|want)\b/i.test(briefing), "the sender's request is never phrased as the recipient's own");
 
@@ -294,6 +294,45 @@ async function main() {
       documents: [{ id: "d", case_id: CASE, file_name: "Old form.doc", mime_type: null, visibility: "family", uploaded_by: SENDER }],
     });
     assert.match(composeBriefing(normalizeReading(MULTI, unreadable)!, unreadable), /Old form\.doc came with it and is saved\. I cannot read this file type\./);
+  }
+
+  // A delivered pickup notice stays a notice. It is not a decision, and it is not unsent.
+  {
+    const body = "I have pickup Saturday at 5pm. Let me know by Friday if that doesn't work.";
+    const ctx = context({
+      message: { ...input().message, original_content: body },
+      documents: [],
+      authority: [{ category: "Education", authority: "joint", notes: null }],
+    });
+    const reading = normalizeReading(
+      {
+        intentions: [
+          {
+            kind: "question",
+            summary: "Your co-parent is asking you to confirm Saturday pickup at 5pm.",
+            asksRecipientTo: "confirm Saturday pickup at 5pm",
+          },
+          {
+            kind: "scheduling",
+            summary: "Your co-parent has pickup Saturday at 5pm and wants you to confirm.",
+            asksRecipientTo: "let them know by Friday if Saturday pickup at 5pm does not work",
+          },
+        ],
+        pendingDecisions: [{ topic: "Saturday pickup", participants: "both_parents", authorityCategory: null }],
+        responseOptions: ["I will confirm and follow up"],
+      },
+      ctx
+    )!;
+    const briefing = composeBriefing(reading, ctx);
+    assert.match(briefing, /Your co-parent has pickup Saturday at 5pm\./);
+    assert.match(briefing, /Let them know by Friday if that doesn't work\./);
+    assert.match(briefing, /Reply: Saturday at 5pm works\./);
+    assert.equal(briefing.toLowerCase().split("pickup saturday at 5pm").length - 1, 1);
+    assert.doesNotMatch(briefing, /asking you to confirm/i);
+    assert.doesNotMatch(briefing, /Open decision/i);
+    assert.doesNotMatch(briefing, /no category/i);
+    assert.doesNotMatch(briefing, /Nothing has been decided/);
+    assert.doesNotMatch(briefing, /confirm and follow up/i);
   }
 
   // Attention and narration follow the reading; a failed reading keeps the existing line.

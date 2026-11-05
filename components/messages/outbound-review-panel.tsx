@@ -4,12 +4,9 @@ import { useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  reviewDefaultChoice,
-  reviewEditSeed,
+  exactReviewText,
   reviewCoversText,
-  reviewFinalText,
   type OutboundReview,
-  type ReviewChoice,
 } from "@/lib/messages/outbound-review";
 
 type Props = {
@@ -35,9 +32,16 @@ type Props = {
   children?: ReactNode;
 };
 
+/** The field starts as the version that used to be preselected. An insult-only draft starts empty. */
+function sendFieldSeed(review: OutboundReview): string {
+  if (review.status === "suggestion") return review.suggestion;
+  if (review.status === "no_message") return "";
+  return review.original;
+}
+
 /**
  * The review step for an outgoing message. Used by Messages and Sage Chats.
- * Nothing is sent until the parent selects a version and presses the final action.
+ * Nothing is sent until the parent presses the final action. The field's contents are what would be sent.
  */
 export function OutboundReviewPanel({
   review,
@@ -52,89 +56,41 @@ export function OutboundReviewPanel({
   onDiscard,
   children,
 }: Props) {
-  const [choice, setChoice] = useState<ReviewChoice>(() => reviewDefaultChoice(review));
-  const [edited, setEdited] = useState(() => reviewEditSeed(review));
-  const finalText = reviewFinalText({ review, choice, edited });
+  const [text, setText] = useState(() => sendFieldSeed(review));
+  const finalText = exactReviewText(text);
   // Text the review did not read needs its own review or the parent's explicit choice.
   const unreviewedEdit = Boolean(onReviewEdit && finalText && !reviewCoversText(review, finalText));
   const locked = busy || reviewingEdit;
-
-  const radio = (value: Exclude<ReviewChoice, null>, label: string) => (
-    <label className="flex items-center gap-1 text-[11px]">
-      <input
-        type="radio"
-        name="outbound-review-choice"
-        className="h-3 w-3"
-        checked={choice === value}
-        disabled={locked}
-        onChange={() => setChoice(value)}
-      />
-      <span>{label}</span>
-    </label>
-  );
+  const reviewLine =
+    review.status === "suggestion"
+      ? null
+      : review.status === "no_change"
+        ? "Sage reviewed your message and suggests no changes."
+        : review.explanation;
 
   return (
     <div className="mb-3 rounded-2xl border border-[#E8E4DC] bg-[#FDFBF7] px-3 py-2 text-[11px] text-[#3D3D3D]">
-      {review.status === "suggestion" ? (
-        <div className="mb-2 grid gap-3 md:grid-cols-2">
-          <div className="space-y-1">
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-[#8A8A8A]">Your draft</p>
-            <div className="min-h-[64px] whitespace-pre-wrap rounded-xl border border-[#E8E4DC] bg-white px-2.5 py-2">
-              {review.original}
-            </div>
-          </div>
-          <div className="space-y-1">
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-[#8A8A8A]">Sage version</p>
-            <div className="min-h-[64px] whitespace-pre-wrap rounded-xl border border-[#E8E4DC] bg-[#F9F6F0] px-2.5 py-2">
-              {review.suggestion}
-            </div>
-          </div>
-        </div>
-      ) : (
-        <div className="mb-2 space-y-2">
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-[#8A8A8A]">Your draft</p>
-          <div className="whitespace-pre-wrap rounded-xl border border-[#E8E4DC] bg-white px-2.5 py-2">
-            {review.original}
-          </div>
-          <p className="text-[11px] text-[#3D3D3D]">
-            {review.status === "no_change"
-              ? "Sage reviewed your message and suggests no changes."
-              : review.explanation}
-          </p>
-        </div>
-      )}
+      {reviewLine ? <p className="mb-2 text-[11px] text-[#3D3D3D]">{reviewLine}</p> : null}
 
       <div className="mb-2 space-y-1">
-        {review.status === "suggestion" ? radio("sage", "Use Sage version") : null}
-        {radio("original", "Send my message as written")}
-        {radio("edit", review.status === "no_message" ? "Write what I want to say" : "Edit before sending")}
-      </div>
-
-      {choice === "edit" ? (
+        <label
+          htmlFor="outbound-final-text"
+          className="text-[10px] font-semibold uppercase tracking-wide text-[#8A8A8A]"
+        >
+          This exact text will be sent
+        </label>
         <Textarea
-          value={edited}
-          onChange={(e) => setEdited(e.target.value)}
+          id="outbound-final-text"
+          value={text}
+          onChange={(e) => setText(e.target.value)}
           rows={3}
           disabled={locked}
           placeholder={
             review.status === "no_message" ? "What do you want your co-parent to know or do?" : undefined
           }
-          className="mb-2 min-h-[64px] resize-none rounded-xl border border-[#E8E4DC] bg-[#F9F6F0] text-[11px] text-[#3D3D3D]"
+          data-testid="outbound-final-text"
+          className="min-h-[64px] resize-none rounded-xl border border-[#7C8B6E] bg-white text-[11px] text-[#3D3D3D]"
         />
-      ) : null}
-
-      <div className="mb-2 space-y-1">
-        <p className="text-[10px] font-semibold uppercase tracking-wide text-[#8A8A8A]">
-          {finalText ? "This exact text will be sent" : "Choose a version to continue"}
-        </p>
-        {finalText ? (
-          <div
-            className="whitespace-pre-wrap rounded-xl border border-[#7C8B6E] bg-white px-2.5 py-2"
-            data-testid="outbound-final-text"
-          >
-            {finalText}
-          </div>
-        ) : null}
       </div>
 
       {unreviewedEdit ? (

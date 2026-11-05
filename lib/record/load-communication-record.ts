@@ -112,7 +112,10 @@ export async function loadCommunicationRecord(
       .order("id", { ascending: true }),
   ]);
 
-  let loadedMessages = messageResult;
+  let loadedMessages: {
+    data: Array<MessageRow & { record_exclusion_reason?: string | null }> | null;
+    error: { message: string } | null;
+  } = messageResult;
   if (
     messageResult.error &&
     /record_exclusion_reason/i.test(messageResult.error.message ?? "")

@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import { DRAFT_SYSTEM_PROMPT } from "@/lib/sage/conversation-action";
+import { FIDELITY_SYSTEM_PROMPT } from "@/lib/sage/instruction-fidelity";
 import {
+  applyMessageRegister,
   factsOnlyDraft,
   requestWithoutInstrument,
   unsupportedFacts,
@@ -88,6 +91,29 @@ assert.ok(
     "Remind him he's required to share medical decisions under our court order."
   ).length > 0
 );
+
+const confirm = "Ask him to confirm Saturday pickup at 5pm.";
+assert.equal(
+  applyMessageRegister("Can you confirm Saturday pickup at 5pm?", confirm),
+  "I have pickup Saturday at 5pm. Let me know by Friday if that doesn't work."
+);
+assert.equal(applyMessageRegister("What time does practice end?", "What time does practice end?"), "What time does practice end?");
+assert.match(
+  applyMessageRegister(
+    "Why haven't you been using the designated decision-maker process?",
+    "Draft a message asking Kevin why he has not used the designated decision-maker process."
+  ),
+  /\?/
+);
+assert.equal(
+  applyMessageRegister("I am asking for a response within 48 hours.", "Tell him the parenting plan requires a response within 48 hours."),
+  "I am asking for a response within 48 hours."
+);
+assert.match(DRAFT_SYSTEM_PROMPT, /State the parent's position first, then invite a correction/);
+assert.match(DRAFT_SYSTEM_PROMPT, /A genuine question stays a question/);
+assert.match(FIDELITY_SYSTEM_PROMPT, /Do not fail that notice for being a statement instead of a question/);
+assert.match(FIDELITY_SYSTEM_PROMPT, /information only the co-parent has/);
+assert.match(FIDELITY_SYSTEM_PROMPT, /omits a material condition/);
 
 const fallback = factsOnlyDraft(noPlan, "Please tell me why you emailed the office yourself.");
 assert.equal(fallback, "I'll confirm and follow up.");

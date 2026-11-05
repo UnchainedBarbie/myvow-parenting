@@ -767,6 +767,55 @@ async function main() {
   assert.equal(shortened.clearMessageObjective, null);
   assert.doesNotMatch(shortened.reply, /What should the message ask\?/);
 
+  const noticeReading = {
+    kind: "message" as const,
+    outcome: "Confirm Saturday pickup at 5pm.",
+    question: "Ask him to confirm Saturday pickup at 5pm.",
+    refersTo: "Saturday pickup",
+    grounding: "conversation" as const,
+    relevantFactIndexes: [] as number[],
+    uncertain: [] as string[],
+    disputed: [] as string[],
+    recipientName: "Kevin",
+    elicitation: "open_question" as const,
+    privateConstraints: [] as string[],
+    outcomeChanged: false,
+    establishedTaskId: null,
+  };
+  const notice = await chat("Ask him to confirm Saturday pickup at 5pm.", {
+    action: {
+      interpret: async () => noticeReading,
+      draftMessage: async () => "Can you confirm Saturday pickup at 5pm?",
+      evaluateFidelity: async (input) =>
+        /\?/.test(input.draft) || !/let me know by friday/i.test(input.draft) ? rejectConsent() : pass(),
+    },
+    recentTurns: [],
+    conversation: null,
+  });
+  const noticeCard = messageCard(notice);
+  assert.match(noticeCard?.draft ?? "", /I have pickup Saturday at 5pm/i);
+  assert.match(noticeCard?.draft ?? "", /Let me know by Friday if that doesn't work/i);
+  assert.doesNotMatch(noticeCard?.draft ?? "", /\?/);
+  assert.doesNotMatch(notice.reply, /What should the message ask\?/);
+
+  const practice = await chat("What time does practice end?", {
+    action: {
+      interpret: async () => ({
+        ...noticeReading,
+        outcome: "Ask what time practice ends.",
+        question: "What time does practice end?",
+        refersTo: "practice",
+      }),
+      draftMessage: async () => "What time does practice end?",
+      evaluateFidelity: async (input) => (/\?/.test(input.draft) ? pass() : rejectConsent()),
+    },
+    recentTurns: [{ role: "parent", text: "I need a message to Kevin about practice." }],
+    conversation: null,
+  });
+  const practiceCard = messageCard(practice);
+  assert.match(practiceCard?.draft ?? "", /what time does practice end\?/i);
+  assert.doesNotMatch(practiceCard?.draft ?? "", /let me know by/i);
+
   console.log("message-continuity tests passed");
 }
 

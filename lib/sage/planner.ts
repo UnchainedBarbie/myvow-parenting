@@ -175,8 +175,8 @@ Respond with ONLY the single sentence — no preamble.`;
 const OUTBOUND_DRAFT_SYSTEM = `You are drafting the message the parent will send to their co-parent.
 Write in the parent's first-person voice. Address the co-parent directly as "you".
 Never refer to the co-parent in the third person. A name may appear when it is already in the allowed sources, such as a child's name or a name the parent used. Do not invent a name, and do not add an email address.
-Voice: plain, neutral, and concise. Say the parent's information or question directly.
-No greeting, sign-off, or conversational padding unless the user asked for it. No "my understanding" or other hedge the user did not use. A direct question is not hostile.
+Voice: plain, neutral, and concise. Default register is a statement, not a question. State the position first, then invite a correction. Do not open with a question. Use a statement, an imperative deadline when one is implied, and an invitation to object. One subject. Logistics only: who, what, when, where. No feelings, no characterization of the other parent, and no history.
+No greeting or sign-off unless the user wrote one. No "my understanding", "I was wondering", "if that's okay", or "I'd appreciate it". No justification for an ordinary request unless the parenting plan requires the reason. A genuine question stays a question when the user lacks information only the co-parent has.
 No red flags, shame, or escalation. No markdown. No quotes around the sentences.
 
 This text is a written record that will be sent to the other parent. A reply may state only facts present in one of: the inbound message, the conversation context, the current draft, or the case ledgers supplied in the allowed sources (calendar_events, expenses, documents).
@@ -384,7 +384,7 @@ function replyPrompt(ctx: PlanContext): string {
     ? `State this from the record, and no other time, date, place, amount, or name: ${record}`
     : "If a requested detail is not in the allowed sources, say only that you will confirm and follow up.";
   return `Draft the message the parent is sending to their co-parent, responding to what the co-parent said. Do not commit to unapproved calendar changes.
-Write plain declarative sentences. No exclamation point. No "actually", "just a heads-up", "just so you know", or "FYI".
+Write plain declarative sentences. When the parent is giving notice of a known time or plan, state it and invite a correction. Do not open with a question. No exclamation point. No "actually", "just a heads-up", "just so you know", or "FYI".
 State only facts from the allowed sources. Do not supply a time, date, place, amount, or name that is not in those sources. Do not claim that anyone checked, confirmed, looked up, verified, or spoke to anyone.
 ${recordLine}
 Context summary: ${ctx.summary}
@@ -551,7 +551,7 @@ export async function redraftMessage(params: {
   const objective = params.objective;
   const userPrompt = `Redraft this ${kindLabel}.
 Revise the current draft. Keep its recipient and purpose, and apply the user guidance. Do not start a different message.
-A reminder or statement stays a statement. A question stays a direct question. No greeting, sign-off, hedge, or padding unless the guidance asks for it.
+Notice of a known fact is a statement, then an imperative invitation to object, with a deadline when one is implied. A question stays a question only when the parent lacks information only the co-parent has. No greeting, sign-off, hedge, or padding unless the guidance asks for it.
 Facts you may state are only those in FACTS, EVIDENCE, and the user guidance. State a basis the parent supplied. Do not claim a record was checked.
 The message must carry QUESTION. If the current draft does not, and the guidance is not a correction of that draft, write a new message that does.
 Never copy PRIVATE or REJECTED into the message.

@@ -331,6 +331,10 @@ const UNSOLICITED_PADDING: { re: RegExp; phrase: string }[] = [
     phrase: "i'd like to hear your perspective",
   },
   { re: /\bmy understanding is that\b\s*/gi, phrase: "my understanding" },
+  { re: /\bi was wondering\b[^.?!]{0,40}[.?!]?\s*/gi, phrase: "i was wondering" },
+  { re: /\bif that(?:'s| is) okay\b[.?!]?\s*/gi, phrase: "if that's okay" },
+  { re: /\bi(?:'|’)d appreciate it\b[.?!]?\s*/gi, phrase: "i'd appreciate it" },
+  { re: /\bi would appreciate it\b[.?!]?\s*/gi, phrase: "i would appreciate it" },
 ];
 
 /**
@@ -351,6 +355,91 @@ export function conciseOutboundBody(body: string, request: string): string {
   text = text.replace(/\s+/g, " ").replace(/\s+([?.!,])/g, "$1").trim();
   if (!text) return original;
   return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+const NOTICE_WEEKDAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"] as const;
+
+function noticeWeekday(text: string): string | null {
+  const match = text.toLowerCase().match(/\b(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/);
+  return match ? match[1] : null;
+}
+
+function clockPhrase(text: string): string | null {
+  const match = text.match(/\b(\d{1,2}(?::\d{2})?)\s*(a\.?m\.?|p\.?m\.?)\b/i);
+  if (!match) return null;
+  return `${match[1]}${/^a/i.test(match[2]) ? "am" : "pm"}`;
+}
+
+function scheduleEvent(text: string): string | null {
+  const match = text.toLowerCase().match(/\b(pick-?up|drop-?off|exchange|practice|parenting time|visitation)\b/);
+  if (!match) return null;
+  if (match[1].startsWith("pick")) return "pickup";
+  if (match[1].startsWith("drop")) return "dropoff";
+  return match[1];
+}
+
+/** The parent is asking for a fact only the co-parent has. That stays a question. */
+function lacksCoparentFact(request: string): boolean {
+  const lower = request.toLowerCase();
+  if (/\bwhy\b/.test(lower)) return true;
+  if (/\bwhat time\b/.test(lower) && !clockPhrase(request)) return true;
+  if (/\bwhen\b/.test(lower) && !noticeWeekday(request) && !clockPhrase(request)) return true;
+  if (/\bwhere\b/.test(lower) && !/\b(?:at|on|in)\s+[a-z]/i.test(request)) return true;
+  if (/\bwhich\b/.test(lower) && !noticeWeekday(request) && !clockPhrase(request)) return true;
+  if (/\bhow (?:much|long|many)\b/.test(lower)) return true;
+  return false;
+}
+
+function statedDeadline(request: string): string | null {
+  const match = request.match(
+    /\bby\s+(sunday|monday|tuesday|wednesday|thursday|friday|saturday|tomorrow|tonight)\b/i
+  );
+  if (!match) return null;
+  const word = match[1].toLowerCase();
+  return word === "tomorrow" || word === "tonight" ? word : titleDay(word);
+}
+
+function dayBefore(day: string): string {
+  const index = NOTICE_WEEKDAYS.indexOf(day as (typeof NOTICE_WEEKDAYS)[number]);
+  return titleDay(NOTICE_WEEKDAYS[(index + 6) % 7]);
+}
+
+/**
+ * Statement, implied deadline, and an invitation to object.
+ * Null when the parent is asking for information they do not have, or stated no schedule.
+ */
+export function declarativeNotice(request: string): string | null {
+  if (lacksCoparentFact(request)) return null;
+  const day = noticeWeekday(request);
+  const time = clockPhrase(request);
+  if (!day && !time) return null;
+  if (!/\b(confirm|tell|let|remind|notify|ask|draft|message|pickup|pick-up|drop-?off|practice)\b/i.test(request)) {
+    return null;
+  }
+  const event = scheduleEvent(request);
+  const dayLabel = day ? titleDay(day) : null;
+  let statement: string;
+  if (event && dayLabel && time) statement = `I have ${event} ${dayLabel} at ${time}.`;
+  else if (event && dayLabel) statement = `I have ${event} ${dayLabel}.`;
+  else if (event && time) statement = `I have ${event} at ${time}.`;
+  else statement = `I have ${[dayLabel, time ? `at ${time}` : null].filter(Boolean).join(" ")}.`;
+  const deadline = statedDeadline(request) ?? (day ? dayBefore(day) : null);
+  const invite = deadline
+    ? `Let me know by ${deadline} if that doesn't work.`
+    : `Let me know if that doesn't work.`;
+  return `${statement} ${invite}`;
+}
+
+function opensWithQuestion(body: string): boolean {
+  return /^(?:can|could|would|will|do|does|did|is|are|what|when|where|why|which|how)\b/i.test(body.trim()) || body.includes("?");
+}
+
+/** A question the model wrote for known logistics becomes notice. A real question stays. */
+export function applyMessageRegister(body: string, request: string): string {
+  const notice = declarativeNotice(request);
+  if (!notice) return body;
+  if (!opensWithQuestion(body) && /\blet me know\b/i.test(body) && !body.includes("?")) return body;
+  return notice;
 }
 
 /** Claims that an agreement, plan, order, or law requires, permits, or forbids something the sources do not contain. */
@@ -469,7 +558,12 @@ export function requestAsDraft(body: string, request: string): boolean {
   const draft = norm(body);
   const asked = norm(request);
   if (!draft || asked.length < 12) return false;
-  return draft === asked || draft.includes(asked);
+  if (!(draft === asked || draft.includes(asked))) return false;
+  // The parent stated the question to send. An instruction to Sage still cannot be the body.
+  if (lacksCoparentFact(request) && !/^(?:please\s+)?(?:tell|ask|remind|let|draft|message|notify|send)\b/i.test(request.trim())) {
+    return false;
+  }
+  return true;
 }
 
 /**
@@ -510,6 +604,9 @@ const WARMTH_UNLESS_ASKED = [
   { re: /\bcan you help me understand\b/i, label: "can you help me understand" },
   { re: /\bi(?:'|’)d like to hear your perspective\b/i, label: "i'd like to hear your perspective" },
   { re: /\bmy understanding is that\b/i, label: "my understanding" },
+  { re: /\bi was wondering\b/i, label: "i was wondering" },
+  { re: /\bif that(?:'s| is) okay\b/i, label: "if that's okay" },
+  { re: /\bi(?:'|’)d appreciate\b|\bi would appreciate\b/i, label: "i'd appreciate" },
 ];
 
 /** Exclamation points and managing phrases. Warmth is allowed only when the user asked for that phrase. */

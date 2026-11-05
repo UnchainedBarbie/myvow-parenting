@@ -305,10 +305,15 @@ function wantsNotify(text: string): boolean {
   if (/\b(let|tell|notify|message|email|text|remind)\b/.test(lower) && /\b(know|him|her|them)\b/.test(lower)) {
     return true;
   }
+  // "Ask him to confirm Saturday pickup" is a message. "I want to ask him a question" is not.
+  if (/\bask\b/.test(lower) && /\b(him|her|them)\b/.test(lower) && !/\ba question\b/.test(lower)) {
+    return true;
+  }
   if (/\bneeds to know\b/.test(lower)) return true;
   if (/\b(send|draft) (a |the )?(message|text|email|note)\b/.test(lower)) return true;
   // A named recipient ("Remind Kevin", "tell Kevin") is a message. "me" and "you" are not.
   if (/\b(?:let|tell|notify|message|email|text|remind)\s+(?!me\b|you\b|know\b)[a-z]{2,20}\b/.test(lower)) return true;
+  if (/\bask\s+(?!me\b|you\b|a\b)[a-z]{2,20}\b/.test(lower) && !/\ba question\b/.test(lower)) return true;
   return false;
 }
 

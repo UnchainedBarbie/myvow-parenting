@@ -614,6 +614,159 @@ async function main() {
   assert.equal(messageCard(purpose), undefined);
   assert.match(purpose.reply, /What should I tell/i);
 
+  const REMIND = "Remind Kevin he's required to share medical decisions under our court order.";
+  const CORRECTION = "It's not my understanding, it's in a court order.";
+  const PADDED =
+    "Hi Kevin, I wanted to reach out. Can you help me understand why you have not used the designated decision-maker process? I'd like to hear your perspective on that.";
+  const HEDGE = "My understanding is that we are required to share in medical decisions together.";
+  const ORDER_BASIS = "Our court order requires shared medical decision-making for the children.";
+  const conciseModel: ConversationActionModel = {
+    interpret: async () => ({
+      kind: "message",
+      outcome: "Ask why the designated decision-maker process was not used.",
+      question: "Why haven't you been using the designated decision-maker process?",
+      refersTo: "the decision-maker process",
+      grounding: "conversation",
+      relevantFactIndexes: [],
+      uncertain: [],
+      disputed: [],
+      recipientName: "Kevin",
+      elicitation: "open_question",
+      privateConstraints: [],
+      outcomeChanged: false,
+      establishedTaskId: null,
+    }),
+    draftMessage: async () => PADDED,
+    evaluateFidelity: async (input) =>
+      /wanted to reach out|help me understand|perspective/i.test(input.draft) ? rejectConsent() : pass(),
+  };
+  const concise = await chat(
+    "Draft a message asking Kevin why he has not used the designated decision-maker process.",
+    { action: conciseModel, recentTurns: [], conversation: null }
+  );
+  const conciseCard = messageCard(concise);
+  assert.ok(conciseCard?.draft);
+  assert.match(conciseCard?.draft ?? "", /designated decision-maker process/i);
+  assert.match(conciseCard?.draft ?? "", /\?/);
+  assert.doesNotMatch(conciseCard?.draft ?? "", /hi kevin|wanted to reach out|help me understand|perspective/i);
+  assert.equal(concise.clearMessageObjective, null);
+
+  const medicalModel: ConversationActionModel = {
+    interpret: async (frame) => ({
+      kind: /not my understanding|make it shorter|not my opinion/i.test(frame.requestText)
+        ? "conversation"
+        : "message",
+      outcome: "Remind him to share medical decisions.",
+      question: "Share medical decisions.",
+      refersTo: "medical decisions",
+      grounding: "conversation",
+      relevantFactIndexes: [],
+      uncertain: [],
+      disputed: [],
+      recipientName: "Kevin",
+      elicitation: "open_question",
+      privateConstraints: [],
+      outcomeChanged: false,
+      establishedTaskId: "item-medical",
+    }),
+    draftMessage: async (frame) => {
+      if (frame.revisingDraft && /court order|not my understanding|not my opinion/i.test(frame.requestText)) {
+        return ORDER_BASIS;
+      }
+      if (/make it shorter/i.test(frame.requestText)) return "Please share medical decisions.";
+      return HEDGE;
+    },
+    evaluateFidelity: async (input) => {
+      if (/my understanding|don't yet have a draft/i.test(input.draft)) return rejectConsent();
+      return pass();
+    },
+  };
+  const reminded = await chat(REMIND, {
+    action: medicalModel,
+    arbitration: { classify: async () => ({ relation: "new_task", taskId: null, currentProposalId: null, currentItemId: null, kind: "message", unread: false }) },
+    recentTurns: [],
+    conversation: null,
+  });
+  const remindedCard = messageCard(reminded);
+  assert.ok(remindedCard?.draft);
+  assert.match(remindedCard?.draft ?? "", /medical decisions/i);
+  assert.doesNotMatch(remindedCard?.draft ?? "", /my understanding/i);
+  assert.doesNotMatch(reminded.reply, /What should the message ask\?/);
+  const medicalItem = {
+    id: "item-medical",
+    itemType: "message",
+    proposals: [
+      {
+        id: "med-1",
+        type: "reply_coparent",
+        draft: remindedCard?.draft,
+        requires_approval: true,
+        recipient_name: "Kevin",
+        recipient_email: kevin.email,
+        private_objective: "Remind him to share medical decisions.",
+        grounded_in: {
+          outcome: "Remind him to share medical decisions.",
+          question: "Share medical decisions.",
+          turns: [] as number[],
+          facts: [{ text: REMIND, status: "parent_stated" }],
+          uncertain: [] as string[],
+          private_constraints: [] as string[],
+          rejected: [] as string[],
+          last_guidance: "",
+          evidence_refs: [] as string[],
+        },
+      },
+    ],
+  };
+  const reviseMedical: ArbitrationModel = {
+    classify: async () => ({
+      relation: "conversation",
+      taskId: null,
+      currentProposalId: null,
+      currentItemId: null,
+      kind: null,
+      unread: false,
+    }),
+  };
+  const corrected = await chat(CORRECTION, {
+    action: medicalModel,
+    arbitration: reviseMedical,
+    recentTurns: [
+      { role: "parent", text: REMIND },
+      { role: "sage", text: reminded.reply },
+    ],
+    conversation: conversationWith(medicalItem),
+  });
+  const correctedCard = messageCard(corrected) as {
+    draft?: string;
+    recipient_name?: string;
+    grounded_in?: { question?: string };
+  };
+  assert.match(correctedCard?.draft ?? "", /court order/i);
+  assert.match(correctedCard?.draft ?? "", /medical/i);
+  assert.doesNotMatch(correctedCard?.draft ?? "", /my understanding|verified|checked/i);
+  assert.doesNotMatch(corrected.reply, /What should the message ask\?/);
+  assert.equal(correctedCard?.recipient_name, "Kevin");
+  assert.match(correctedCard?.grounded_in?.question ?? "", /medical decisions/i);
+  assert.equal(corrected.clearMessageObjective, null);
+
+  const shortened = await chat("Make it shorter.", {
+    action: medicalModel,
+    arbitration: reviseMedical,
+    recentTurns: [
+      { role: "parent", text: REMIND },
+      { role: "sage", text: reminded.reply },
+    ],
+    conversation: conversationWith(medicalItem),
+  });
+  const shortenedCard = messageCard(shortened) as { draft?: string; recipient_name?: string; grounded_in?: { question?: string } };
+  assert.match(shortenedCard?.draft ?? "", /medical decisions/i);
+  assert.doesNotMatch(shortenedCard?.draft ?? "", /my understanding/i);
+  assert.equal(shortenedCard?.recipient_name, "Kevin");
+  assert.match(shortenedCard?.grounded_in?.question ?? "", /medical decisions/i);
+  assert.equal(shortened.clearMessageObjective, null);
+  assert.doesNotMatch(shortened.reply, /What should the message ask\?/);
+
   console.log("message-continuity tests passed");
 }
 

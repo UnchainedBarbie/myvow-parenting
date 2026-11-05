@@ -9,6 +9,7 @@ import { anthropicFidelityModel, parentTurnsForFidelity, settleDraftReview } fro
 import { draftNeedsCorrection, type GroundedIn } from "@/lib/sage/task-objective";
 import {
   composeFactualReply,
+  conciseOutboundBody,
   droppedFactLabels,
   factsOnlyDraft,
   isObligationProblem,
@@ -174,7 +175,8 @@ Respond with ONLY the single sentence — no preamble.`;
 const OUTBOUND_DRAFT_SYSTEM = `You are drafting the message the parent will send to their co-parent.
 Write in the parent's first-person voice. Address the co-parent directly as "you".
 Never refer to the co-parent in the third person. A name may appear when it is already in the allowed sources, such as a child's name or a name the parent used. Do not invent a name, and do not add an email address.
-Voice: plain, calm, factual.
+Voice: plain, neutral, and concise. Say the parent's information or question directly.
+No greeting, sign-off, or conversational padding unless the user asked for it. No "my understanding" or other hedge the user did not use. A direct question is not hostile.
 No red flags, shame, or escalation. No markdown. No quotes around the sentences.
 
 This text is a written record that will be sent to the other parent. A reply may state only facts present in one of: the inbound message, the conversation context, the current draft, or the case ledgers supplied in the allowed sources (calendar_events, expenses, documents).
@@ -424,7 +426,8 @@ async function draftCheckedOutbound(
   const allowed = sources.trim() || "(none)";
   const userAsked = opts?.userAsked ?? "";
   const base = `${userPrompt}\n\nAllowed sources (the only facts you may use):\n${allowed}`;
-  const first = await callAnthropicDraft(base, OUTBOUND_DRAFT_SYSTEM);
+  const firstRaw = await callAnthropicDraft(base, OUTBOUND_DRAFT_SYSTEM);
+  const first = firstRaw ? conciseOutboundBody(firstRaw, userAsked) : null;
   const firstMissing = first ? draftProblems(first, sources, opts?.retain, userAsked) : null;
   if (first && firstMissing && firstMissing.length === 0) return first;
   if (first && firstMissing && firstMissing.length > 0) {
@@ -439,7 +442,8 @@ async function draftCheckedOutbound(
     : obligation
       ? `${base}\n\nThe previous draft was rejected because it asserted an obligation that is not in the sources: ${firstMissing?.join("; ")}. Rewrite that draft without the claim. State only the parent's own facts and request. Do not assert what an agreement, parenting plan, court order, or law requires, permits, or forbids unless that text is in the sources. No exclamation points. No "actually", "just a heads-up", "just so you know", or "FYI".`
       : `${base}\n\nThe previous draft was rejected: ${firstMissing?.join("; ")}. Keep every fact already in the current draft unless the user retracted it, and add the new fact. An arrival time does not replace a start time. No exclamation points. No "actually", "just a heads-up", "just so you know", or "FYI". Write declarative sentences. If a requested detail is missing from the sources, say only that you will confirm and follow up.`;
-  const second = await callAnthropicDraft(retryPrompt, OUTBOUND_DRAFT_SYSTEM);
+  const secondRaw = await callAnthropicDraft(retryPrompt, OUTBOUND_DRAFT_SYSTEM);
+  const second = secondRaw ? conciseOutboundBody(secondRaw, userAsked) : null;
   const secondMissing = second ? draftProblems(second, sources, opts?.retain, userAsked) : null;
   if (second && secondMissing && secondMissing.length === 0) return second;
   const obligationRemains = (secondMissing ?? firstMissing ?? []).some(isObligationProblem);
@@ -546,9 +550,10 @@ export async function redraftMessage(params: {
   const event = params.event?.trim() ? `Event: ${params.event.trim()}` : "";
   const objective = params.objective;
   const userPrompt = `Redraft this ${kindLabel}.
-The current draft is a previous attempt. It is not the authority for what is true.
-Facts you may state are only those in FACTS, EVIDENCE, and the user guidance.
-The message must ask QUESTION. If the current draft does not ask it, write a new message that does. Do not paraphrase a draft that missed the question.
+Revise the current draft. Keep its recipient and purpose, and apply the user guidance. Do not start a different message.
+A reminder or statement stays a statement. A question stays a direct question. No greeting, sign-off, hedge, or padding unless the guidance asks for it.
+Facts you may state are only those in FACTS, EVIDENCE, and the user guidance. State a basis the parent supplied. Do not claim a record was checked.
+The message must carry QUESTION. If the current draft does not, and the guidance is not a correction of that draft, write a new message that does.
 Never copy PRIVATE or REJECTED into the message.
 An arrival time does not replace a start time. Remove a fact only when the guidance corrects or retracts it, such as "not 8" or "instead of 8pm".
 Write plain declarative sentences. No exclamation point. No "actually", "just a heads-up", "just so you know", or "FYI".

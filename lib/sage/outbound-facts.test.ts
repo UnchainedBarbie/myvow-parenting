@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import {
   factsOnlyDraft,
   requestWithoutInstrument,
+  unsupportedFacts,
   unsupportedObligations,
   usableOutboundBody,
 } from "@/lib/sage/outbound-facts";
@@ -46,6 +47,11 @@ assert.equal(
   "I'd like us to make medical decisions together going forward."
 );
 assert.equal(
+  requestWithoutInstrument("Remind Kevin he's required to share medical decisions under our court order."),
+  "I'd like us to make medical decisions together going forward."
+);
+assert.equal(requestWithoutInstrument("Please tell me why you have not used the process."), null);
+assert.equal(
   requestWithoutInstrument("Let him know the agreement says expenses have to be submitted within 30 days"),
   "Please submit expenses within 30 days."
 );
@@ -66,6 +72,22 @@ assert.equal(
   "I'd like us to make medical decisions together going forward."
 );
 assert.equal(usableOutboundBody(refusal, "Make it shorter.", ""), null);
+assert.deepEqual(
+  unsupportedObligations(
+    "Our court order requires shared medical decision-making for the children.",
+    "Remind him he's required to share medical decisions under our court order. It's in a court order."
+  ),
+  []
+);
+assert.ok(
+  unsupportedObligations("Our court order requires shared medical decision-making for the children.", "").length > 0
+);
+assert.ok(
+  unsupportedFacts(
+    "I verified that the court order requires shared medical decisions.",
+    "Remind him he's required to share medical decisions under our court order."
+  ).length > 0
+);
 
 const fallback = factsOnlyDraft(noPlan, "Please tell me why you emailed the office yourself.");
 assert.equal(fallback, "I'll confirm and follow up.");

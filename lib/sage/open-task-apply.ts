@@ -182,12 +182,11 @@ export async function dismissTaskProposals(opts: {
  * Calendar, expense, and other proposals in the same plan are left as they are.
  * The draft text stays. The question, outcome, and private objective do not.
  */
-export function clearReplyObjective(proposals: unknown[]): unknown[] {
-  return proposals.map((raw) => {
-    const row = asRecord(raw);
-    if (!row || row.type !== "reply_coparent") return raw;
-    if (!("grounded_in" in row) && !("private_objective" in row)) return raw;
-    const next = { ...row };
+export function clearReplyObjective<T extends Record<string, unknown>>(proposals: readonly T[]): T[] {
+  return proposals.map((row) => {
+    if (row.type !== "reply_coparent") return row;
+    if (!("grounded_in" in row) && !("private_objective" in row)) return row;
+    const next: T = { ...row };
     delete next.grounded_in;
     delete next.private_objective;
     return next;
@@ -237,7 +236,11 @@ export async function clearStoredMessageObjective(opts: {
     if (!id || !plan) continue;
     if (taskIdOf({ id, plan }) !== taskId) continue;
     const proposals = Array.isArray(plan.proposals) ? plan.proposals : [];
-    const next = clearReplyObjective(proposals);
+    const next = proposals.map((raw) => {
+      const row = asRecord(raw);
+      if (!row) return raw;
+      return clearReplyObjective([row])[0] ?? raw;
+    });
     if (next.every((item, index) => item === proposals[index])) continue;
     await savePlan(opts.admin, id, opts.userId, { ...plan, proposals: next });
   }

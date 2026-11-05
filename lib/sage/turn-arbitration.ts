@@ -177,6 +177,20 @@ const NEW_TASK_NOVEL = 2;
 const NEW_TASK_INTENT_MIN = 4;
 
 /**
+ * A follow-up that edits the open draft: its wording, length, or basis.
+ * Ordinary chat ("thanks", a new topic) does not match.
+ */
+export function editsCurrentDraft(text: string): boolean {
+  const lower = text.toLowerCase();
+  if (/\bmake (?:it|this|that)\b/.test(lower)) return true;
+  if (/\b(?:remove|drop|delete|cut) (?:the |that |this )?(?:last )?sentence\b/.test(lower)) return true;
+  if (/\b(?:don'?t|do not) say\b/.test(lower)) return true;
+  if (/\b(?:not my|isn'?t my|is not my)\b/.test(lower)) return true;
+  if (/\b(?:that(?:'s| is)|it(?:'s| is)) (?:not |in (?:the |a |our )?)/.test(lower)) return true;
+  return false;
+}
+
+/**
  * Match a message request to live message tasks by topical overlap of the stated intent
  * with each task's outgoing body and private objective. Recency is not a signal.
  */
@@ -276,7 +290,7 @@ export const ARBITRATION_SYSTEM_PROMPT = [
   "A parent is talking privately with Sage in a co-parenting app.",
   "Decide how this new message relates to the open tasks already in this session.",
   "continue: the parent is supplying a missing detail for that task.",
-  "revise: the parent wants the current draft or proposal of a specific task changed, including tone or what the other parent should not be told.",
+  "revise: the parent wants the current draft or proposal of a specific task changed, including its wording, its basis, its length, a sentence to remove, or what the other parent should not be told.",
   "new_task: the parent wants a different piece of work started, including a second outgoing message on a distinct topic while another draft is still open.",
   "change_outcome: the parent still wants this kind of work, but the desired result changed.",
   "conversation: a feeling, aside, insult, thanks, question, or anything that is not an instruction to change a task.",
@@ -404,7 +418,13 @@ export async function arbitrateTurn(
   input: ArbitrationInput,
   model: ArbitrationModel | null
 ): Promise<TurnArbitration> {
-  if (input.interpretation?.kind === "conversation") return idleArbitration();
+  if (input.interpretation?.kind === "conversation") {
+    const only = liveTasksOfKind(input.tasks, "message");
+    if (only.length === 1 && only[0].outgoingBody && editsCurrentDraft(input.frame.requestText)) {
+      return bind(only[0], "revise");
+    }
+    return idleArbitration();
+  }
   const kind = kindFromInterpretation(input.interpretation);
   const liveOfKind = kind ? liveTasksOfKind(input.tasks, kind) : [];
   const live = liveTasks(input.tasks);

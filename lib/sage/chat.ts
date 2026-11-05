@@ -453,6 +453,9 @@ export async function processChatMessage(
         ? { ...framed, currentDrafts: [boundTask.outgoingBody] }
         : framed),
     taskObjective: storedObjective,
+    revisingDraft:
+      (taskDecision.relation === "revise" || taskDecision.relation === "change_outcome") &&
+      !!boundTask?.outgoingBody,
   };
   const actionDecision =
     (shouldInterpret || !!pickedTask) && applyAction
@@ -529,7 +532,10 @@ export async function processChatMessage(
       })
     );
   } else if (applyAction && actionDecision?.status === "ask" && !routedMessage && !heldReply) {
-    if (actionDecision.terminalReviewFailure) {
+    const revisingLiveDraft =
+      (taskDecision.relation === "revise" || taskDecision.relation === "change_outcome") &&
+      !!boundTask?.outgoingBody;
+    if (actionDecision.terminalReviewFailure && !revisingLiveDraft) {
       const failedTaskId =
         applicable?.taskId ??
         (boundTask?.kind === "message" && taskDecision.relation !== "new_task" ? boundTask.id : null);

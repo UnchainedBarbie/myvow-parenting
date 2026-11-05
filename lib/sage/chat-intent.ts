@@ -307,7 +307,8 @@ function wantsNotify(text: string): boolean {
   }
   if (/\bneeds to know\b/.test(lower)) return true;
   if (/\b(send|draft) (a |the )?(message|text|email|note)\b/.test(lower)) return true;
-  if (/\b(let|tell|notify|message|email)\s+[a-z]{2,20}\b/.test(lower)) return true;
+  // A named recipient ("Remind Kevin", "tell Kevin") is a message. "me" and "you" are not.
+  if (/\b(?:let|tell|notify|message|email|text|remind)\s+(?!me\b|you\b|know\b)[a-z]{2,20}\b/.test(lower)) return true;
   return false;
 }
 

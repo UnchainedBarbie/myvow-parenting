@@ -307,6 +307,52 @@ const OBLIGATION_PATTERNS: { re: RegExp; label: string }[] = [
 
 const OBLIGATION_LABELS = new Set(OBLIGATION_PATTERNS.map((pattern) => pattern.label));
 
+/**
+ * The parent named this instrument and this duty. The message may say so.
+ * That is the parent's assertion, not a claim that Sage retrieved the record.
+ */
+function parentSuppliedObligation(clause: string, source: string): boolean {
+  const instrument = clause.match(
+    /\b(?:court order|parenting plan|agreement|decree|statute|the law|the order)\b/
+  );
+  if (!instrument || !source.includes(instrument[0])) return false;
+  const duty =
+    /\b(?:requires|require|required|must|permits|permit|forbids|forbid|prohibits|prohibit|mandates|mandate|have to)\b/;
+  if (!duty.test(clause)) return true;
+  return duty.test(source);
+}
+
+const UNSOLICITED_PADDING: { re: RegExp; phrase: string }[] = [
+  { re: /^(?:hi|hello|hey)\b[^,.!?\n]{0,48}[,!]?\s+/i, phrase: "hi" },
+  { re: /\bi wanted to reach out\b[^.?!]{0,80}[.?!]?\s*/gi, phrase: "i wanted to reach out" },
+  { re: /\bcan you help me understand\b\s*/gi, phrase: "can you help me understand" },
+  {
+    re: /\bi(?:'|’)d like to hear your perspective(?: on that)?\b[.?!]?\s*/gi,
+    phrase: "i'd like to hear your perspective",
+  },
+  { re: /\bmy understanding is that\b\s*/gi, phrase: "my understanding" },
+];
+
+/**
+ * The parent's information or question, without a greeting, sign-off, hedge, or
+ * other padding the parent did not ask for. Direct questions stay direct.
+ */
+export function conciseOutboundBody(body: string, request: string): string {
+  const original = body.trim();
+  if (!original) return original;
+  const asked = request.toLowerCase();
+  let text = original;
+  for (const item of UNSOLICITED_PADDING) {
+    const requested =
+      item.phrase === "hi" ? /\b(?:hi|hello|hey)\b/.test(asked) : asked.includes(item.phrase);
+    if (requested) continue;
+    text = text.replace(item.re, "");
+  }
+  text = text.replace(/\s+/g, " ").replace(/\s+([?.!,])/g, "$1").trim();
+  if (!text) return original;
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
 /** Claims that an agreement, plan, order, or law requires, permits, or forbids something the sources do not contain. */
 export function unsupportedObligations(draft: string, sources: string): string[] {
   const source = sources.toLowerCase().replace(/\s+/g, " ");
@@ -315,7 +361,7 @@ export function unsupportedObligations(draft: string, sources: string): string[]
     const match = draft.match(pattern.re);
     if (!match) continue;
     const clause = match[0].toLowerCase().replace(/\s+/g, " ").trim();
-    if (clause && source.includes(clause)) continue;
+    if (clause && (source.includes(clause) || parentSuppliedObligation(clause, source))) continue;
     problems.push(pattern.label);
   }
   return problems;
@@ -325,11 +371,17 @@ export function isObligationProblem(label: string): boolean {
   return OBLIGATION_LABELS.has(label);
 }
 
-const INSTRUMENT_REQUEST =
-  /\b(?:tell|ask)\s+(?:him|her|them|my co-parent)\b(?:\s+that)?\s+(?:our agreement|the agreement|the parenting plan|parenting plan|the court order|court order|the decree|the statute|the law|the order)\s+(?:requires|require|required|says|states|provides|permits|permit|forbids|forbid|prohibits|prohibit|mandates|mandate|must|have to)\s+([^.?!]+)/i;
+const ADDRESSEE = "(?:him|her|them|my co-parent|(?!me\\b|you\\b)[A-Za-z][A-Za-z'-]{1,30})";
 
-const INSTRUCTION =
-  /^(?:please\s+)?(?:tell|ask|remind|let)\s+(?:him|her|them|my co-parent)\b(?:\s+know)?(?:\s+that)?\s+([\s\S]+)$/i;
+const INSTRUMENT_REQUEST = new RegExp(
+  `\\b(?:tell|ask)\\s+${ADDRESSEE}\\b(?:\\s+that)?\\s+(?:our agreement|the agreement|the parenting plan|parenting plan|the court order|court order|the decree|the statute|the law|the order)\\s+(?:requires|require|required|says|states|provides|permits|permit|forbids|forbid|prohibits|prohibit|mandates|mandate|must|have to)\\s+([^.?!]+)`,
+  "i"
+);
+
+const INSTRUCTION = new RegExp(
+  `^(?:please\\s+)?(?:tell|ask|remind|let)\\s+${ADDRESSEE}\\b(?:\\s+know)?(?:\\s+that)?\\s+([\\s\\S]+)$`,
+  "i"
+);
 
 const INSTRUMENT_LEAD =
   /\b(?:our|the)\s+(?:parenting plan|plan|agreement|court order|decree|statute|law|order)\s+(?:requires|require|required|says|states|provides|permits|permit|forbids|forbid|prohibits|prohibit|mandates|mandate|must|have to)\s+/i;
@@ -454,6 +506,10 @@ const NEVER_IN_VOICE = [
 const WARMTH_UNLESS_ASKED = [
   { re: /hope that helps/i, label: "hope that helps" },
   { re: /let me know if you need/i, label: "let me know if you need anything" },
+  { re: /\bi wanted to reach out\b/i, label: "i wanted to reach out" },
+  { re: /\bcan you help me understand\b/i, label: "can you help me understand" },
+  { re: /\bi(?:'|’)d like to hear your perspective\b/i, label: "i'd like to hear your perspective" },
+  { re: /\bmy understanding is that\b/i, label: "my understanding" },
 ];
 
 /** Exclamation points and managing phrases. Warmth is allowed only when the user asked for that phrase. */

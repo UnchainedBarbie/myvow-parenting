@@ -126,6 +126,8 @@ export type ContextFrame = {
   taskObjective?: GroundedIn | null;
   /** True when an earlier draft in this turn did not ask taskObjective.question. */
   correctingMissedQuestion?: boolean;
+  /** True when this turn edits the current outgoing draft rather than starting another message. */
+  revisingDraft?: boolean;
   /** Labels from the obligation check, set only on the one rewrite of a rejected draft. */
   rejectedObligation?: string;
   capabilities: readonly ActionKind[];

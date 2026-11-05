@@ -14,6 +14,7 @@ import {
 } from "@/lib/messages/outbound-review";
 import { routeApprovals } from "@/lib/messages/proposal-send";
 import { processChatMessage } from "@/lib/sage/chat";
+import type { ConversationActionModel } from "@/lib/sage/conversation-action";
 import { shouldPreserveOpenWork, type KnownCoparent } from "@/lib/sage/chat-intent";
 import type { ConversationContext } from "@/lib/sage/conversation-context";
 import type { ConversationModel, TaskTurnReading } from "@/lib/sage/conversation-reply";
@@ -158,18 +159,11 @@ async function main() {
         model: reading("answers_pending_question"),
         conversation: context({ memory }),
       });
-      const cards = messageCards(supplied);
-      assert.equal(cards.length, 1, "the parent's message becomes one card");
-      const card = cards[0];
-      assert.equal(card.draft, text, "the parent's words are kept exactly");
-      assert.equal(card.draft_origin, "parent_text");
-      assert.equal("revised_text" in card, false, "no rewrite is attached");
-      assert.equal(card.recipient_email, "kevin@example.com");
-      assert.equal(card.requires_approval, true);
-      assert.equal("executed" in card, false);
-      assert.match(supplied.reply, /your own words/i);
-      assert.match(supplied.reply, /review it and choose Send/);
-      assert.doesNotMatch(supplied.reply, /Sage (suggests|recommends)/i);
+      assert.equal(messageCards(supplied).length, 0, "the parent's instruction is not a message card");
+      assert.match(supplied.reply, /couldn't draft that/i);
+      assert.match(supplied.reply, /What should the message say\?/);
+      assert.equal(supplied.answers ?? null, null);
+      assert.doesNotMatch(supplied.reply, new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"));
 
       for (const model of [reading(null), null]) {
         const unread = await chat(text, { model, conversation: context({ memory }) });
@@ -191,13 +185,69 @@ async function main() {
   // --- Content the parent supplies for an open question ------------------------------------------
   {
     const memory = openMessageQuestion();
-    const result = await chat("Please bring Emma's jacket on Friday.", {
+    const jacket = "Please bring Emma's jacket on Friday.";
+    const result = await chat(jacket, {
       model: reading("answers_pending_question"),
       conversation: context({ memory }),
     });
-    const [card] = messageCards(result);
-    assert.equal(card.draft, "Please bring Emma's jacket on Friday.");
-    assert.equal(card.draft_origin, "parent_text");
+    assert.equal(messageCards(result).length, 0);
+    assert.match(result.reply, /couldn't draft that/i);
+    assert.doesNotMatch(result.reply, /Emma's jacket/);
+  }
+
+  // --- A failed revision leaves the existing draft and never sends the instruction ---------------
+  {
+    const instruction =
+      "remind him it's shared decision making and that he violated it making a decision unilaterally";
+    const memory = openMessageQuestion();
+    const echo: ConversationActionModel = {
+      interpret: async () => ({
+        kind: "message",
+        outcome: "Ask him to make medical decisions together.",
+        question: null,
+        refersTo: "the medical draft",
+        grounding: "conversation",
+        relevantFactIndexes: [],
+        uncertain: [],
+        disputed: [],
+        recipientName: "Kevin",
+        elicitation: "open_question",
+      }),
+      draftMessage: async () => instruction,
+    };
+    const revised = await processChatMessage({
+      message: instruction,
+      case_id: "case-1",
+      timezone: "America/Denver",
+      conversation: context({
+        memory,
+        open_proposals: [
+          {
+            type: "reply_coparent",
+            text: "I'd like us to make medical decisions together going forward.",
+          },
+        ],
+      }),
+      coparents: [kevin],
+      children: [{ id: "child-1", name: "Emma Example" }],
+      viewerId: "parent-ashley",
+      viewerRole: "parent",
+      reasonAboutDocument: null,
+      shadow: false,
+      today: TODAY,
+      conversationModel: reading("answers_pending_question"),
+      conversationActionModel: echo,
+      arbitrationModel: null,
+    });
+    assert.equal(
+      revised.result.plan.proposals.some(
+        (card) => card.type === "reply_coparent" && card.draft === instruction
+      ),
+      false
+    );
+    assert.match(revised.reply, /revision did not work/i);
+    assert.match(revised.reply, /draft is unchanged/i);
+    assert.equal(revised.answers ?? null, null);
   }
 
   // --- Wording Sage composes is marked as Sage's ---------------------------------------------------

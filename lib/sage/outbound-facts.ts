@@ -353,36 +353,24 @@ function phraseAsRequest(act: string): string | null {
   return unsupportedObligations(draft, "").length === 0 ? draft : null;
 }
 
-/** Parent sentences only. An invented obligation, a draft command, or a private label is left out. */
-export function factsOnlyDraft(sources: string, request = ""): string {
-  const kept: string[] = [];
-  const seen = new Set<string>();
-  for (const text of [sources, request]) {
-    for (const sentence of text.split(/(?<=[.?!])\s+/)) {
-      const line = sentence.trim();
-      if (line.length < 12) continue;
-      if (/\b(draft a message|make it more direct|make it shorter|cancel that message)\b/i.test(line)) continue;
-      if (/^(can you|please )?(draft|cancel|make)\b/i.test(line)) continue;
-      if (/\b(coercive control|litigation|for court)\b/i.test(line)) continue;
-      if (unsupportedObligations(line, sources).length > 0) continue;
-      if (unsupportedFacts(line, sources).length > 0) continue;
-      if (voiceProblems(line, request).length > 0) continue;
-      const key = line.toLowerCase();
-      if (seen.has(key)) continue;
-      seen.add(key);
-      kept.push(line);
-    }
-  }
-  const body = kept.join(" ");
-  if (
-    !body ||
-    unsupportedObligations(body, sources).length > 0 ||
-    unsupportedFacts(body, sources).length > 0 ||
-    voiceProblems(body, request).length > 0
-  ) {
-    return NO_DETAIL_REPLY;
-  }
-  return body;
+/**
+ * True when the co-parent body is the parent's private request, or contains that request.
+ * An empty body is not this. A shorter sentence the drafter wrote is not this.
+ */
+export function requestAsDraft(body: string, request: string): boolean {
+  const norm = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const draft = norm(body);
+  const asked = norm(request);
+  if (!draft || asked.length < 12) return false;
+  return draft === asked || draft.includes(asked);
+}
+
+/**
+ * A failed draft does not paste the request or the record into the co-parent body.
+ * The caller already tried a rewrite. This is the sentence Sage can say on its own.
+ */
+export function factsOnlyDraft(_sources = "", _request = ""): string {
+  return NO_DETAIL_REPLY;
 }
 
 export function unsupportedFacts(draft: string, sources: string): string[] {

@@ -7,6 +7,7 @@
 import { bareCorrection, type ConversationContext } from "@/lib/sage/conversation-context";
 import { YOUR_CO_PARENT } from "@/lib/sage/relationship-voice";
 import { hasMessageSubstance } from "@/lib/messages/message-content";
+import { requestAsDraft } from "@/lib/sage/outbound-facts";
 import type { Observation } from "@/lib/sage/observation-builder";
 import type { Plan, Proposal } from "@/lib/sage/planner";
 import { isInactiveProposal, proposalState, reviseProposal } from "@/lib/sage/proposal-lifecycle";
@@ -641,6 +642,18 @@ export function messageDraftTurn(opts: {
   unverified?: boolean;
 }): RoutedTurn {
   const privateObjective = opts.groundedIn?.outcome?.trim() || opts.outcome;
+  if (requestAsDraft(opts.body, opts.message)) {
+    return turn({
+      handled: true,
+      reply: "I couldn't draft that. What should the message say?",
+      message: opts.message,
+      summary: "No draft was produced.",
+      itemType: "note",
+      proposals: [],
+      status: "no_action",
+      reasoning: "The drafter returned the parent's request. That text was not used as the message.",
+    });
+  }
   const messageCard = proposal("reply_coparent", opts.body, {
     recipient_name: opts.recipient.name,
     recipient_email: opts.recipient.email ?? "",
@@ -814,7 +827,8 @@ export function messageAnswerCandidate(
 function completeOpenDetail(
   message: string,
   memory: WorkingMemory | null | undefined,
-  taskTurn?: "conversation" | "unreadable"
+  taskTurn?: "conversation" | "unreadable",
+  openProposals?: { type: string; text: string }[]
 ): RoutedTurn | null {
   const clarification = memory?.clarification;
   if (!clarification || isExplicitNoteRequest(message)) return null;
@@ -843,7 +857,7 @@ function completeOpenDetail(
     if (taskTurn === "unreadable") {
       return turn({
         handled: true,
-        reply: "I didn't understand that request, so I haven't drafted anything.",
+        reply: "I didn't understand that request, so I haven't drafted anything. What should the message say?",
         message,
         summary: "The turn could not be read.",
         itemType: "note",
@@ -855,7 +869,7 @@ function completeOpenDetail(
     }
     const candidate = messageAnswerCandidate(message, memory);
     if (!candidate) return null;
-    const { name, email, body } = candidate;
+    const { body } = candidate;
     // Text with nothing to say is not a message. The question stays open and the parent is asked again.
     if (!hasMessageSubstance(body)) {
       return turn({
@@ -870,22 +884,22 @@ function completeOpenDetail(
           "The parent's text had no content for a message. The open question stays open and nothing was drafted.",
       });
     }
-    // The parent's words are kept exactly as typed and are labeled as theirs.
+    // The sentence answers an open question. It is an instruction to Sage, not the message.
+    const liveDraft = (openProposals ?? []).some(
+      (item) => item.type === "reply_coparent" && item.text.trim().length > 0
+    );
     return turn({
       handled: true,
-      answers: clarification.proposalId,
-      reply: `Here is your message to ${YOUR_CO_PARENT}, in your own words. Nothing is sent until you review it and choose Send.`,
+      reply: liveDraft
+        ? "That revision did not work. The draft is unchanged."
+        : "I couldn't draft that. What should the message say?",
       message,
-      summary: `Message to ${YOUR_CO_PARENT}`,
-      itemType: "message",
-      proposals: [
-        proposal("reply_coparent", body, {
-          recipient_name: name,
-          recipient_email: email,
-          draft_origin: "parent_text",
-        }),
-      ],
-      reasoning: "The parent supplied the message. It still needs review and approval before anything is sent.",
+      summary: liveDraft ? "The revision was not applied." : "No draft was produced.",
+      itemType: "note",
+      proposals: [],
+      status: "no_action",
+      reasoning:
+        "The parent's instruction was not copied into a co-parent message. Only the drafter writes that body.",
     });
   }
   return null;
@@ -964,7 +978,12 @@ export function routeChatIntent(input: RouteChatIntentInput): RoutedTurn {
     });
   }
 
-  const answered = completeOpenDetail(message, conversation?.memory, input.taskTurn);
+  const answered = completeOpenDetail(
+    message,
+    conversation?.memory,
+    input.taskTurn,
+    conversation?.open_proposals
+  );
   if (answered) return answered;
 
   if (named.length > 1 && (isCalendarQuestion(message) || wantsCalendar(message) || isEventDetailUpdate(message))) {

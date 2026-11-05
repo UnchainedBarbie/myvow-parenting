@@ -6,7 +6,7 @@
  */
 
 import type { getServiceRoleClient } from "@/lib/supabase/server";
-import { restoreDroppedEvidence } from "@/lib/sage/outbound-facts";
+import { requestAsDraft, restoreDroppedEvidence } from "@/lib/sage/outbound-facts";
 import { proposalId, reviseProposal } from "@/lib/sage/proposal-lifecycle";
 import type { TurnArbitration } from "@/lib/sage/turn-arbitration";
 
@@ -117,7 +117,7 @@ export async function applyTaskRevision(opts: {
   if (!current) return null;
   const previous = opts.previousDraft ?? draftOf(current);
   const next = restoreDroppedEvidence(opts.nextDraft.trim(), previous, opts.guidance ?? "");
-  if (!next) return null;
+  if (!next || (opts.guidance && requestAsDraft(next, opts.guidance))) return null;
   const revised = reviseProposal(loaded.proposals, index, {
     draft: next,
     revised_text: next,

@@ -220,20 +220,20 @@ async function main() {
       assert.equal(shouldPreserveOpenWork(aside, memory, result.result.plan.proposals), true);
     }
 
-    // A genuine answer still becomes a draft that waits for approval.
+    // A genuine answer is an instruction to Sage. It is not copied into the draft.
     const answering = double({ readings: { "I can take Friday.": "answers_pending_question" } });
     const answer = await chat("I can take Friday.", {
       model: answering.model,
       conversation: context({ memory }),
     });
-    const draft = answer.result.plan.proposals.find((proposal) => proposal.type === "reply_coparent");
-    assert.ok(draft);
-    assert.equal(draft.draft, "I can take Friday.");
-    assert.equal(draft.recipient_email, "kevin@example.com");
-    assert.equal(draft.requires_approval, true);
-    assert.equal("executed" in draft, false);
+    assert.equal(
+      answer.result.plan.proposals.some((proposal) => proposal.type === "reply_coparent"),
+      false
+    );
+    assert.match(answer.reply, /couldn't draft that/i);
+    assert.match(answer.reply, /What should the message say\?/);
+    assert.doesNotMatch(answer.reply, /I can take Friday/);
     assert.equal(answering.replies.length, 0, "the answer is not also answered conversationally");
-    assert.match(answer.reply, /Nothing is sent until you review it and choose Send/);
 
     // A failed or missing reading does not turn the parent's sentence into the draft.
     const unread = double({ readings: {} });

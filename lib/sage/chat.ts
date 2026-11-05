@@ -21,6 +21,7 @@ import {
   type PendingRevision,
 } from "@/lib/sage/chat-intent";
 import { buildContextFrame, hasConversationSubstance, relevantParentFacts, withInterpretation } from "@/lib/sage/context-frame";
+import { NO_DETAIL_REPLY, requestAsDraft } from "@/lib/sage/outbound-facts";
 import {
   anthropicConversationActionModel,
   decideConversationAction,
@@ -157,6 +158,34 @@ function buildReply(result: ProcessObservationResult): string {
     return "Got it — noted.";
   }
   return "I can help with that.";
+}
+
+/** Drop a co-parent card whose body is the parent's private request. The previous draft is left alone. */
+function releaseRawRequest(
+  input: ProcessChatMessageInput,
+  reply: string,
+  proposals: Proposal[]
+): { reply: string; proposals: Proposal[]; released: boolean } {
+  const liveDraft = (input.conversation?.open_proposals ?? []).some(
+    (item) => item.type === "reply_coparent" && item.text.trim().length > 0
+  );
+  const raw = proposals.filter(
+    (item) =>
+      item.type === "reply_coparent" &&
+      (requestAsDraft(item.draft ?? "", input.message) ||
+        (liveDraft && (item.draft ?? "").trim() === NO_DETAIL_REPLY))
+  );
+  if (raw.length === 0) return { reply, proposals, released: false };
+  const kept = proposals.filter((item) => !raw.includes(item));
+  return {
+    released: true,
+    proposals: kept,
+    reply: kept.some((item) => item.type === "reply_coparent")
+      ? reply
+      : liveDraft
+        ? "That revision did not work. The draft is unchanged."
+        : "I couldn't draft that. What should the message say?",
+  };
 }
 
 /**
@@ -424,7 +453,26 @@ export async function processChatMessage(
           interpretation,
         })
       : null;
-  if (
+  const liveDraft = (input.conversation?.open_proposals ?? []).some(
+    (item) => item.type === "reply_coparent" && item.text.trim().length > 0
+  );
+  const rawDraft =
+    actionDecision?.status === "draft" &&
+    (requestAsDraft(actionDecision.body, input.message) ||
+      (liveDraft && actionDecision.body.trim() === NO_DETAIL_REPLY));
+  const heldReply =
+    /revision did not work/i.test(routed.reply) || /couldn't draft that/i.test(routed.reply);
+  if (applyAction && rawDraft && actionDecision?.status === "draft") {
+    routed.reply = liveDraft
+      ? "That revision did not work. The draft is unchanged."
+      : "I couldn't draft that. What should the message say?";
+    routed.handled = true;
+    routed.answers = null;
+    routed.result.plan.proposals = routed.result.plan.proposals.filter(
+      (item) => item.type !== "reply_coparent" || !requestAsDraft(item.draft ?? "", input.message)
+    );
+    routed.result.plan.status = "no_action";
+  } else if (
     applyAction &&
     actionDecision?.status === "draft" &&
     !(taskDecision.relation === "continue" && routedMessage)
@@ -443,7 +491,7 @@ export async function processChatMessage(
         unverified: actionDecision.validation === "unverified",
       })
     );
-  } else if (applyAction && actionDecision?.status === "ask" && !routedMessage) {
+  } else if (applyAction && actionDecision?.status === "ask" && !routedMessage && !heldReply) {
     Object.assign(
       routed,
       messageAskTurn({
@@ -514,13 +562,15 @@ export async function processChatMessage(
   }
   if (routed.handled) {
     const shared = await shareExpenseTurn(input.case_id, routed.reply, routed.result);
+    const shown = releaseRawRequest(input, shared.reply, shared.proposals);
+    routed.result.plan.proposals = shown.proposals;
     return {
-      reply: shared.reply,
-      actions: shared.proposals.map((p) => ({ ...p, status: "proposed" as const })),
+      reply: shown.reply,
+      actions: shown.proposals.map((p) => ({ ...p, status: "proposed" as const })),
       result: routed.result,
       control: routed.control,
       revision: routed.revision,
-      answers: routed.answers ?? null,
+      answers: shown.released ? null : routed.answers ?? null,
       taskDecision,
     };
   }
@@ -623,13 +673,15 @@ export async function processChatMessage(
   }
 
   const shared = await shareExpenseTurn(input.case_id, buildReply(result), result);
-  const actions: ChatAction[] = shared.proposals.map((p) => ({
+  const shown = releaseRawRequest(input, shared.reply, shared.proposals);
+  result.plan.proposals = shown.proposals;
+  const actions: ChatAction[] = shown.proposals.map((p) => ({
     ...p,
     status: "proposed" as const,
   }));
 
   return {
-    reply: shared.reply,
+    reply: shown.reply,
     actions,
     result,
     control: "none",

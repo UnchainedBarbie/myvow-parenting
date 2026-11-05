@@ -501,13 +501,12 @@ const suppliedMessage = routeChatIntent({
     memory: messageMemory,
   },
 });
-const suppliedDraft = suppliedMessage.result.plan.proposals.find((proposal) => proposal.type === "reply_coparent");
-assert.ok(suppliedDraft);
-assert.equal(suppliedMessage.result.plan.proposals.filter((proposal) => proposal.type === "reply_coparent").length, 1);
-assert.equal(suppliedDraft.draft, "I can take Friday.");
-assert.equal(suppliedDraft.recipient_email, "kevin@example.com");
-assert.equal(suppliedDraft.requires_approval, true);
-assert.equal("executed" in suppliedDraft, false);
-assert.equal(hasVisibleProposalCards(suppliedMessage.result.plan.proposals), true);
+assert.equal(
+  suppliedMessage.result.plan.proposals.some((proposal) => proposal.type === "reply_coparent"),
+  false
+);
+assert.match(suppliedMessage.reply, /couldn't draft that/i);
+assert.doesNotMatch(suppliedMessage.reply, /I can take Friday/);
+assert.equal(hasVisibleProposalCards(suppliedMessage.result.plan.proposals), false);
 
 console.log("chat-intent tests passed");

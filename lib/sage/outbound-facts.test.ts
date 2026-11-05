@@ -51,6 +51,7 @@ assert.deepEqual(
 assert.deepEqual(unsupportedObligations("Please submit expenses within 30 days.", ""), []);
 
 const fallback = factsOnlyDraft(noPlan, "Please tell me why you emailed the office yourself.");
+assert.equal(fallback, "I'll confirm and follow up.");
 assert.equal(fallback.includes("agreement"), false);
-assert.match(fallback, /emailed the office himself/);
-assert.match(fallback, /Please tell me why you emailed the office yourself/);
+assert.equal(fallback.includes("emailed the office"), false);
+assert.equal(fallback.includes("Please tell me why"), false);

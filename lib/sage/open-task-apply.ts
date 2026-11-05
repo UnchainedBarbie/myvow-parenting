@@ -7,6 +7,7 @@
 
 import type { getServiceRoleClient } from "@/lib/supabase/server";
 import { isParentFacingCopy, requestAsDraft, restoreDroppedEvidence } from "@/lib/sage/outbound-facts";
+import { taskIdOf } from "@/lib/sage/open-task";
 import { proposalId, reviseProposal } from "@/lib/sage/proposal-lifecycle";
 import type { TurnArbitration } from "@/lib/sage/turn-arbitration";
 
@@ -174,6 +175,72 @@ export async function dismissTaskProposals(opts: {
   const plan = { ...loaded.plan, proposals };
   if (!(await savePlan(opts.admin, opts.itemId, opts.userId, plan))) return null;
   return { id: opts.itemId, plan };
+}
+
+/**
+ * Remove the stored objective from message proposals only.
+ * Calendar, expense, and other proposals in the same plan are left as they are.
+ * The draft text stays. The question, outcome, and private objective do not.
+ */
+export function clearReplyObjective(proposals: unknown[]): unknown[] {
+  return proposals.map((raw) => {
+    const row = asRecord(raw);
+    if (!row || row.type !== "reply_coparent") return raw;
+    if (!("grounded_in" in row) && !("private_objective" in row)) return raw;
+    const next = { ...row };
+    delete next.grounded_in;
+    delete next.private_objective;
+    return next;
+  });
+}
+
+/**
+ * Drop the established objective on one message task after a terminal review failure.
+ * Other tasks, and calendar or expense proposals, are not written. The journal is not written.
+ */
+export async function clearStoredMessageObjective(opts: {
+  admin: Admin;
+  userId: string;
+  sessionId: string;
+  taskId: string;
+}): Promise<void> {
+  const taskId = opts.taskId.trim();
+  const sessionId = opts.sessionId.trim();
+  if (!taskId || !sessionId) return;
+  const { data: journals, error: journalErr } = await opts.admin
+    .from("sage_journal_messages")
+    .select("sage_item_id")
+    .eq("session_id", sessionId)
+    .eq("user_id", opts.userId)
+    .not("sage_item_id", "is", null);
+  if (journalErr || !journals) return;
+  const itemIds = [
+    ...new Set(
+      (journals as { sage_item_id?: string | null }[])
+        .map((row) => row.sage_item_id)
+        .filter((id): id is string => typeof id === "string" && id.length > 0)
+    ),
+  ];
+  if (itemIds.length === 0) return;
+  const { data: items, error } = await opts.admin
+    .from("sage_items")
+    .select("id, plan")
+    .in("id", itemIds)
+    .eq("visible_to", opts.userId);
+  if (error || !items) return;
+  for (const row of items as { id?: string | null; plan?: unknown }[]) {
+    const id = typeof row.id === "string" ? row.id : "";
+    const plan =
+      row.plan && typeof row.plan === "object" && !Array.isArray(row.plan)
+        ? (row.plan as Record<string, unknown>)
+        : null;
+    if (!id || !plan) continue;
+    if (taskIdOf({ id, plan }) !== taskId) continue;
+    const proposals = Array.isArray(plan.proposals) ? plan.proposals : [];
+    const next = clearReplyObjective(proposals);
+    if (next.every((item, index) => item === proposals[index])) continue;
+    await savePlan(opts.admin, id, opts.userId, { ...plan, proposals: next });
+  }
 }
 
 /**

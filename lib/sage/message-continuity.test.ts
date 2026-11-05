@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { processChatMessage } from "@/lib/sage/chat";
 import { draftRequestBody, interpretRequestBody, type ConversationActionModel } from "@/lib/sage/conversation-action";
+import { clearReplyObjective } from "@/lib/sage/open-task-apply";
 import type { ConversationContext } from "@/lib/sage/conversation-context";
 import { fidelityRequestBody, type FidelityInput, type FidelityVerdict } from "@/lib/sage/instruction-fidelity";
 import { askArbitration, type ArbitrationModel } from "@/lib/sage/turn-arbitration";
@@ -418,9 +419,12 @@ async function main() {
   });
   assert.equal(reviews, 2);
   assert.equal(drafts, 2);
-  assert.equal(messageCard(rejected), undefined);
-  assert.match(rejected.reply, /What should the message ask\?/i);
-  assert.doesNotMatch(rejected.reply, /Nothing is sent until you review it and choose Send/);
+  // The body can still be sent, so the review failure keeps it and leaves the objective in place.
+  const rejectedCard = messageCard(rejected);
+  assert.match(rejectedCard?.draft ?? "", /He should admit/i);
+  assert.equal(rejected.clearMessageObjective, null);
+  assert.doesNotMatch(rejected.reply, /What should the message ask\?/);
+  assert.match(rejected.reply, /Nothing is sent until you review it and choose Send/);
 
   reviews = 0;
   drafts = 0;
@@ -454,6 +458,161 @@ async function main() {
   assert.match(unverified.reply, /Nothing is sent until you review it and choose Send/);
   assert.match(unverified.reply, /could not verify that this draft matches what you asked/i);
   assertHeld(unverifiedCard);
+
+  // A terminal review failure clears that message task's objective. The next,
+  // unrelated request is drafted. The same request still gets the clarification
+  // sentence while the old objective remains. A purpose question does not clear it.
+  const NEW_REQUEST = "Ask him why he did not use the designated decision-maker process.";
+  const UNUSABLE =
+    "I don't yet have a draft that matches what you described. What should the message ask about vaccination consent?";
+  const calendar = {
+    id: "item-cal",
+    itemType: "calendar_event",
+    proposals: [
+      {
+        id: "cal-1",
+        type: "calendar_update",
+        draft: "Add to calendar: Saturday pickup at 5pm.",
+        private_objective: "Keep the Saturday pickup on the calendar.",
+      },
+    ],
+  };
+  const expense = {
+    id: "item-exp",
+    itemType: "expense",
+    proposals: [
+      {
+        id: "exp-1",
+        type: "log_expense",
+        draft: "Log the Saturday copay.",
+        private_objective: "Record the copay.",
+      },
+    ],
+  };
+  const consentLive = liveConsent();
+  const afterFailure: ConversationActionModel = {
+    interpret: async (frame) => {
+      const content = String(interpretRequestBody(frame).messages[0].content);
+      const stored = /vaccination consent/i.test(blockText(content, "ESTABLISHED_OBJECTIVES"));
+      if (stored) return reading(CONSENT, false, "item-live");
+      return {
+        kind: "message",
+        outcome: "Ask why the designated decision-maker process was not used.",
+        question: DECISION,
+        refersTo: "the decision-maker discussion",
+        grounding: "conversation",
+        relevantFactIndexes: [],
+        uncertain: [],
+        disputed: [],
+        recipientName: "Kevin",
+        elicitation: "open_question",
+        privateConstraints: [],
+        outcomeChanged: false,
+        establishedTaskId: null,
+      };
+    },
+    draftMessage: async (frame) =>
+      /vaccination consent/i.test(frame.taskObjective?.question ?? "") ? UNUSABLE : DECISION,
+    evaluateFidelity: async (input) => (input.draft === DECISION ? pass() : rejectConsent()),
+  };
+  const continueLive: ArbitrationModel = {
+    classify: async () => ({
+      relation: "continue",
+      taskId: "item-live",
+      currentProposalId: "live-1",
+      currentItemId: "item-live",
+      kind: "message",
+      unread: false,
+    }),
+  };
+  const failed = await chat("Draft a message to my co-parent about the pediatrician.", {
+    action: afterFailure,
+    arbitration: continueLive,
+    conversation: conversationWith(consentLive),
+  });
+  assert.equal(failed.clearMessageObjective?.taskId, "item-live");
+  assert.match(failed.reply, /What should the message ask\?/);
+  assert.equal(messageCard(failed), undefined);
+
+  const stillStuck = await chat(NEW_REQUEST, {
+    action: afterFailure,
+    arbitration: continueLive,
+    conversation: conversationWith(consentLive),
+    recentTurns: [...DECISION_TURNS, { role: "sage", text: failed.reply }],
+  });
+  assert.match(stillStuck.reply, /What should the message ask\?/);
+  assert.equal(messageCard(stillStuck), undefined);
+
+  const clearedProposals = clearReplyObjective(consentLive.proposals);
+  const clearedMessage = clearedProposals[0] as {
+    draft?: string;
+    grounded_in?: unknown;
+    private_objective?: unknown;
+  };
+  assert.equal(clearedMessage.draft, CONSENT);
+  assert.equal("grounded_in" in clearedMessage, false);
+  assert.equal("private_objective" in clearedMessage, false);
+  assert.equal(calendar.proposals[0].draft, "Add to calendar: Saturday pickup at 5pm.");
+  assert.equal(calendar.proposals[0].private_objective, "Keep the Saturday pickup on the calendar.");
+  assert.equal(expense.proposals[0].private_objective, "Record the copay.");
+  const mixed = [
+    {
+      type: "reply_coparent",
+      draft: CONSENT,
+      private_objective: consentObjective.outcome,
+      grounded_in: { ...consentObjective },
+    },
+    { type: "calendar_update", draft: "Add Saturday pickup", private_objective: "calendar goal" },
+    { type: "log_expense", draft: "Log the copay", private_objective: "expense goal" },
+  ];
+  const stripped = clearReplyObjective(mixed);
+  assert.equal(stripped[1], mixed[1]);
+  assert.equal(stripped[2], mixed[2]);
+  assert.equal("grounded_in" in (stripped[0] as object), false);
+  assert.equal("private_objective" in (stripped[0] as object), false);
+  assert.equal((stripped[0] as { draft?: string }).draft, CONSENT);
+
+  const draftedNext = await chat(NEW_REQUEST, {
+    action: afterFailure,
+    arbitration: continueLive,
+    conversation: conversationWith({ ...consentLive, proposals: clearedProposals }),
+    recentTurns: [...DECISION_TURNS, { role: "sage", text: failed.reply }],
+  });
+  assert.equal(messageCard(draftedNext)?.draft, DECISION);
+  assert.doesNotMatch(draftedNext.reply, /What should the message ask\?/);
+  assert.equal(draftedNext.clearMessageObjective, null);
+
+  const purpose = await chat("Please draft a message to Kevin.", {
+    action: {
+      interpret: async () => ({
+        kind: "message" as const,
+        outcome: "",
+        question: "",
+        refersTo: null,
+        grounding: "insufficient" as const,
+        relevantFactIndexes: [],
+        uncertain: ["what the message should say"],
+        disputed: [] as string[],
+        recipientName: "Kevin",
+        elicitation: null,
+        privateConstraints: [] as string[],
+        outcomeChanged: false,
+        establishedTaskId: null,
+      }),
+      draftMessage: async () => {
+        throw new Error("an empty purpose must not draft");
+      },
+      evaluateFidelity: async () => {
+        throw new Error("an empty purpose must not be reviewed");
+      },
+    },
+    arbitration: continueLive,
+    recentTurns: [],
+    conversation: conversationWith(live),
+  });
+  assert.equal(purpose.clearMessageObjective, null);
+  assert.equal(messageCard(purpose), undefined);
+  assert.match(purpose.reply, /What should I tell/i);
 
   console.log("message-continuity tests passed");
 }

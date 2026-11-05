@@ -84,6 +84,11 @@ export type ChatProcessResult = {
   answers?: string | null;
   /** How this turn relates to an OpenTask. Unread means task state must not change. */
   taskDecision: TurnArbitration;
+  /**
+   * Set when a message draft fails review, the repair fails, and the body cannot be sent.
+   * Only that message task's stored objective is cleared. Other work stays.
+   */
+  clearMessageObjective: { taskId: string } | null;
 };
 
 export type ProcessChatMessageInput = {
@@ -221,8 +226,10 @@ export async function processChatMessage(
       control: "none",
       revision: null,
       taskDecision: idleArbitration(),
+      clearMessageObjective: null,
     };
   }
+  let clearMessageObjective: { taskId: string } | null = null;
   const chatTurn = (input.intake ?? "chat") === "chat";
   const model = input.conversationModel === undefined ? anthropicConversationModel() : input.conversationModel;
   const packet = () =>
@@ -522,6 +529,12 @@ export async function processChatMessage(
       })
     );
   } else if (applyAction && actionDecision?.status === "ask" && !routedMessage && !heldReply) {
+    if (actionDecision.terminalReviewFailure) {
+      const failedTaskId =
+        applicable?.taskId ??
+        (boundTask?.kind === "message" && taskDecision.relation !== "new_task" ? boundTask.id : null);
+      if (failedTaskId) clearMessageObjective = { taskId: failedTaskId };
+    }
     Object.assign(
       routed,
       messageAskTurn({
@@ -602,6 +615,7 @@ export async function processChatMessage(
       revision: routed.revision,
       answers: shown.released ? null : routed.answers ?? null,
       taskDecision,
+      clearMessageObjective,
     };
   }
 
@@ -669,6 +683,7 @@ export async function processChatMessage(
       control: "none",
       revision: null,
       taskDecision,
+      clearMessageObjective,
     };
   }
 
@@ -698,6 +713,7 @@ export async function processChatMessage(
         control: "none",
         revision: null,
         taskDecision,
+        clearMessageObjective,
       };
     }
   }
@@ -717,6 +733,7 @@ export async function processChatMessage(
     control: "none",
     revision: null,
     taskDecision,
+    clearMessageObjective,
   };
 }
 

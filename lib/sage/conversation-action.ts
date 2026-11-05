@@ -65,6 +65,11 @@ export type ConversationActionDecision =
       recipient: KnownCoparent | null;
       interpretation: ActionInterpretation | null;
       objective?: GroundedIn | null;
+      /**
+       * The draft failed review, the one repair was empty or failed, and the body
+       * cannot be sent. The stored objective for this message task is cleared.
+       */
+      terminalReviewFailure?: boolean;
     }
   | {
       status: "keep_routed";
@@ -611,6 +616,7 @@ export async function decideConversationAction(input: DecideInput): Promise<Conv
         recipient,
         interpretation,
         objective: checked.objective,
+        terminalReviewFailure: true,
       };
     }
     const finalBody = await dropUnsupportedObligation(checked.body, framed, model);

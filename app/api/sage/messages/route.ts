@@ -35,7 +35,7 @@ import {
   unsatisfiedDependsOn,
   type RevisableDraft,
 } from "@/lib/sage/open-drafts";
-import { applyTurnToTasks } from "@/lib/sage/open-task-apply";
+import { applyTurnToTasks, clearStoredMessageObjective } from "@/lib/sage/open-task-apply";
 import { blocksRecencyFold } from "@/lib/sage/turn-arbitration";
 import { closeAnsweredQuestions, turnRepeatsOpenQuestions } from "@/lib/sage/clarification-lifecycle";
 import { AMBIGUOUS_CASE_MESSAGE, resolveActiveCase } from "@/lib/cases/resolve-active-case";
@@ -1044,7 +1044,8 @@ export async function POST(request: NextRequest) {
             currentDocumentId: attachmentDocumentId,
             recentTurns,
           });
-          const { reply, result, control, revision, answers, taskDecision } = await processChatMessage({
+          const { reply, result, control, revision, answers, taskDecision, clearMessageObjective } =
+            await processChatMessage({
             message: trimmed,
             case_id: caseId,
             timezone,
@@ -1062,6 +1063,14 @@ export async function POST(request: NextRequest) {
             analysisFiles: analysis?.files,
             loadAnalysisBytes: analysis?.loadBytes,
           });
+          if (sessionId && clearMessageObjective?.taskId) {
+            await clearStoredMessageObjective({
+              admin,
+              userId: user.id,
+              sessionId,
+              taskId: clearMessageObjective.taskId,
+            });
+          }
           if (reply.trim()) sageContent = reply;
           const createdDocument = result.plan.proposals.find((proposal) => proposal.type === "log_document");
           if (createdDocument) await rememberPendingDocument(admin, createdDocument);

@@ -221,6 +221,9 @@ export function SageClient({
     initialText: string;
   } | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const transcriptRef = useRef<HTMLDivElement | null>(null);
+  const skipScrollRef = useRef(false);
+  const lastReturnRefreshRef = useRef(0);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
@@ -252,13 +255,16 @@ export function SageClient({
     }
   }, [initialDraft, onConsumeInitialDraft]);
 
-  const loadMessages = useCallback(async (sid: string | null) => {
+  const loadMessages = useCallback(async (sid: string | null, options?: { quiet?: boolean }) => {
     if (sid === null) {
       setMessages([]);
       setLoading(false);
       return;
     }
-    setLoading(true);
+    const quiet = options?.quiet === true;
+    const viewport = transcriptRef.current?.querySelector("[data-radix-scroll-area-viewport]");
+    const scrollTop = quiet && viewport instanceof HTMLElement ? viewport.scrollTop : null;
+    if (!quiet) setLoading(true);
     try {
       const res = await fetch(
         `/api/sage/messages?session_id=${encodeURIComponent(sid)}`
@@ -270,22 +276,47 @@ export function SageClient({
           case_id?: string | null;
           children?: Child[];
         };
+        if (quiet) skipScrollRef.current = true;
         setMessages(payload.messages ?? []);
         setCaseId(payload.case_id ?? null);
         setChildrenList(Array.isArray(payload.children) ? payload.children : []);
-      } else {
+        if (viewport instanceof HTMLElement && scrollTop != null) {
+          requestAnimationFrame(() => {
+            viewport.scrollTop = scrollTop;
+          });
+        }
+      } else if (!quiet) {
         setMessages([]);
       }
     } catch {
-      showErrorToast("Could not load Sage history.");
-      setMessages([]);
+      if (!quiet) {
+        showErrorToast("Could not load Sage history.");
+        setMessages([]);
+      }
     } finally {
-      setLoading(false);
+      if (!quiet) setLoading(false);
     }
   }, []);
 
   useEffect(() => {
     void loadMessages(sessionId);
+  }, [sessionId, loadMessages]);
+
+  useEffect(() => {
+    function onReturn() {
+      if (document.visibilityState === "hidden") return;
+      if (!sessionId) return;
+      const now = Date.now();
+      if (now - lastReturnRefreshRef.current < 1500) return;
+      lastReturnRefreshRef.current = now;
+      void loadMessages(sessionId, { quiet: true });
+    }
+    window.addEventListener("focus", onReturn);
+    document.addEventListener("visibilitychange", onReturn);
+    return () => {
+      window.removeEventListener("focus", onReturn);
+      document.removeEventListener("visibilitychange", onReturn);
+    };
   }, [sessionId, loadMessages]);
 
   useEffect(() => {
@@ -295,6 +326,10 @@ export function SageClient({
 
   useEffect(() => {
     if (loading) return;
+    if (skipScrollRef.current) {
+      skipScrollRef.current = false;
+      return;
+    }
     if (focusTarget) {
       const selector = focusTarget.proposal
         ? `sage-proposal-${focusTarget.itemId}-${focusTarget.proposal}`
@@ -1139,7 +1174,7 @@ export function SageClient({
   return (
     <div className="rounded-2xl border border-border bg-background-secondary/40 p-3 md:p-4 flex flex-col gap-3 w-full h-full min-h-[60vh]">
       <div className="rounded-card border border-border bg-background shadow-card flex-1 min-h-[220px] overflow-hidden">
-        <ScrollArea className="h-full px-3 py-3">
+        <ScrollArea ref={transcriptRef} className="h-full px-3 py-3">
           <div className="space-y-3 text-base">
             {loading ? (
               <p className="text-foreground-secondary text-sm">Loading your reflections…</p>

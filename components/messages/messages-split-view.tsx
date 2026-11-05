@@ -142,6 +142,10 @@ export function MessagesSplitView({
   const [sageInput, setSageInput] = useState("");
   const [sageMessages, setSageMessages] = useState<SageMessage[]>([]);
   const sageBottomRef = useRef<HTMLDivElement | null>(null);
+  const threadPaneRef = useRef<HTMLDivElement | null>(null);
+  const selectedIdRef = useRef<string | null>(null);
+  selectedIdRef.current = selectedId;
+  const lastReturnRefreshRef = useRef(0);
   const [sageContextMessage, setSageContextMessage] = useState<string | null>(null);
 
   const [userSettings, setUserSettings] = useState<{
@@ -253,11 +257,32 @@ export function MessagesSplitView({
       const res = await fetch(`/api/messages/conversations/${conversationId}`);
       const data = await res.json().catch(() => ({}));
       if (!res.ok) return;
+      if (selectedIdRef.current !== conversationId) return;
       setMessages((data.messages ?? []) as MessageRow[]);
     } finally {
       setLoadingMessages(false);
     }
   }
+
+  /** Replace the open thread without the loading state, and keep the scroll where it is. */
+  const refreshOpenThread = useCallback(async (conversationId: string) => {
+    const viewport = threadPaneRef.current?.querySelector("[data-radix-scroll-area-viewport]");
+    const scrollTop = viewport instanceof HTMLElement ? viewport.scrollTop : null;
+    try {
+      const res = await fetch(`/api/messages/conversations/${conversationId}`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return;
+      if (selectedIdRef.current !== conversationId) return;
+      setMessages((data.messages ?? []) as MessageRow[]);
+      if (viewport instanceof HTMLElement && scrollTop != null) {
+        requestAnimationFrame(() => {
+          viewport.scrollTop = scrollTop;
+        });
+      }
+    } catch {
+      // Leave the thread and the composer as they are.
+    }
+  }, []);
 
   useEffect(() => {
     void loadConversations();
@@ -338,17 +363,18 @@ export function MessagesSplitView({
   const releaseCoolOff = useCallback(() => {
     fetch("/api/messages/cool-off/release", { method: "POST" })
       .then((r) => r.json())
-      .then(async (d) => {
-        const released = (d as { released?: number }).released ?? 0;
-        if (released > 0 && selectedId) {
-          await loadMessages(selectedId);
-        }
+      .then(async () => {
+        const openId = selectedIdRef.current;
+        if (openId) await refreshOpenThread(openId);
         const res = await fetch("/api/messages/cool-off");
         const data = await res.json().catch(() => ({}));
         setCoolOffActive((data as { active?: { id: string; ends_at: string } | null }).active ?? null);
       })
-      .catch(() => {});
-  }, [selectedId]);
+      .catch(() => {
+        const openId = selectedIdRef.current;
+        if (openId) void refreshOpenThread(openId);
+      });
+  }, [refreshOpenThread]);
 
   const releaseDeliveryWindow = useCallback(() => {
     if (!userSettings?.delivery_window_enabled) return;
@@ -359,15 +385,16 @@ export function MessagesSplitView({
           released?: number;
           summary_notification?: string | null;
         };
-        if ((released ?? 0) > 0 && selectedId) {
-          await loadMessages(selectedId);
+        if ((released ?? 0) > 0) {
+          const openId = selectedIdRef.current;
+          if (openId) await refreshOpenThread(openId);
         }
         if (summary_notification) {
           showSuccessToast(summary_notification);
         }
       })
       .catch(() => {});
-  }, [selectedId, userSettings?.delivery_window_enabled]);
+  }, [refreshOpenThread, userSettings?.delivery_window_enabled]);
 
   useEffect(() => {
     releaseCoolOff();
@@ -381,6 +408,24 @@ export function MessagesSplitView({
     const t = setInterval(releaseDeliveryWindow, 60 * 1000);
     return () => clearInterval(t);
   }, [releaseDeliveryWindow, userSettings?.delivery_window_enabled]);
+
+  useEffect(() => {
+    function onReturn() {
+      if (document.visibilityState === "hidden") return;
+      const openId = selectedIdRef.current;
+      if (!openId) return;
+      const now = Date.now();
+      if (now - lastReturnRefreshRef.current < 1500) return;
+      lastReturnRefreshRef.current = now;
+      void refreshOpenThread(openId);
+    }
+    window.addEventListener("focus", onReturn);
+    document.addEventListener("visibilitychange", onReturn);
+    return () => {
+      window.removeEventListener("focus", onReturn);
+      document.removeEventListener("visibilitychange", onReturn);
+    };
+  }, [refreshOpenThread]);
 
   // Close conversation card menu on click outside
   useEffect(() => {
@@ -1387,7 +1432,7 @@ export function MessagesSplitView({
                     )}
                 </div>
               </div>
-              <ScrollArea className="flex-1 px-4 py-4">
+              <ScrollArea ref={threadPaneRef} className="flex-1 px-4 py-4">
                 {loadingMessages && messages.length === 0 ? (
                   <p className="py-6 text-center text-xs text-[#8A8A8A]">
                     Loading conversation…

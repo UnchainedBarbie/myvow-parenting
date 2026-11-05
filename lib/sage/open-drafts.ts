@@ -1,5 +1,5 @@
 import type { getServiceRoleClient } from "@/lib/supabase/server";
-import { requestAsDraft, restoreDroppedEvidence } from "@/lib/sage/outbound-facts";
+import { isParentFacingCopy, requestAsDraft, restoreDroppedEvidence } from "@/lib/sage/outbound-facts";
 import { mergeObjective, parseGroundedIn, type GroundedIn } from "@/lib/sage/task-objective";
 import { redraftMessage } from "@/lib/sage/planner";
 import { isParentFacingQuestion } from "@/lib/sage/proposal-kind";
@@ -24,6 +24,8 @@ export type RevisableDraft = {
   plan: Record<string, unknown>;
   proposals: Record<string, unknown>[];
 };
+
+export const UNCHANGED_REVISION_REPLY = "That revision did not change anything.";
 
 export function revisionReply(
   proposalType: "reply_coparent" | "ask_clarification" | "calendar_update"
@@ -264,7 +266,13 @@ export async function revisePendingDraft(opts: {
     opts.target.currentDraft,
     opts.guidance
   );
-  if (!revisedText || requestAsDraft(revisedText, opts.guidance)) return null;
+  if (!revisedText || requestAsDraft(revisedText, opts.guidance) || isParentFacingCopy(revisedText)) return null;
+  if (revisedText.trim() === opts.target.currentDraft.trim()) {
+    return {
+      reply: UNCHANGED_REVISION_REPLY,
+      item: { id: opts.target.itemId, plan: freshPlan ?? opts.target.plan },
+    };
+  }
 
   const proposals = (Array.isArray(freshPlan?.proposals) ? freshPlan.proposals : opts.target.proposals).map(
     (p) => (p && typeof p === "object" ? { ...(p as Record<string, unknown>) } : {})

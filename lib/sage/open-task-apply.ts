@@ -6,14 +6,19 @@
  */
 
 import type { getServiceRoleClient } from "@/lib/supabase/server";
-import { requestAsDraft, restoreDroppedEvidence } from "@/lib/sage/outbound-facts";
+import { isParentFacingCopy, requestAsDraft, restoreDroppedEvidence } from "@/lib/sage/outbound-facts";
 import { proposalId, reviseProposal } from "@/lib/sage/proposal-lifecycle";
 import type { TurnArbitration } from "@/lib/sage/turn-arbitration";
 
 type Admin = ReturnType<typeof getServiceRoleClient>;
 
 export type AppliedTaskTurn =
-  | { folded: true; relation: "revise" | "cancel"; item: { id: string; plan: Record<string, unknown> } }
+  | {
+      folded: true;
+      relation: "revise" | "cancel";
+      item: { id: string; plan: Record<string, unknown> };
+      unchanged?: boolean;
+    }
   | { folded: false };
 
 function asRecord(raw: unknown): Record<string, unknown> | null {
@@ -108,7 +113,7 @@ export async function applyTaskRevision(opts: {
   guidance?: string;
   privateObjective?: string | null;
   groundedIn?: Record<string, unknown> | null;
-}): Promise<{ id: string; plan: Record<string, unknown> } | null> {
+}): Promise<{ id: string; plan: Record<string, unknown>; unchanged?: boolean } | null> {
   const loaded = await loadOwnedPlan(opts.admin, opts.itemId, opts.userId);
   if (!loaded) return null;
   const index = proposalIndex(loaded.proposals, opts.proposalId);
@@ -117,7 +122,10 @@ export async function applyTaskRevision(opts: {
   if (!current) return null;
   const previous = opts.previousDraft ?? draftOf(current);
   const next = restoreDroppedEvidence(opts.nextDraft.trim(), previous, opts.guidance ?? "");
-  if (!next || (opts.guidance && requestAsDraft(next, opts.guidance))) return null;
+  if (!next || isParentFacingCopy(next) || (opts.guidance && requestAsDraft(next, opts.guidance))) return null;
+  if (next.trim() === previous.trim()) {
+    return { id: opts.itemId, plan: loaded.plan, unchanged: true };
+  }
   const revised = reviseProposal(loaded.proposals, index, {
     draft: next,
     revised_text: next,
@@ -220,5 +228,5 @@ export async function applyTurnToTasks(opts: {
     groundedIn: outgoing.groundedIn ?? opts.groundedIn ?? null,
   });
   if (!item) return { folded: false };
-  return { folded: true, relation: "revise", item };
+  return { folded: true, relation: "revise", item, unchanged: item.unchanged === true };
 }

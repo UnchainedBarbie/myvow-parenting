@@ -405,6 +405,7 @@ export function ProposalCardList({
                     !superseded &&
                     typeof p.revised_text === "string" &&
                     p.revised_text.trim() &&
+                    p.revised_text.trim() !== (p.draft ?? "").trim() &&
                     !approved &&
                     !waived && (
                       <span className="text-[10px] text-[#5B7A52]">

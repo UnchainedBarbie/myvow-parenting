@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getServiceRoleClient } from "@/lib/supabase/server";
 import { saveCalendarCoparentNotice } from "@/lib/calendar/save-coparent-notice";
 import { effectiveNotifyCoparent } from "@/lib/calendar/coparent-notice";
+import { calendarEventTitle } from "@/lib/sage/calendar-labels";
 
 /**
  * Create calendar event. Service role for writes.
@@ -50,7 +51,9 @@ export async function POST(request: NextRequest) {
       source_message_id?: string;
       notify_coparent?: boolean;
     };
-    const titleValue = typeof title === "string" ? title.trim() : "";
+    const titleValue = calendarEventTitle(typeof title === "string" ? title : "");
+    const cleanedKidTitle = typeof kid_title === "string" ? calendarEventTitle(kid_title) : "";
+    const kidTitleValue = cleanedKidTitle || null;
     const startValue = typeof start_time === "string" ? start_time.trim() : "";
     if (!case_id || !titleValue || !startValue || Number.isNaN(Date.parse(startValue))) {
       return NextResponse.json(
@@ -83,7 +86,7 @@ export async function POST(request: NextRequest) {
       all_day: all_day ?? false,
       recurring_rule: recurring_rule ?? null,
       visibility: visibilityValue,
-      kid_title: kid_title ?? null,
+      kid_title: kidTitleValue,
     };
     if (source) insertPayload.source = source;
     if (source_message_id) insertPayload.source_message_id = source_message_id;

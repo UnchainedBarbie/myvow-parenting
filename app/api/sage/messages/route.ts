@@ -31,6 +31,7 @@ import {
   revisableDraftById,
   revisePendingDraft,
   revisionReply,
+  UNCHANGED_REVISION_REPLY,
   unsatisfiedDependsOn,
   type RevisableDraft,
 } from "@/lib/sage/open-drafts";
@@ -331,7 +332,7 @@ async function sourcesForOutboundRedraft(opts: {
   guidance: string;
   viewerId: string;
 }): Promise<string> {
-  const parts = [opts.guidance];
+  const parts: string[] = [];
   if (opts.conversation) parts.push(formatConversationContext(opts.conversation));
   if (opts.caseId) {
     const ledger = await matchingLedgerText({
@@ -1116,7 +1117,9 @@ export async function POST(request: NextRequest) {
             revisedItem = appliedTask.item;
             if (appliedTask.relation === "revise") {
               foldedReply = true;
-              revisionNarration = revisionReply("reply_coparent");
+              revisionNarration = appliedTask.unchanged
+                ? UNCHANGED_REVISION_REPLY
+                : revisionReply("reply_coparent");
             }
           } else if (
             (taskDecision.relation === "revise" || taskDecision.relation === "change_outcome") &&

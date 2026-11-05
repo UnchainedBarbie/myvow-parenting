@@ -6,7 +6,7 @@ import {
   mapExpenseCategoryFromClassify,
   parseExpenseAmountFromText,
 } from "@/lib/expenses-share";
-import { appointmentTitle, calendarCategory, visibilityForCategory } from "@/lib/sage/calendar-labels";
+import { appointmentTitle, calendarCategory, calendarEventTitle, visibilityForCategory } from "@/lib/sage/calendar-labels";
 import { completeDocumentReview } from "@/lib/sage/document-intent";
 import { eventSubjectFromTexts, formatClockLabel } from "@/lib/sage/event-subject";
 import { splitSchedule } from "@/lib/sage/outbound-facts";
@@ -510,7 +510,7 @@ export function buildCalendarTitle(
   item: SageItem,
   proposal?: SageProposal
 ): string {
-  const proposed = typeof proposal?.title === "string" ? proposal.title.trim() : "";
+  const proposed = typeof proposal?.title === "string" ? calendarEventTitle(proposal.title) : "";
   if (proposed) return proposed.slice(0, 120);
   const name = displayName(childNamesFromItem(item)[0] ?? "");
   const eventName =

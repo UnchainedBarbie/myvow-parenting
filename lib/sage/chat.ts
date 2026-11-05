@@ -21,7 +21,7 @@ import {
   type PendingRevision,
 } from "@/lib/sage/chat-intent";
 import { buildContextFrame, hasConversationSubstance, relevantParentFacts, withInterpretation } from "@/lib/sage/context-frame";
-import { NO_DETAIL_REPLY, requestAsDraft } from "@/lib/sage/outbound-facts";
+import { isParentFacingCopy, NO_DETAIL_REPLY, requestAsDraft, usableOutboundBody } from "@/lib/sage/outbound-facts";
 import {
   anthropicConversationActionModel,
   decideConversationAction,
@@ -169,12 +169,17 @@ function releaseRawRequest(
   const liveDraft = (input.conversation?.open_proposals ?? []).some(
     (item) => item.type === "reply_coparent" && item.text.trim().length > 0
   );
-  const raw = proposals.filter(
-    (item) =>
-      item.type === "reply_coparent" &&
-      (requestAsDraft(item.draft ?? "", input.message) ||
-        (liveDraft && (item.draft ?? "").trim() === NO_DETAIL_REPLY))
-  );
+  const raw = proposals.filter((item) => {
+    if (item.type === "reply_coparent") {
+      const draft = item.draft ?? "";
+      return (
+        requestAsDraft(draft, input.message) ||
+        isParentFacingCopy(draft) ||
+        (liveDraft && draft.trim() === NO_DETAIL_REPLY)
+      );
+    }
+    return item.type === "ask_clarification" && item.clarifies === "message" && isParentFacingCopy(item.draft ?? "");
+  });
   if (raw.length === 0) return { reply, proposals, released: false };
   const kept = proposals.filter((item) => !raw.includes(item));
   return {
@@ -184,7 +189,9 @@ function releaseRawRequest(
       ? reply
       : liveDraft
         ? "That revision did not work. The draft is unchanged."
-        : "I couldn't draft that. What should the message say?",
+        : isParentFacingCopy(reply)
+          ? reply
+          : "I couldn't draft that. What should the message say?",
   };
 }
 
@@ -456,16 +463,39 @@ export async function processChatMessage(
   const liveDraft = (input.conversation?.open_proposals ?? []).some(
     (item) => item.type === "reply_coparent" && item.text.trim().length > 0
   );
+  const spokenToParent =
+    actionDecision?.status === "draft" && isParentFacingCopy(actionDecision.body);
   const rawDraft =
     actionDecision?.status === "draft" &&
     (requestAsDraft(actionDecision.body, input.message) ||
+      spokenToParent ||
       (liveDraft && actionDecision.body.trim() === NO_DETAIL_REPLY));
   const heldReply =
     /revision did not work/i.test(routed.reply) || /couldn't draft that/i.test(routed.reply);
-  if (applyAction && rawDraft && actionDecision?.status === "draft") {
+  const recovered =
+    applyAction && rawDraft && actionDecision?.status === "draft" && !liveDraft
+      ? usableOutboundBody(null, input.message, "")
+      : null;
+  if (applyAction && rawDraft && actionDecision?.status === "draft" && recovered) {
+    Object.assign(
+      routed,
+      messageDraftTurn({
+        message: input.message,
+        recipient: actionDecision.recipient,
+        body: recovered,
+        outcome: actionDecision.objective?.outcome || storedObjective.outcome || actionDecision.interpretation.outcome,
+        groundedIn: actionDecision.objective ?? storedObjective,
+        keep: routedOtherAction ? routed.result.plan.proposals : [],
+        taskId: taskDecision.relation === "new_task" ? undefined : taskDecision.taskId ?? undefined,
+        unverified: true,
+      })
+    );
+  } else if (applyAction && rawDraft && actionDecision?.status === "draft") {
     routed.reply = liveDraft
       ? "That revision did not work. The draft is unchanged."
-      : "I couldn't draft that. What should the message say?";
+      : spokenToParent && actionDecision?.status === "draft"
+        ? actionDecision.body.trim()
+        : "I couldn't draft that. What should the message say?";
     routed.handled = true;
     routed.answers = null;
     routed.result.plan.proposals = routed.result.plan.proposals.filter(

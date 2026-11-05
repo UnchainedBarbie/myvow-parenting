@@ -215,7 +215,8 @@ export function reviseProposal(
   delete replacement.waived_at;
 
   const revisedText = changes.revised_text;
-  if (typeof revisedText === "string" && revisedText.trim()) {
+  const nextDraft = typeof replacement.draft === "string" ? replacement.draft.trim() : "";
+  if (typeof revisedText === "string" && revisedText.trim() && revisedText.trim() !== nextDraft) {
     replacement.revised_text = revisedText.trim();
   } else {
     delete replacement.revised_text;

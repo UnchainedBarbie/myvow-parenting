@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
 import { effectiveNotifyCoparent } from "@/lib/calendar/coparent-notice";
 import { saveCalendarCoparentNotice } from "@/lib/calendar/save-coparent-notice";
+import { calendarEventTitle } from "@/lib/sage/calendar-labels";
 
 export async function POST(request: NextRequest) {
   try {
@@ -54,7 +55,10 @@ export async function POST(request: NextRequest) {
       if (Object.prototype.hasOwnProperty.call(rest, key)) {
         const value = rest[key];
         if (value !== undefined) {
-          updates[key] = value;
+          updates[key] =
+            (key === "title" || key === "kid_title") && typeof value === "string"
+              ? calendarEventTitle(value)
+              : value;
         }
       }
     }

@@ -12,9 +12,11 @@ import {
   droppedFactLabels,
   factsOnlyDraft,
   isObligationProblem,
+  isParentFacingCopy,
   NO_DETAIL_REPLY,
   unsupportedFacts,
   unsupportedObligations,
+  usableOutboundBody,
   voiceProblems,
 } from "@/lib/sage/outbound-facts";
 import { coparentShareInvolves } from "@/lib/expenses-share";
@@ -446,7 +448,8 @@ async function draftCheckedOutbound(
       draft: second ?? first,
       missing: secondMissing ?? firstMissing ?? ["no draft"],
     });
-    return factsOnlyDraft(sources, userAsked);
+    const restated = usableOutboundBody(null, userAsked, sources);
+    return restated ?? factsOnlyDraft(sources, userAsked);
   }
   console.error("[sage/outbound] fact check failed twice; fallback", {
     draft: second ?? first,
@@ -569,7 +572,6 @@ User guidance: ${guidance}`;
     params.sources,
     (objective?.facts ?? []).map((fact) => fact.text).join("\n"),
     (objective?.evidence_refs ?? []).join("\n"),
-    guidance,
   ]
     .filter((part) => part && part.trim())
     .join("\n");
@@ -613,16 +615,30 @@ User guidance: ${guidance}`;
       },
     });
     if (params.validation && settled.status === "draft") params.validation.current = settled.validation;
-    if (settled.status === "ask") return null;
-    return settled.body;
+    const shown = usableOutboundBody(
+      settled.status === "draft" ? settled.body : null,
+      guidance,
+      sources
+    );
+    return shown;
   }
-  return drafted;
+  return usableOutboundBody(drafted, guidance, sources);
 }
 
 /**
  * Produce a Plan of proposals. Deterministic routing; LLM only drafts ask/reply text.
  */
 export async function plan(ctx: PlanContext): Promise<Plan> {
+  const planned = await buildPlan(ctx);
+  return {
+    ...planned,
+    proposals: planned.proposals.filter(
+      (item) => item.type !== "reply_coparent" || !isParentFacingCopy(item.draft ?? "")
+    ),
+  };
+}
+
+async function buildPlan(ctx: PlanContext): Promise<Plan> {
   if (ctx.detail_request && !userCommand(ctx)) {
     if (ctx.detail_request.record_line) {
       const replyDraft = await draftWithLlm("reply_coparent", ctx, NO_DETAIL_REPLY);
@@ -643,7 +659,6 @@ export async function plan(ctx: PlanContext): Promise<Plan> {
         proposal("ask_clarification", ctx.detail_request.question, null, {
           audience: "parent",
         }),
-        proposal("reply_coparent", NO_DETAIL_REPLY, ctx.detail_request.question),
       ],
       reasoning:
         "Co-parent asked for a detail that is not in the message, the conversation, or the case records. Asked the parent and did not guess.",

@@ -7,7 +7,7 @@
 import { bareCorrection, type ConversationContext } from "@/lib/sage/conversation-context";
 import { YOUR_CO_PARENT } from "@/lib/sage/relationship-voice";
 import { hasMessageSubstance } from "@/lib/messages/message-content";
-import { requestAsDraft } from "@/lib/sage/outbound-facts";
+import { isParentFacingCopy, requestAsDraft } from "@/lib/sage/outbound-facts";
 import type { Observation } from "@/lib/sage/observation-builder";
 import type { Plan, Proposal } from "@/lib/sage/planner";
 import { isInactiveProposal, proposalState, reviseProposal } from "@/lib/sage/proposal-lifecycle";
@@ -206,6 +206,31 @@ const NOT_A_CHILD = new Set([
   "and",
   "school",
   "appointment",
+  "draft",
+  "jan",
+  "january",
+  "feb",
+  "february",
+  "mar",
+  "march",
+  "apr",
+  "april",
+  "may",
+  "jun",
+  "june",
+  "jul",
+  "july",
+  "aug",
+  "august",
+  "sep",
+  "sept",
+  "september",
+  "oct",
+  "october",
+  "nov",
+  "november",
+  "dec",
+  "december",
 ]);
 
 function childName(text: string, coparents: KnownCoparent[]): string | null {
@@ -642,16 +667,18 @@ export function messageDraftTurn(opts: {
   unverified?: boolean;
 }): RoutedTurn {
   const privateObjective = opts.groundedIn?.outcome?.trim() || opts.outcome;
-  if (requestAsDraft(opts.body, opts.message)) {
+  if (requestAsDraft(opts.body, opts.message) || isParentFacingCopy(opts.body)) {
     return turn({
       handled: true,
-      reply: "I couldn't draft that. What should the message say?",
+      reply: isParentFacingCopy(opts.body)
+        ? opts.body.trim()
+        : "I couldn't draft that. What should the message say?",
       message: opts.message,
       summary: "No draft was produced.",
       itemType: "note",
       proposals: [],
       status: "no_action",
-      reasoning: "The drafter returned the parent's request. That text was not used as the message.",
+      reasoning: "The drafter returned text Sage says to the parent. That text was not used as the message.",
     });
   }
   const messageCard = proposal("reply_coparent", opts.body, {
@@ -714,20 +741,14 @@ export function messageAskTurn(opts: {
   keep?: Proposal[];
 }): RoutedTurn {
   const kept = (opts.keep ?? []).filter((item) => item.type !== "reply_coparent" && item.type !== "note_only");
-  const ask = proposal("ask_clarification", opts.question, {
-    audience: "parent",
-    clarifies: "message",
-    ...(opts.recipient?.name ? { recipient_name: opts.recipient.name } : {}),
-    ...(opts.recipient?.email ? { recipient_email: opts.recipient.email } : {}),
-  });
   return turn({
     handled: true,
     reply: opts.question,
     message: opts.message,
     summary: opts.question,
-    itemType: kept.some((item) => item.type === "calendar_update") ? "calendar_event" : "message",
-    proposals: [...kept, ask],
-    status: "awaiting_clarification",
+    itemType: kept.some((item) => item.type === "calendar_update") ? "calendar_event" : "note",
+    proposals: kept,
+    status: kept.length > 0 ? "awaiting_clarification" : "no_action",
     reasoning: "The intended message could not be determined from the conversation, so Sage asked rather than inventing one.",
   });
 }

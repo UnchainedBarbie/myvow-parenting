@@ -514,7 +514,23 @@ async function main() {
       conversation: emptyConversation(),
     });
     assert.equal(asked.result.plan.proposals.some((proposal) => proposal.type === "reply_coparent"), false);
-    assert.ok(asked.result.plan.proposals.some((proposal) => proposal.type === "ask_clarification"));
+    assert.equal(asked.result.plan.proposals.some((proposal) => proposal.type === "ask_clarification"), false);
+    assert.match(asked.reply, /What should I tell|will not invent|what the message should say/i);
+
+    const refusal = "I don't yet have a draft that matches what you described. What should the message ask?";
+    const echoed = actionModel({
+      draft: `${refusal} Please share medical decisions.`,
+      outcome: "Remind him to share medical decisions.",
+    });
+    const courtOrder = await chat(
+      "Remind him he's required to share medical decisions under our court order.",
+      { action: echoed.model, recentTurns: [], conversation: emptyConversation() }
+    );
+    const courtCard = courtOrder.result.plan.proposals.find((proposal) => proposal.type === "reply_coparent");
+    assert.ok(courtCard);
+    assert.match(courtCard.draft ?? "", /medical decisions together/i);
+    assert.doesNotMatch(courtCard.draft ?? "", /court order|required|don't yet have a draft/i);
+    assert.equal(courtOrder.result.plan.proposals.some((proposal) => proposal.draft?.includes(refusal)), false);
     assert.doesNotMatch(asked.reply, APPOINTMENT_TEMPLATE);
 
     const ambiguous = actionModel({ kind: "conversation" });

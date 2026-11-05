@@ -104,6 +104,22 @@ assert.ok(card);
 assert.deepEqual(named.result.child_ids, [ashley.id]);
 assert.equal(named.result.unresolved_children.length, 0);
 assert.equal(card.title, "Ashley — Orthodontist Appointment");
+
+const draftedPickup = routeChatIntent({
+  message: "Draft a pickup for Saturday Nov 7 at 10am.",
+  children,
+  timezone,
+  today,
+});
+const pickupCard = draftedPickup.result.plan.proposals.find((p) => p.type === "calendar_update");
+assert.ok(pickupCard);
+assert.equal(pickupCard.title, "Pickup");
+assert.doesNotMatch(`${pickupCard.title} ${pickupCard.draft}`, /\bdraft\b/i);
+const pickupForm = buildCalendarInitialValues(item(draftedPickup.result.child_ids), {
+  ...pickupCard,
+  title: "Draft — Pickup, Sat, Nov 7",
+} as SageProposal);
+assert.equal(pickupForm.title, "Pickup");
 assert.equal(card.category, "medical");
 assert.equal(card.event_start, "15:30");
 assert.equal(card.calendar_intent, "offer");

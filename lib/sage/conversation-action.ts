@@ -31,10 +31,10 @@ import {
 } from "@/lib/sage/instruction-fidelity";
 import {
   factsOnlyDraft,
-  NO_DETAIL_REPLY,
   requestWithoutInstrument,
   unsupportedFacts,
   unsupportedObligations,
+  usableOutboundBody,
 } from "@/lib/sage/outbound-facts";
 import { draftExposesPrivateStrategy, draftMissesIntendedQuestion, questionCoverage, type GroundedIn } from "@/lib/sage/task-objective";
 
@@ -591,25 +591,17 @@ export async function decideConversationAction(input: DecideInput): Promise<Conv
         ? { ...framed, taskObjective: { ...framed.taskObjective, question: act } }
         : framed;
     const checked = await enforceFaithfulDraft({ model, frame: reviewFrame, body: guarded });
+    const keptBody = (text: string | null | undefined) =>
+      usableOutboundBody(text, framed.requestText, obligationRecord(framed));
     if (checked.status === "ask") {
-      const sources = obligationRecord(framed);
-      const restated = requestWithoutInstrument(framed.requestText);
-      const guardedClean =
-        guarded !== NO_DETAIL_REPLY &&
-        unsupportedObligations(guarded, sources).length === 0 &&
-        unsupportedFacts(guarded, sources).length === 0;
-      const kept = restated ? (guardedClean ? guarded : restated) : null;
-      if (
-        kept &&
-        unsupportedObligations(kept, sources).length === 0 &&
-        unsupportedFacts(kept, sources).length === 0
-      ) {
+      const kept = keptBody(guarded);
+      if (kept) {
         return {
           status: "draft",
           recipient,
           body: kept,
           interpretation,
-          objective: reviewFrame.taskObjective ?? checked.objective,
+          objective: checked.objective,
           validation: "unreviewed",
         };
       }
@@ -622,10 +614,20 @@ export async function decideConversationAction(input: DecideInput): Promise<Conv
       };
     }
     const finalBody = await dropUnsupportedObligation(checked.body, framed, model);
+    const kept = keptBody(finalBody);
+    if (!kept) {
+      return {
+        status: "ask",
+        question: askForPurpose(framed, recipient),
+        recipient,
+        interpretation,
+        objective: checked.objective,
+      };
+    }
     return {
       status: "draft",
       recipient,
-      body: finalBody,
+      body: kept,
       interpretation,
       objective: checked.objective,
       validation: checked.validation,

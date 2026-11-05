@@ -7,6 +7,36 @@ import { eventSubjectFromTexts } from "@/lib/sage/event-subject";
 
 export const NO_DETAIL_REPLY = "I'll confirm and follow up.";
 
+/** Sage talking to the parent. These sentences are never a co-parent message. */
+const PARENT_FACING = [
+  "i don't yet have a draft",
+  "i couldn't draft that",
+  "that revision did not work",
+  "i didn't understand that request",
+  "what should the message say",
+  "what should the message ask",
+  "what should i tell",
+  "i won't invent",
+  "i will not invent",
+  "i'll confirm and follow up",
+  "who should i send that to",
+  "i don't have a delivery email",
+  "nothing is sent until you",
+  "here is your message",
+  "that doesn't give me a message",
+  "i haven't drafted anything",
+];
+
+export function isParentFacingCopy(text: string): boolean {
+  const norm = text
+    .toLowerCase()
+    .replace(/[^a-z0-9']+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!norm) return false;
+  return PARENT_FACING.some((phrase) => norm.includes(phrase));
+}
+
 export type DetailKind = "time" | "date" | "place" | "amount";
 
 export type DetailQuestion = {
@@ -351,6 +381,31 @@ function phraseAsRequest(act: string): string | null {
   }
   const draft = `I'd like ${text}.`;
   return unsupportedObligations(draft, "").length === 0 ? draft : null;
+}
+
+/**
+ * A co-parent body that is safe to show.
+ * A parent-facing sentence, a copy of the instruction, or an unsupported obligation
+ * is replaced by the request with the instrument removed. Null when nothing usable remains.
+ */
+export function usableOutboundBody(
+  body: string | null | undefined,
+  request: string,
+  sources: string
+): string | null {
+  const text = (body ?? "").trim();
+  if (
+    text &&
+    !isParentFacingCopy(text) &&
+    !requestAsDraft(text, request) &&
+    unsupportedObligations(text, sources).length === 0
+  ) {
+    return text;
+  }
+  const restated = requestWithoutInstrument(request);
+  if (!restated || isParentFacingCopy(restated) || requestAsDraft(restated, request)) return null;
+  if (unsupportedObligations(restated, sources).length === 0) return restated;
+  return null;
 }
 
 /**

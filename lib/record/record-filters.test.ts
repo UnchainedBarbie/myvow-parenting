@@ -5,6 +5,7 @@ import assert from "node:assert";
 import {
   appliedFilterLines,
   completenessStatement,
+  exclusionDisclosure,
   formatDateSpan,
   messageMatchesFilters,
   resolveDateRange,
@@ -16,6 +17,7 @@ import {
   type ParentIdentity,
   type RecordFilterInput,
 } from "./record-filters";
+import { messageNumber, separateExcluded, type RecordEntry } from "./record-present";
 
 const TZ = "America/Denver";
 const NOW = new Date("2026-10-20T18:00:00.000Z");
@@ -186,6 +188,61 @@ function run() {
   assert.ok(filtered.includes("2 stored records are omitted"));
   assert.ok(filtered.includes("no stored recipient"));
   assert.ok(filtered.includes("not a complete certification"));
+  assert.ok(!filtered.includes("excluded from this export"));
+
+  const reason = "Test row written during schema inspection; not a parent communication.";
+  const excluded = completenessStatement({
+    included: 54,
+    eligible: 54,
+    filteredOut: 0,
+    notExchanged: 2,
+    unresolvedRecipients: 0,
+    filtered: false,
+    exclusions: [reason],
+  });
+  assert.ok(excluded.includes("2 stored records are omitted because they are a draft"));
+  assert.ok(excluded.includes(`and 1 stored record is excluded from this export: "${reason}".`));
+  assert.ok(excluded.includes("not a complete certification"));
+  assert.ok(!excluded.includes("3 stored records are omitted"));
+  const onlyExcluded = completenessStatement({
+    included: 54,
+    eligible: 54,
+    filteredOut: 0,
+    notExchanged: 0,
+    unresolvedRecipients: 0,
+    filtered: false,
+    exclusions: [reason, reason, "A second reason."],
+  });
+  assert.strictEqual(
+    exclusionDisclosure([reason, reason, "A second reason."]),
+    `3 stored records are excluded from this export: "${reason}" (2); "A second reason." (1)`
+  );
+  assert.ok(onlyExcluded.includes(exclusionDisclosure([reason, reason, "A second reason."])));
+
+  const numbered: RecordEntry[] = ["", "   ", reason, null].map((value, index) => ({
+    number: messageNumber(index),
+    message: {
+      id: `m-${index}`,
+      created_at: "2026-11-04T00:00:00.000Z",
+      direction: "outgoing",
+      sender_id: null,
+      sender_external_email: null,
+      original_content: "body",
+      conversation_id: null,
+      current_status: "sent",
+      delivery_status: null,
+      delivered_at: null,
+      has_attachments: false,
+      record_exclusion_reason: value,
+    },
+  }));
+  const split = separateExcluded(numbered);
+  assert.deepStrictEqual(
+    split.kept.map((entry) => entry.number),
+    ["MSG-001", "MSG-002", "MSG-004"]
+  );
+  assert.deepStrictEqual(split.exclusionReasons, [reason]);
+  assert.strictEqual(numbered[3].number, "MSG-004");
 
   const unfiltered = [ot, sibling].filter((item) => match(item, baseFilters));
   assert.strictEqual(unfiltered.length, 2);

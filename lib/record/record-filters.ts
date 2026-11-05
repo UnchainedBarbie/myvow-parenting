@@ -306,6 +306,29 @@ export function filtersRestrict(lines: AppliedFilterLine[]): boolean {
   return lines.length > 0;
 }
 
+function quotedReason(reason: string): string {
+  return `"${reason.replace(/"/g, "'")}"`;
+}
+
+/** One disclosure for every excluded row. Repeated reasons are counted. */
+export function exclusionDisclosure(reasons: string[]): string {
+  const counts = new Map<string, number>();
+  const order: string[] = [];
+  for (const reason of reasons) {
+    if (!counts.has(reason)) order.push(reason);
+    counts.set(reason, (counts.get(reason) ?? 0) + 1);
+  }
+  const listed = order
+    .map((reason) => {
+      const count = counts.get(reason) ?? 0;
+      const quoted = quotedReason(reason);
+      return order.length > 1 ? `${quoted} (${count})` : quoted;
+    })
+    .join("; ");
+  const noun = reasons.length === 1 ? "record is" : "records are";
+  return `${reasons.length} stored ${noun} excluded from this export: ${listed}`;
+}
+
 export function completenessStatement(options: {
   included: number;
   eligible: number;
@@ -313,7 +336,10 @@ export function completenessStatement(options: {
   notExchanged: number;
   unresolvedRecipients: number;
   filtered: boolean;
+  /** One entry per excluded message, in case order. Empty when none are excluded. */
+  exclusions?: string[];
 }): string {
+  const exclusions = options.exclusions ?? [];
   const includedText = `${options.included} eligible parent-to-parent message${options.included === 1 ? " is" : "s are"} included.`;
   const parts = [includedText];
   if (options.filtered && options.filteredOut > 0) {
@@ -321,18 +347,24 @@ export function completenessStatement(options: {
       `${options.filteredOut} eligible message${options.filteredOut === 1 ? " is" : "s are"} outside the selected filters.`
     );
   }
+  const omission: string[] = [];
   if (options.notExchanged > 0) {
-    parts.push(
-      `${options.notExchanged} stored record${options.notExchanged === 1 ? " is" : "s are"} omitted because ${options.notExchanged === 1 ? "it is" : "they are"} a draft, a Sage session, a self-forward, or third-party correspondence rather than a parent-to-parent exchange.`
+    omission.push(
+      `${options.notExchanged} stored record${options.notExchanged === 1 ? " is" : "s are"} omitted because ${options.notExchanged === 1 ? "it is" : "they are"} a draft, a Sage session, a self-forward, or third-party correspondence rather than a parent-to-parent exchange`
     );
   }
+  if (exclusions.length > 0) omission.push(exclusionDisclosure(exclusions));
+  if (omission.length > 0) parts.push(`${omission.join(", and ")}.`);
   if (options.unresolvedRecipients > 0) {
     parts.push(
       `${options.unresolvedRecipients} included message${options.unresolvedRecipients === 1 ? " has" : "s have"} no stored recipient, so this export does not confirm who received ${options.unresolvedRecipients === 1 ? "it" : "them"}.`
     );
   }
   const settled =
-    options.notExchanged === 0 && options.unresolvedRecipients === 0 && (!options.filtered || options.filteredOut === 0);
+    options.notExchanged === 0 &&
+    exclusions.length === 0 &&
+    options.unresolvedRecipients === 0 &&
+    (!options.filtered || options.filteredOut === 0);
   if (settled) {
     parts.push("Every stored message that qualifies as a parent-to-parent exchange is included.");
   } else {

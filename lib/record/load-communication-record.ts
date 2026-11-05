@@ -18,6 +18,7 @@ import {
   formatWhen,
   messageNumber,
   messageTime,
+  separateExcluded,
   parentIdentities,
   partyLabel,
   safeZone,
@@ -93,6 +94,8 @@ export async function loadCommunicationRecord(
   if (!membership) return { ok: false, reason: "denied" };
   const viewerRole = (membership as { role?: string | null }).role ?? null;
 
+  const messageColumns =
+    "id, created_at, direction, sender_id, sender_external_email, original_content, conversation_id, current_status, delivery_status, delivered_at, has_attachments, email_message_id";
   const [caseResult, memberResult, viewerResult, messageResult] = await Promise.all([
     admin.from("cases").select("id, family_code").eq("id", caseId).maybeSingle(),
     admin
@@ -103,17 +106,29 @@ export async function loadCommunicationRecord(
     admin.from("users").select("id, full_name, email, timezone").eq("id", userId).maybeSingle(),
     admin
       .from("messages")
-      .select(
-        "id, created_at, direction, sender_id, sender_external_email, original_content, conversation_id, current_status, delivery_status, delivered_at, has_attachments, email_message_id"
-      )
+      .select(`${messageColumns}, record_exclusion_reason`)
       .eq("case_id", caseId)
       .order("created_at", { ascending: true })
       .order("id", { ascending: true }),
   ]);
 
-  if (messageResult.error || memberResult.error) {
+  let loadedMessages = messageResult;
+  if (
+    messageResult.error &&
+    /record_exclusion_reason/i.test(messageResult.error.message ?? "")
+  ) {
+    console.error("[record] exclusion column", messageResult.error);
+    loadedMessages = await admin
+      .from("messages")
+      .select(messageColumns)
+      .eq("case_id", caseId)
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true });
+  }
+
+  if (loadedMessages.error || memberResult.error) {
     console.error("[record] load failed", {
-      messages: messageResult.error,
+      messages: loadedMessages.error,
       members: memberResult.error,
     });
     return { ok: false, reason: "unavailable" };
@@ -126,7 +141,7 @@ export async function loadCommunicationRecord(
       members.map((row) => row.user_id).filter((id): id is string => typeof id === "string" && id.length > 0)
     ),
   ];
-  const allMessages = (messageResult.data ?? []) as MessageRow[];
+  const allMessages = (loadedMessages.data ?? []) as MessageRow[];
   const senderIds = [
     ...new Set(
       allMessages
@@ -149,10 +164,12 @@ export async function loadCommunicationRecord(
   const generated = new Date();
   const filters = parseRecordFilters(searchParams);
 
+  // Numbers follow case order across every stored message, including excluded rows.
   const numbered: RecordEntry[] = allMessages.map((message, index) => ({
     message,
     number: messageNumber(index),
   }));
+  const { kept: considered, exclusionReasons } = separateExcluded(numbered);
   const emailIds = [
     ...new Set(
       allMessages
@@ -203,7 +220,7 @@ export async function loadCommunicationRecord(
 
   let notExchanged = 0;
   const parentIds = parentIdentities(members, usersById, userId);
-  const eligible = numbered.filter((entry) => {
+  const eligible = considered.filter((entry) => {
     const senderIsParent =
       resolveParentSender(
         { senderId: entry.message.sender_id, senderExternalEmail: entry.message.sender_external_email },
@@ -421,6 +438,7 @@ export async function loadCommunicationRecord(
       notExchanged,
       unresolvedRecipients,
       filtered: filterLines.length > 0,
+      exclusions: exclusionReasons,
     }),
     categoryNotice:
       filters.category && !categoryAvailable

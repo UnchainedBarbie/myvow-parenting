@@ -31,6 +31,8 @@ export type MessageRow = {
   email_message_id?: string | null;
   recipient_email?: string | null;
   recipient_cc?: string | null;
+  /** Null or blank means the message is included. A non-empty value excludes it and is disclosed. */
+  record_exclusion_reason?: string | null;
 };
 
 export type ConversationRow = {
@@ -195,6 +197,30 @@ export function deliveryEvidence(message: MessageRow, timezone: string): string[
 
 export function messageNumber(index: number): string {
   return `MSG-${String(index + 1).padStart(3, "0")}`;
+}
+
+/** A blank reason does not exclude. The stored text is the disclosure. */
+export function exclusionReason(value: string | null | undefined): string | null {
+  const reason = value?.trim() ?? "";
+  return reason.length > 0 ? reason : null;
+}
+
+/**
+ * Drop excluded rows after numbers are assigned. Kept entries keep the numbers
+ * they received from the full case list.
+ */
+export function separateExcluded(entries: RecordEntry[]): {
+  kept: RecordEntry[];
+  exclusionReasons: string[];
+} {
+  const kept: RecordEntry[] = [];
+  const exclusionReasons: string[] = [];
+  for (const entry of entries) {
+    const reason = exclusionReason(entry.message.record_exclusion_reason);
+    if (reason) exclusionReasons.push(reason);
+    else kept.push(entry);
+  }
+  return { kept, exclusionReasons };
 }
 
 export function documentLabel(attachment: Attachment): string {

@@ -94,8 +94,6 @@ export async function loadCommunicationRecord(
   if (!membership) return { ok: false, reason: "denied" };
   const viewerRole = (membership as { role?: string | null }).role ?? null;
 
-  const messageColumns =
-    "id, created_at, direction, sender_id, sender_external_email, original_content, conversation_id, current_status, delivery_status, delivered_at, has_attachments, email_message_id";
   const [caseResult, memberResult, viewerResult, messageResult] = await Promise.all([
     admin.from("cases").select("id, family_code").eq("id", caseId).maybeSingle(),
     admin
@@ -106,32 +104,17 @@ export async function loadCommunicationRecord(
     admin.from("users").select("id, full_name, email, timezone").eq("id", userId).maybeSingle(),
     admin
       .from("messages")
-      .select(`${messageColumns}, record_exclusion_reason`)
+      .select(
+        "id, created_at, direction, sender_id, sender_external_email, original_content, conversation_id, current_status, delivery_status, delivered_at, has_attachments, email_message_id, record_exclusion_reason"
+      )
       .eq("case_id", caseId)
       .order("created_at", { ascending: true })
       .order("id", { ascending: true }),
   ]);
 
-  let loadedMessages: {
-    data: Array<MessageRow & { record_exclusion_reason?: string | null }> | null;
-    error: { message: string } | null;
-  } = messageResult;
-  if (
-    messageResult.error &&
-    /record_exclusion_reason/i.test(messageResult.error.message ?? "")
-  ) {
-    console.error("[record] exclusion column", messageResult.error);
-    loadedMessages = await admin
-      .from("messages")
-      .select(messageColumns)
-      .eq("case_id", caseId)
-      .order("created_at", { ascending: true })
-      .order("id", { ascending: true });
-  }
-
-  if (loadedMessages.error || memberResult.error) {
+  if (messageResult.error || memberResult.error) {
     console.error("[record] load failed", {
-      messages: loadedMessages.error,
+      messages: messageResult.error,
       members: memberResult.error,
     });
     return { ok: false, reason: "unavailable" };
@@ -144,7 +127,7 @@ export async function loadCommunicationRecord(
       members.map((row) => row.user_id).filter((id): id is string => typeof id === "string" && id.length > 0)
     ),
   ];
-  const allMessages = (loadedMessages.data ?? []) as MessageRow[];
+  const allMessages = (messageResult.data ?? []) as MessageRow[];
   const senderIds = [
     ...new Set(
       allMessages

@@ -32,7 +32,7 @@ export type MessageRow = {
   recipient_email?: string | null;
   recipient_cc?: string | null;
   /** Null or blank means the message is included. A non-empty value excludes it and is disclosed. */
-  record_exclusion_reason?: string | null;
+  record_exclusion_reason: string | null;
 };
 
 export type ConversationRow = {
@@ -199,8 +199,8 @@ export function messageNumber(index: number): string {
   return `MSG-${String(index + 1).padStart(3, "0")}`;
 }
 
-/** A blank reason does not exclude. The stored text is the disclosure. */
-export function exclusionReason(value: string | null | undefined): string | null {
+/** A null or blank reason does not exclude. The stored text is the disclosure. */
+export function exclusionReason(value: string | null): string | null {
   const reason = value?.trim() ?? "";
   return reason.length > 0 ? reason : null;
 }

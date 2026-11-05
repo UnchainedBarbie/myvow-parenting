@@ -196,6 +196,7 @@ function main() {
     conversation_id: null,
     current_status: "sent",
     has_attachments: false,
+    record_exclusion_reason: null,
   };
   assert.deepEqual(
     deliveryEvidence(

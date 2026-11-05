@@ -35,7 +35,7 @@ import {
   unsatisfiedDependsOn,
   type RevisableDraft,
 } from "@/lib/sage/open-drafts";
-import { applyTurnToTasks, clearStoredMessageObjective } from "@/lib/sage/open-task-apply";
+import { alignSessionCalendars, applyTurnToTasks, clearStoredMessageObjective, messageClockChange } from "@/lib/sage/open-task-apply";
 import { blocksRecencyFold } from "@/lib/sage/turn-arbitration";
 import { closeAnsweredQuestions, turnRepeatsOpenQuestions } from "@/lib/sage/clarification-lifecycle";
 import { AMBIGUOUS_CASE_MESSAGE, resolveActiveCase } from "@/lib/cases/resolve-active-case";
@@ -874,6 +874,7 @@ export async function POST(request: NextRequest) {
     let sageContent = FALLBACK_REPLY;
     let sageItem: Record<string, unknown> | null = null;
     let revisedItem: { id: string; plan: Record<string, unknown> } | null = null;
+    let revisedItems: { id: string; plan: Record<string, unknown> }[] = [];
     let revisionNarration: string | null = null;
 
     if (caseId) {
@@ -1378,6 +1379,26 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    if (revisedItem && sessionId) {
+      const proposals = Array.isArray(revisedItem.plan.proposals) ? revisedItem.plan.proposals : [];
+      const clocks = messageClockChange(proposals);
+      if (clocks) {
+        const aligned = await alignSessionCalendars({
+          admin,
+          userId: user.id,
+          sessionId,
+          previousMessage: clocks.previous,
+          nextMessage: clocks.next,
+        });
+        revisedItems = aligned.items;
+        const refreshed = aligned.items.find((item) => item.id === revisedItem?.id);
+        if (refreshed) revisedItem = { id: refreshed.id, plan: refreshed.plan };
+        if (aligned.note && !sageContent.includes(aligned.note)) {
+          sageContent = `${sageContent} ${aligned.note}`.trim();
+        }
+      }
+    }
+
     if (!sageItem && revisedItem) {
       const { data: revisedRow } = await admin
         .from("sage_items")
@@ -1494,6 +1515,7 @@ export async function POST(request: NextRequest) {
       revision_message: revisionMessage,
       sage_item: sageItem,
       revised_item: revisedItem,
+      revised_items: revisedItems,
       case_id: caseId,
     });
   } catch (e) {

@@ -20,6 +20,7 @@ import {
   type KnownCoparent,
   type PendingRevision,
 } from "@/lib/sage/chat-intent";
+import { alignCalendarRows } from "@/lib/sage/calendar-chat";
 import { buildContextFrame, hasConversationSubstance, relevantParentFacts, withInterpretation } from "@/lib/sage/context-frame";
 import { isParentFacingCopy, NO_DETAIL_REPLY, requestAsDraft, usableOutboundBody } from "@/lib/sage/outbound-facts";
 import {
@@ -583,6 +584,37 @@ export async function processChatMessage(
       routed.handled = false;
       routed.result.plan.proposals = [];
       routed.result.plan.status = "no_action";
+    }
+  }
+  const revisingMessage =
+    (taskDecision.relation === "revise" || taskDecision.relation === "change_outcome") &&
+    !!boundTask?.outgoingBody;
+  if (revisingMessage && boundTask?.outgoingBody) {
+    const nextMessage =
+      routed.result.plan.proposals.find((proposal) => proposal.type === "reply_coparent")?.draft ?? "";
+    if (nextMessage.trim()) {
+      const others = routed.result.plan.proposals.filter((proposal) => proposal.type !== "calendar_update");
+      const inTurn = routed.result.plan.proposals.filter((proposal) => proposal.type === "calendar_update");
+      const carried =
+        inTurn.length > 0
+          ? inTurn
+          : (input.conversation?.open_proposals ?? [])
+              .filter((proposal) => proposal.type === "calendar_update" && proposal.text.trim())
+              .map((proposal) => ({
+                type: "calendar_update" as const,
+                draft: proposal.text,
+                depends_on: null,
+                requires_approval: true as const,
+              }));
+      const aligned = alignCalendarRows([...others, ...carried], boundTask.outgoingBody, nextMessage);
+      routed.result.plan.proposals = aligned.proposals.filter((raw) => {
+        if (!raw || typeof raw !== "object") return true;
+        const row = raw as { type?: string; withheld?: boolean };
+        return row.withheld !== true;
+      });
+      if (aligned.note && !routed.reply.includes(aligned.note)) {
+        routed.reply = `${routed.reply} ${aligned.note}`.trim();
+      }
     }
   }
   if ((input.intake ?? "chat") === "chat" && input.shadow !== false) {

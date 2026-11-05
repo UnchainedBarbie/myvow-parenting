@@ -416,26 +416,60 @@ export function declarativeNotice(request: string): string | null {
   if (!/\b(confirm|tell|let|remind|notify|ask|draft|message|pickup|pick-up|drop-?off|practice)\b/i.test(request)) {
     return null;
   }
-  const event = scheduleEvent(request);
-  const dayLabel = day ? titleDay(day) : null;
-  let statement: string;
-  if (event && dayLabel && time) statement = `I have ${event} ${dayLabel} at ${time}.`;
-  else if (event && dayLabel) statement = `I have ${event} ${dayLabel}.`;
-  else if (event && time) statement = `I have ${event} at ${time}.`;
-  else statement = `I have ${[dayLabel, time ? `at ${time}` : null].filter(Boolean).join(" ")}.`;
-  const deadline = statedDeadline(request) ?? (day ? dayBefore(day) : null);
-  const invite = deadline
-    ? `Let me know by ${deadline} if that doesn't work.`
-    : `Let me know if that doesn't work.`;
-  return `${statement} ${invite}`;
+  return noticeFromParts(scheduleEvent(request), day, time, statedDeadline(request) ?? (day ? dayBefore(day) : null));
 }
 
 function opensWithQuestion(body: string): boolean {
   return /^(?:can|could|would|will|do|does|did|is|are|what|when|where|why|which|how)\b/i.test(body.trim()) || body.includes("?");
 }
 
+function noticeFromParts(
+  event: string | null,
+  day: string | null,
+  time: string | null,
+  deadline: string | null
+): string | null {
+  if (!day && !time && !event) return null;
+  const dayLabel = day ? titleDay(day) : null;
+  let statement: string;
+  if (event && dayLabel && time) statement = `I have ${event} ${dayLabel} at ${time}.`;
+  else if (event && dayLabel) statement = `I have ${event} ${dayLabel}.`;
+  else if (event && time) statement = `I have ${event} at ${time}.`;
+  else statement = `I have ${[dayLabel, time ? `at ${time}` : null].filter(Boolean).join(" ")}.`;
+  const invite = deadline
+    ? `Let me know by ${deadline} if that doesn't work.`
+    : `Let me know if that doesn't work.`;
+  return `${statement} ${invite}`;
+}
+
+function deadlineIn(text: string): string | null {
+  return statedDeadline(text);
+}
+
+function isDeclarativeNotice(text: string): boolean {
+  return /\blet me know\b/i.test(text) && !text.includes("?") && !!(scheduleEvent(text) || noticeWeekday(text) || clockPhrase(text));
+}
+
+/**
+ * A revision of an existing notice changes only the named day or time.
+ * The statement, deadline, and invitation to object stay.
+ */
+function preserveNoticeRevision(current: string, request: string): string | null {
+  if (!isDeclarativeNotice(current)) return null;
+  const newTime = clockPhrase(request);
+  const newDay = noticeWeekday(request);
+  if (!newTime && !newDay) return null;
+  if (/\b(?:what time|when|where|why)\b/i.test(request) && !newTime && !newDay) return null;
+  const day = newDay ?? noticeWeekday(current);
+  const deadline =
+    statedDeadline(request) ?? (newDay && day ? dayBefore(day) : null) ?? deadlineIn(current) ?? (day ? dayBefore(day) : null);
+  return noticeFromParts(scheduleEvent(request) ?? scheduleEvent(current), day, newTime ?? clockPhrase(current), deadline);
+}
+
 /** A question the model wrote for known logistics becomes notice. A real question stays. */
-export function applyMessageRegister(body: string, request: string): string {
+export function applyMessageRegister(body: string, request: string, currentDraft?: string | null): string {
+  const kept = currentDraft ? preserveNoticeRevision(currentDraft, request) : null;
+  if (kept) return kept;
   const notice = declarativeNotice(request);
   if (!notice) return body;
   if (!opensWithQuestion(body) && /\blet me know\b/i.test(body) && !body.includes("?")) return body;

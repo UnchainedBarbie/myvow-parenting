@@ -1,4 +1,5 @@
 import type { getServiceRoleClient } from "@/lib/supabase/server";
+import { alignCalendarRows } from "@/lib/sage/calendar-chat";
 import { isParentFacingCopy, requestAsDraft, restoreDroppedEvidence } from "@/lib/sage/outbound-facts";
 import { mergeObjective, parseGroundedIn, type GroundedIn } from "@/lib/sage/task-objective";
 import { redraftMessage } from "@/lib/sage/planner";
@@ -290,7 +291,8 @@ export async function revisePendingDraft(opts: {
     ...(opts.clearDependsOn ? { depends_on: null, date_supplied: true } : {}),
   });
   if (!revised) return null;
-  const updatedPlan = { ...(freshPlan ?? opts.target.plan), proposals: revised.proposals };
+  const aligned = alignCalendarRows(revised.proposals, opts.target.currentDraft, revisedText);
+  const updatedPlan = { ...(freshPlan ?? opts.target.plan), proposals: aligned.proposals };
   const { data, error } = await opts.admin
     .from("sage_items")
     .update({ plan: updatedPlan })
@@ -304,8 +306,11 @@ export async function revisePendingDraft(opts: {
     );
     return null;
   }
+  const reply = aligned.note
+    ? `${revisionReply(opts.target.proposalType)} ${aligned.note}`
+    : revisionReply(opts.target.proposalType);
   return {
-    reply: revisionReply(opts.target.proposalType),
+    reply,
     item: { id: opts.target.itemId, plan: updatedPlan },
   };
 }

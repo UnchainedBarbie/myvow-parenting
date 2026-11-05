@@ -1,4 +1,6 @@
 import type { getServiceRoleClient } from "@/lib/supabase/server";
+import { formatClockLabel } from "@/lib/sage/event-subject";
+import { isInactiveProposal } from "@/lib/sage/proposal-lifecycle";
 import { resolveDate } from "@/lib/sage/resolver";
 
 type Admin = ReturnType<typeof getServiceRoleClient>;
@@ -358,4 +360,124 @@ export async function loadCalendarContext(
     }))
     .filter((event) => eventVisibleToParent(event, viewerId));
   return { children, events };
+}
+
+function clockPattern(): RegExp {
+  return /\b(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)\b/gi;
+}
+
+function clockMinutes(hourText: string, minuteText: string | undefined, meridiem: string): number | null {
+  let hour = Number(hourText);
+  const minute = minuteText ? Number(minuteText) : 0;
+  if (!Number.isFinite(hour) || !Number.isFinite(minute) || hour < 1 || hour > 12 || minute > 59) return null;
+  if (hour === 12) hour = 0;
+  if (/^p/i.test(meridiem)) hour += 12;
+  return hour * 60 + minute;
+}
+
+/** Distinct clock times in a sentence. More than one means the change is not a single replacement. */
+export function distinctClockMinutes(text: string): number[] {
+  const found: number[] = [];
+  for (const match of text.matchAll(clockPattern())) {
+    const minutes = clockMinutes(match[1], match[2], match[3]);
+    if (minutes == null || found.includes(minutes)) continue;
+    found.push(minutes);
+  }
+  return found;
+}
+
+function hhmm(minutes: number): string {
+  const hour = Math.floor(minutes / 60);
+  const minute = minutes % 60;
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
+function storedMinutes(value: unknown): number | null {
+  if (typeof value !== "string") return null;
+  const match = value.trim().match(/^(\d{1,2}):(\d{2})/);
+  if (!match) return null;
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (hour > 23 || minute > 59) return null;
+  return hour * 60 + minute;
+}
+
+function rowRecord(raw: unknown): Record<string, unknown> | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  return raw as Record<string, unknown>;
+}
+
+function calendarMinutes(row: Record<string, unknown>): number | null {
+  const stored = storedMinutes(row.event_start) ?? storedMinutes(row.pickup_time);
+  if (stored != null) return stored;
+  const draft = typeof row.draft === "string" ? row.draft : "";
+  const revised = typeof row.revised_text === "string" ? row.revised_text : "";
+  const clocks = distinctClockMinutes(`${draft} ${revised}`);
+  return clocks.length === 1 ? clocks[0] : null;
+}
+
+function replaceClock(text: string, from: number, label: string): string {
+  return text.replace(clockPattern(), (full, hour: string, minute: string | undefined, meridiem: string) => {
+    return clockMinutes(hour, minute, meridiem) === from ? label : full;
+  });
+}
+
+/**
+ * When a message revision changes its one clock, move the one open calendar card
+ * that still shows the old time. Several matches are withdrawn instead of guessed.
+ * A card at a different time is left alone.
+ */
+export function alignCalendarRows<T>(
+  proposals: readonly T[],
+  previousMessage: string,
+  nextMessage: string
+): { proposals: T[]; note: string | null } {
+  const previous = distinctClockMinutes(previousMessage);
+  const next = distinctClockMinutes(nextMessage);
+  if (previous.length !== 1 || next.length !== 1 || previous[0] === next[0]) {
+    return { proposals: [...proposals], note: null };
+  }
+  const from = previous[0];
+  const to = next[0];
+  const candidates: number[] = [];
+  proposals.forEach((raw, index) => {
+    const row = rowRecord(raw);
+    if (!row || row.type !== "calendar_update" || isInactiveProposal(row)) return;
+    if (calendarMinutes(row) === from) candidates.push(index);
+  });
+  if (candidates.length === 0) return { proposals: [...proposals], note: null };
+  const label = formatClockLabel(hhmm(to));
+  const oldLabel = formatClockLabel(hhmm(from));
+  if (candidates.length > 1) {
+    const withdrawn = proposals.map((raw, index) => {
+      if (!candidates.includes(index)) return raw;
+      const row = rowRecord(raw);
+      if (!row) return raw;
+      return { ...row, status: "canceled", withheld: true } as T;
+    });
+    return {
+      proposals: withdrawn,
+      note: `I removed the calendar cards that still showed ${oldLabel}, because more than one open event was at that time and I won't guess which one should move to ${label}.`,
+    };
+  }
+  const index = candidates[0];
+  const current = rowRecord(proposals[index]);
+  if (!current) return { proposals: [...proposals], note: null };
+  const nextStart = hhmm(to);
+  const draft = typeof current.draft === "string" ? replaceClock(current.draft, from, label) : current.draft;
+  const revisedText =
+    typeof current.revised_text === "string" && current.revised_text.trim()
+      ? replaceClock(current.revised_text, from, label)
+      : current.revised_text;
+  const updated = {
+    ...current,
+    draft,
+    ...(typeof revisedText === "string" ? { revised_text: revisedText } : {}),
+    event_start: nextStart,
+    ...(storedMinutes(current.pickup_time) === from ? { pickup_time: nextStart } : {}),
+  } as T;
+  return {
+    proposals: proposals.map((raw, itemIndex) => (itemIndex === index ? updated : raw)),
+    note: null,
+  };
 }

@@ -486,7 +486,12 @@ function interpretationForDraft(
 }
 
 function acceptedDraft(body: string | null | undefined, framed: ContextFrame): string | null {
-  const text = applyMessageRegister(conciseOutboundBody(body?.trim() ?? "", framed.requestText), framed.requestText);
+  const prior = framed.revisingDraft ? framed.currentDrafts?.[0] ?? "" : "";
+  const text = applyMessageRegister(
+    conciseOutboundBody(body?.trim() ?? "", framed.requestText),
+    framed.requestText,
+    prior
+  );
   if (!text || !hasMessageSubstance(text) || !draftUsesConversation(text, framed)) return null;
   return text;
 }

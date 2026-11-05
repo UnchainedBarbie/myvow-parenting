@@ -816,6 +816,86 @@ async function main() {
   assert.match(practiceCard?.draft ?? "", /what time does practice end\?/i);
   assert.doesNotMatch(practiceCard?.draft ?? "", /let me know by/i);
 
+  const pickupNotice = "I have pickup Saturday at 5pm. Let me know by Friday if that doesn't work.";
+  const revisedTime = await chat("actually, can you make that 4pm", {
+    action: {
+      interpret: async () => ({
+        kind: "conversation" as const,
+        outcome: "Confirm Saturday pickup at 5pm.",
+        question: "Ask him to confirm Saturday pickup at 5pm.",
+        refersTo: "Saturday pickup",
+        grounding: "conversation" as const,
+        relevantFactIndexes: [] as number[],
+        uncertain: [] as string[],
+        disputed: [] as string[],
+        recipientName: "Kevin",
+        elicitation: "open_question" as const,
+        privateConstraints: [] as string[],
+        outcomeChanged: false,
+        establishedTaskId: "item-pickup",
+      }),
+      draftMessage: async () => "Can you confirm Saturday pickup at 4pm?",
+      evaluateFidelity: async (input) =>
+        /\?/.test(input.draft) || !/let me know by friday/i.test(input.draft) || !/\b4pm\b/i.test(input.draft)
+          ? rejectConsent()
+          : pass(),
+    },
+    arbitration: {
+      classify: async () => {
+        throw new Error("a time change on one live notice does not ask the model which draft");
+      },
+    },
+    recentTurns: [
+      { role: "parent", text: "Draft a message to Kevin asking him to confirm Saturday pickup at 5pm" },
+      { role: "sage", text: pickupNotice },
+    ],
+    conversation: conversationWith({
+      id: "item-pickup",
+      itemType: "message",
+      proposals: [
+        {
+          id: "pickup-cal",
+          type: "calendar_update",
+          draft: "Add to calendar: Kevin — Pickup, Sat, Nov 7, at 5:00 PM.",
+          event_start: "17:00",
+          requires_approval: true,
+          depends_on: null,
+        },
+        {
+          id: "pickup-msg",
+          type: "reply_coparent",
+          draft: pickupNotice,
+          requires_approval: true,
+          depends_on: null,
+          private_objective: "Confirm Saturday pickup at 5pm.",
+          grounded_in: {
+            outcome: "Confirm Saturday pickup at 5pm.",
+            question: "Ask him to confirm Saturday pickup at 5pm.",
+            turns: [],
+            facts: [],
+            uncertain: [],
+            private_constraints: [],
+            rejected: [],
+            last_guidance: "",
+            evidence_refs: [],
+          },
+        },
+      ],
+    }),
+  });
+  const revisedCard = messageCard(revisedTime);
+  assert.match(revisedCard?.draft ?? "", /I have pickup Saturday at 4pm/i);
+  assert.match(revisedCard?.draft ?? "", /Let me know by Friday if that doesn't work/i);
+  assert.doesNotMatch(revisedCard?.draft ?? "", /\?/);
+  assert.equal(revisedTime.clearMessageObjective, null);
+  const revisedCalendar = revisedTime.result.plan.proposals.find((proposal) => proposal.type === "calendar_update") as
+    | { draft?: string; event_start?: string; withheld?: boolean }
+    | undefined;
+  assert.equal(revisedCalendar?.event_start, "16:00");
+  assert.match(revisedCalendar?.draft ?? "", /4:00 PM/);
+  assert.doesNotMatch(revisedCalendar?.draft ?? "", /5:00 PM/);
+  assert.equal(revisedCalendar?.withheld, undefined);
+
   console.log("message-continuity tests passed");
 }
 

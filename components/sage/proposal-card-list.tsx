@@ -209,7 +209,7 @@ export function ProposalCardList({
   const visible = proposals
     .map((p, idx) => ({ p, idx }))
     .filter(({ p }) => {
-      return !isParentClarification(p) && !(isLogDocumentProposal(p.type) && p.executed === true);
+      return !isParentClarification(p) && p.withheld !== true && !(isLogDocumentProposal(p.type) && p.executed === true);
     });
   if (visible.length === 0) return null;
 

@@ -97,6 +97,22 @@ assert.equal(
   applyMessageRegister("Can you confirm Saturday pickup at 5pm?", confirm),
   "I have pickup Saturday at 5pm. Let me know by Friday if that doesn't work."
 );
+assert.equal(
+  applyMessageRegister(
+    "Can you confirm Saturday pickup at 4pm?",
+    "actually, can you make that 4pm",
+    "I have pickup Saturday at 5pm. Let me know by Friday if that doesn't work."
+  ),
+  "I have pickup Saturday at 4pm. Let me know by Friday if that doesn't work."
+);
+assert.equal(
+  applyMessageRegister(
+    "What time does practice end?",
+    "make it shorter",
+    "What time does practice end?"
+  ),
+  "What time does practice end?"
+);
 assert.equal(applyMessageRegister("What time does practice end?", "What time does practice end?"), "What time does practice end?");
 assert.match(
   applyMessageRegister(

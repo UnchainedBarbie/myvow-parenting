@@ -3,6 +3,7 @@ import { buildCalendarInitialValues, hasVisibleProposalCards } from "@/component
 import { deriveOpenItems } from "@/lib/open-items";
 import type { SageItem, SageProposal } from "@/components/sage/proposal-types";
 import {
+  alignCalendarRows,
   answerCalendarQuestion,
   type CaseEvent,
   type KnownChild,
@@ -433,3 +434,58 @@ const direct = answerCalendarQuestion({
 assert.ok(direct);
 assert.match(direct, /Smile Orthodontics/);
 assert.doesNotMatch(direct, /Avery/);
+
+const previousNotice = "I have pickup Saturday at 5pm. Let me know by Friday if that doesn't work.";
+const nextNotice = "I have pickup Saturday at 4pm. Let me know by Friday if that doesn't work.";
+const alignedPickup = alignCalendarRows(
+  [
+    {
+      type: "calendar_update",
+      draft: "Add to calendar: Kevin — Pickup, Sat, Nov 7, at 5:00 PM.",
+      event_start: "17:00",
+      requires_approval: true,
+    },
+    {
+      type: "calendar_update",
+      draft: "Add to calendar: Dentist, Sat, Nov 7, at 3:00 PM.",
+      event_start: "15:00",
+      requires_approval: true,
+    },
+  ],
+  previousNotice,
+  nextNotice
+);
+assert.equal(alignedPickup.note, null);
+assert.equal(alignedPickup.proposals[0].event_start, "16:00");
+assert.match(alignedPickup.proposals[0].draft, /4:00 PM/);
+assert.doesNotMatch(alignedPickup.proposals[0].draft, /5:00 PM/);
+assert.equal(alignedPickup.proposals[1].event_start, "15:00");
+assert.match(alignedPickup.proposals[1].draft, /3:00 PM/);
+
+const ambiguousCalendars = alignCalendarRows(
+  [
+    {
+      type: "calendar_update",
+      draft: "Add to calendar: Kevin — Pickup, Sat, Nov 7, at 5:00 PM.",
+      event_start: "17:00",
+    },
+    {
+      type: "calendar_update",
+      draft: "Add to calendar: Ashley — Practice, Sat, Nov 7, at 5:00 PM.",
+      event_start: "17:00",
+    },
+    {
+      type: "calendar_update",
+      draft: "Add to calendar: Dentist, Sat, Nov 7, at 3:00 PM.",
+      event_start: "15:00",
+    },
+  ],
+  previousNotice,
+  nextNotice
+);
+assert.match(ambiguousCalendars.note ?? "", /more than one open event/i);
+const withheld = ambiguousCalendars.proposals as { withheld?: boolean; draft: string }[];
+assert.equal(withheld[0].withheld, true);
+assert.equal(withheld[1].withheld, true);
+assert.equal(withheld[2].withheld, undefined);
+assert.match(withheld[2].draft, /3:00 PM/);

@@ -9,6 +9,7 @@ import { anthropicFidelityModel, parentTurnsForFidelity, settleDraftReview } fro
 import { draftNeedsCorrection, type GroundedIn } from "@/lib/sage/task-objective";
 import {
   composeFactualReply,
+  applyMessageRegister,
   conciseOutboundBody,
   droppedFactLabels,
   factsOnlyDraft,
@@ -553,7 +554,7 @@ export async function redraftMessage(params: {
 Revise the current draft. Keep its recipient and purpose, and apply the user guidance. Do not start a different message.
 Notice of a known fact is a statement, then an imperative invitation to object, with a deadline when one is implied. A question stays a question only when the parent lacks information only the co-parent has. No greeting, sign-off, hedge, or padding unless the guidance asks for it.
 Facts you may state are only those in FACTS, EVIDENCE, and the user guidance. State a basis the parent supplied. Do not claim a record was checked.
-The message must carry QUESTION. If the current draft does not, and the guidance is not a correction of that draft, write a new message that does.
+If the current draft states a known fact and invites a correction, keep that statement, deadline, and invitation. Change only the detail the guidance names. Do not turn that notice into a question. Ask QUESTION only when the parent lacks information only the co-parent has and the guidance is not a correction of the current draft.
 Never copy PRIVATE or REJECTED into the message.
 An arrival time does not replace a start time. Remove a fact only when the guidance corrects or retracts it, such as "not 8" or "instead of 8pm".
 Write plain declarative sentences. No exclamation point. No "actually", "just a heads-up", "just so you know", or "FYI".
@@ -586,13 +587,15 @@ User guidance: ${guidance}`;
     event: params.event,
     child: params.child,
   };
-  let drafted = await draftCheckedOutbound(userPrompt, sources, { retain, userAsked: guidance });
+  const inRegister = (text: string | null) =>
+    text ? applyMessageRegister(text, guidance, params.currentDraft) : null;
+  let drafted = inRegister(await draftCheckedOutbound(userPrompt, sources, { retain, userAsked: guidance }));
   if (drafted && draftNeedsCorrection(drafted, objective)) {
-    const corrected = await draftCheckedOutbound(
-      `${userPrompt}\nThe previous attempt missed QUESTION or copied PRIVATE or REJECTED. Write a new message that asks QUESTION. Do not paraphrase the previous attempt. Do not copy private strategy.`,
+    const corrected = inRegister(await draftCheckedOutbound(
+      `${userPrompt}\nThe previous attempt missed the parent's point or copied PRIVATE or REJECTED. If the current draft is notice of a known fact, keep the statement, deadline, and invitation, and change only the named detail. Otherwise ask QUESTION. Do not paraphrase the previous attempt. Do not copy private strategy.`,
       sources,
       { retain, userAsked: guidance }
-    );
+    ));
     if (corrected && !draftNeedsCorrection(corrected, objective)) drafted = corrected;
   }
   const parentTurns = parentTurnsForFidelity({
@@ -612,11 +615,12 @@ User guidance: ${guidance}`;
       repair: async (repairedObjective) => {
         if (params.repairedObjective) params.repairedObjective.current = repairedObjective;
         const question = repairedObjective?.question || objective?.question || "";
-        return draftCheckedOutbound(
-          `${userPrompt}\nThe draft did not fulfill the parent's request. Ask this question instead: ${question}\nDo not paraphrase the previous attempt. Do not copy private strategy.`,
+        const repaired = await draftCheckedOutbound(
+          `${userPrompt}\nThe draft did not fulfill the parent's request. If the current draft is notice of a known fact, keep the statement, the deadline, and the invitation to object, and change only the detail that was wrong. Otherwise ask this question instead: ${question}\nDo not paraphrase the previous attempt. Do not copy private strategy.`,
           sources,
           { retain, userAsked: guidance }
         );
+        return repaired ? applyMessageRegister(repaired, guidance, params.currentDraft) : null;
       },
     });
     if (params.validation && settled.status === "draft") params.validation.current = settled.validation;

@@ -6,9 +6,11 @@
  */
 
 import type { getServiceRoleClient } from "@/lib/supabase/server";
+import { alignCalendarRows } from "@/lib/sage/calendar-chat";
 import { isParentFacingCopy, requestAsDraft, restoreDroppedEvidence } from "@/lib/sage/outbound-facts";
 import { taskIdOf } from "@/lib/sage/open-task";
-import { proposalId, reviseProposal } from "@/lib/sage/proposal-lifecycle";
+import { isInactiveProposal, proposalId, reviseProposal } from "@/lib/sage/proposal-lifecycle";
+import { loadSessionItems } from "@/lib/sage/session-items";
 import type { TurnArbitration } from "@/lib/sage/turn-arbitration";
 
 type Admin = ReturnType<typeof getServiceRoleClient>;
@@ -19,6 +21,7 @@ export type AppliedTaskTurn =
       relation: "revise" | "cancel";
       item: { id: string; plan: Record<string, unknown> };
       unchanged?: boolean;
+      calendarNote?: string | null;
     }
   | { folded: false };
 
@@ -114,7 +117,7 @@ export async function applyTaskRevision(opts: {
   guidance?: string;
   privateObjective?: string | null;
   groundedIn?: Record<string, unknown> | null;
-}): Promise<{ id: string; plan: Record<string, unknown>; unchanged?: boolean } | null> {
+}): Promise<{ id: string; plan: Record<string, unknown>; unchanged?: boolean; calendarNote?: string | null } | null> {
   const loaded = await loadOwnedPlan(opts.admin, opts.itemId, opts.userId);
   if (!loaded) return null;
   const index = proposalIndex(loaded.proposals, opts.proposalId);
@@ -135,9 +138,10 @@ export async function applyTaskRevision(opts: {
     approved: false,
   });
   if (!revised) return null;
-  const plan = { ...loaded.plan, proposals: revised.proposals };
+  const aligned = alignCalendarRows(revised.proposals, previous, next);
+  const plan = { ...loaded.plan, proposals: aligned.proposals };
   if (!(await savePlan(opts.admin, opts.itemId, opts.userId, plan))) return null;
-  return { id: opts.itemId, plan };
+  return { id: opts.itemId, plan, calendarNote: aligned.note };
 }
 
 /** Dismiss live proposals of the named task. Executed and already-closed rows stay as they are. */
@@ -246,6 +250,66 @@ export async function clearStoredMessageObjective(opts: {
   }
 }
 
+/** The open message and the version it replaced, when this plan just revised one. */
+export function messageClockChange(proposals: unknown[]): { previous: string; next: string } | null {
+  for (const raw of proposals) {
+    const row = asRecord(raw);
+    if (!row || row.type !== "reply_coparent" || isInactiveProposal(row)) continue;
+    const previousId = typeof row.supersedes === "string" ? row.supersedes : "";
+    if (!previousId) continue;
+    const previous = proposals.map((item) => asRecord(item)).find((item) => item?.id === previousId);
+    if (!previous) continue;
+    const next = draftOf(row);
+    const prior = draftOf(previous);
+    if (next && prior && next !== prior) return { previous: prior, next };
+  }
+  return null;
+}
+
+/**
+ * Move or withdraw open calendar cards in this session so none still show the
+ * time the revised message no longer says.
+ */
+export async function alignSessionCalendars(opts: {
+  admin: Admin;
+  userId: string;
+  sessionId: string | null;
+  previousMessage: string;
+  nextMessage: string;
+}): Promise<{ note: string | null; items: { id: string; plan: Record<string, unknown> }[] }> {
+  const rows = await loadSessionItems(opts.admin, opts.sessionId, opts.userId);
+  const plans = rows.map((row) => {
+    const plan = row.plan ?? {};
+    const proposals = Array.isArray(plan.proposals) ? plan.proposals : [];
+    return { id: row.id, plan, proposals };
+  });
+  const flat: unknown[] = [];
+  const owners: number[] = [];
+  plans.forEach((plan, planIndex) => {
+    plan.proposals.forEach((proposal) => {
+      flat.push(proposal);
+      owners.push(planIndex);
+    });
+  });
+  const aligned = alignCalendarRows(flat, opts.previousMessage, opts.nextMessage);
+  const nextPlans = plans.map((plan) => ({ ...plan, proposals: [] as unknown[] }));
+  aligned.proposals.forEach((proposal, index) => {
+    nextPlans[owners[index]]?.proposals.push(proposal);
+  });
+  const saved: { id: string; plan: Record<string, unknown> }[] = [];
+  for (let index = 0; index < nextPlans.length; index += 1) {
+    const changed = nextPlans[index].proposals.some(
+      (proposal, proposalIndex) => proposal !== plans[index].proposals[proposalIndex]
+    );
+    if (!changed) continue;
+    const plan = { ...nextPlans[index].plan, proposals: nextPlans[index].proposals };
+    if (await savePlan(opts.admin, nextPlans[index].id, opts.userId, plan)) {
+      saved.push({ id: nextPlans[index].id, plan });
+    }
+  }
+  return { note: aligned.note, items: saved };
+}
+
 /**
  * Fold this turn into the named task when arbitration says revise or cancel.
  * Unread, conversation, continue, and new_task leave storage to the existing insert path.
@@ -298,5 +362,11 @@ export async function applyTurnToTasks(opts: {
     groundedIn: outgoing.groundedIn ?? opts.groundedIn ?? null,
   });
   if (!item) return { folded: false };
-  return { folded: true, relation: "revise", item, unchanged: item.unchanged === true };
+  return {
+    folded: true,
+    relation: "revise",
+    item,
+    unchanged: item.unchanged === true,
+    calendarNote: item.calendarNote ?? null,
+  };
 }

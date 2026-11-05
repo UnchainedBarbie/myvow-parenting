@@ -1051,6 +1051,7 @@ export function SageClient({
         sage_message?: SageMessage;
         sage_item?: SageItem | null;
         revised_item?: { id: string; plan: SagePlan } | null;
+        revised_items?: { id: string; plan: SagePlan }[] | null;
         revision_message?: SageMessage | null;
         case_id?: string | null;
       };
@@ -1064,18 +1065,22 @@ export function SageClient({
           }
         : undefined;
       const revisionMsg = payload.revision_message ?? undefined;
+      const planUpdates = [
+        ...(payload.revised_item ? [payload.revised_item] : []),
+        ...(payload.revised_items ?? []),
+      ];
       setMessages((prev) => {
         const base = prev
           .filter((m) => !m.id.startsWith("local-"))
-          .map((m) =>
-            payload.revised_item?.id &&
-            m.sage_item?.id === payload.revised_item.id
-              ? {
-                  ...m,
-                  sage_item: { ...m.sage_item, plan: payload.revised_item.plan },
-                }
-              : m
-          );
+          .map((m) => {
+            if (!m.sage_item) return m;
+            const match = planUpdates.find((item) => item.id === m.sage_item?.id);
+            if (!match) return m;
+            return {
+              ...m,
+              sage_item: { ...m.sage_item, plan: match.plan },
+            };
+          });
         return [
           ...base,
           ...(userMsg ? [userMsg] : []),

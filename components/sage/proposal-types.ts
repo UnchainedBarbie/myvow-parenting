@@ -15,6 +15,8 @@ export type SageProposal = {
   approved_at?: string;
   chosen_date?: string;
   status?: string;
+  /** Set when a calendar card was withdrawn because it no longer matched the message. Hidden, not offered. */
+  withheld?: boolean;
   /** Stable id so a revision can point at this exact version. */
   id?: string;
   /** Proposal id of the version that replaced this one. */

@@ -178,6 +178,8 @@ async function recordSaveFailure(
 interface SageClientProps {
   sessionId: string | null;
   sessionTitle?: string | null;
+  /** Set when this chat answers one conversation. Sends file onto that conversation. */
+  boundConversationId?: string | null;
   onSessionTitleGenerated?: () => void;
   onOpenDraftAssistant?: () => void;
   initialDraft?: string | null;
@@ -187,6 +189,7 @@ interface SageClientProps {
 export function SageClient({
   sessionId,
   sessionTitle,
+  boundConversationId,
   onSessionTitleGenerated,
   onOpenDraftAssistant,
   initialDraft,
@@ -254,6 +257,15 @@ export function SageClient({
       setTimeout(() => textareaRef.current?.focus(), 100);
     }
   }, [initialDraft, onConsumeInitialDraft]);
+
+  useEffect(() => {
+    if (!sessionId) return;
+    const key = `sage-reply-draft:${sessionId}`;
+    const stored = window.sessionStorage.getItem(key);
+    if (!stored?.trim()) return;
+    window.sessionStorage.removeItem(key);
+    setDraft(stored.trim());
+  }, [sessionId]);
 
   const loadMessages = useCallback(async (sid: string | null, options?: { quiet?: boolean }) => {
     if (sid === null) {
@@ -410,6 +422,7 @@ export function SageClient({
           proposal_indexes,
           ...(datesPayload ? { dates: datesPayload } : {}),
           ...sendRequestFields(send),
+          ...(boundConversationId ? { conversation_id: boundConversationId } : {}),
         }),
       });
       const data = (await res.json().catch(() => ({}))) as {
@@ -1124,7 +1137,7 @@ export function SageClient({
         ];
       });
 
-      if (wasFirstMessage) {
+      if (wasFirstMessage && !boundConversationId) {
         fetch("/api/sage/title-session", {
           method: "POST",
           headers: { "Content-Type": "application/json" },

@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
+import { ensureConversationSession } from "@/lib/sage/process-inbox-item";
+
+const SESSION_COLUMNS =
+  "id, user_id, title, category, created_at, updated_at, flagged, archived, documented, documented_at, session_type, conversation_id";
 
 type SessionRow = {
   id: string;
@@ -13,6 +17,7 @@ type SessionRow = {
   documented: boolean;
   documented_at: string | null;
   session_type: "private" | "incident";
+  conversation_id: string | null;
 };
 
 type Filter = "all" | "incident" | "flagged" | "documented" | "archived";
@@ -33,9 +38,7 @@ export async function GET(request: NextRequest) {
     const admin = getServiceRoleClient();
     let q = admin
       .from("sage_sessions")
-      .select(
-        "id, user_id, title, category, created_at, updated_at, flagged, archived, documented, documented_at, session_type"
-      )
+      .select(SESSION_COLUMNS)
       .eq("user_id", user.id);
 
     // Filters:
@@ -104,29 +107,90 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
     }
 
-    const body = await request.json().catch(() => ({}));
-    const { category, session_type } = body as {
+    const body = (await request.json().catch(() => ({}))) as {
       category?: string;
       session_type?: "private" | "incident";
+      conversation_id?: string;
     };
     const now = new Date();
     const nowIso = now.toISOString();
     const defaultTitle = `Sage Session — ${now.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
 
     const admin = getServiceRoleClient();
+    const requestedConversationId =
+      typeof body.conversation_id === "string" ? body.conversation_id.trim() : "";
+
+    // A reply opens the parent's Sage chat for that conversation. The title is the
+    // conversation's own title. An existing chat for the pair is reused, not retitled.
+    if (requestedConversationId) {
+      const { data: conversation, error: convError } = await admin
+        .from("conversations")
+        .select("id, case_id, subject")
+        .eq("id", requestedConversationId)
+        .maybeSingle();
+      if (convError) {
+        return NextResponse.json({ message: convError.message }, { status: 500 });
+      }
+      const conv = conversation as { id: string; case_id: string; subject: string | null } | null;
+      if (!conv) {
+        return NextResponse.json(
+          { message: "That conversation is not on this case." },
+          { status: 404 }
+        );
+      }
+      const { data: member, error: memberError } = await admin
+        .from("case_members")
+        .select("user_id")
+        .eq("case_id", conv.case_id)
+        .eq("user_id", user.id)
+        .maybeSingle();
+      if (memberError) {
+        return NextResponse.json({ message: memberError.message }, { status: 500 });
+      }
+      if (!member) {
+        return NextResponse.json(
+          { message: "That conversation is not on this case." },
+          { status: 404 }
+        );
+      }
+      const title = (conv.subject ?? "").trim() || "(no subject)";
+      const ensured = await ensureConversationSession(admin, {
+        userId: user.id,
+        conversationId: conv.id,
+        title,
+      });
+      if (!ensured.id) {
+        return NextResponse.json(
+          { message: ensured.error ?? "Failed to open the reply." },
+          { status: 500 }
+        );
+      }
+      const { data: bound, error: boundError } = await admin
+        .from("sage_sessions")
+        .select(SESSION_COLUMNS)
+        .eq("id", ensured.id)
+        .eq("user_id", user.id)
+        .maybeSingle();
+      if (boundError || !bound) {
+        return NextResponse.json(
+          { message: boundError?.message ?? "Failed to open the reply." },
+          { status: 500 }
+        );
+      }
+      return NextResponse.json({ session: bound as SessionRow });
+    }
+
     const { data: row, error } = await admin
       .from("sage_sessions")
       .insert({
         user_id: user.id,
         title: defaultTitle,
-        category: (category ?? null) as string | null,
-        session_type: session_type ?? "private",
+        category: (body.category ?? null) as string | null,
+        session_type: body.session_type ?? "private",
         created_at: nowIso,
         updated_at: nowIso,
       })
-      .select(
-        "id, user_id, title, category, created_at, updated_at, flagged, archived, documented, documented_at, session_type"
-      )
+      .select(SESSION_COLUMNS)
       .single();
 
     if (error || !row) {

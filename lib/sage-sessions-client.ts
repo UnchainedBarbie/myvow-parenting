@@ -10,6 +10,7 @@ export type SageSessionRow = {
   documented?: boolean;
   documented_at?: string | null;
   session_type?: "private" | "incident";
+  conversation_id?: string | null;
 };
 
 export const SAGE_SESSIONS_CHANGED_EVENT = "sage-sessions-changed";

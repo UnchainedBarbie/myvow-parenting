@@ -25,21 +25,12 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { MessageBubble, type MessageRow } from "./message-bubble";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { estimateIntensity } from "@/lib/sage/intensity";
 import { showErrorToast, showSuccessToast } from "@/components/ui/toaster";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { AlertCircle } from "lucide-react";
 import { ConversationCategories } from "./conversation-categories";
 import { RECORD_CATEGORIES, type RecordCategoryId } from "@/lib/record/record-categories";
-import { OutboundReviewPanel } from "./outbound-review-panel";
-import {
-  originalForSend,
-  requestEditReview,
-  requestOutboundReviewWithReceipt,
-  reviewProofForSend,
-  type OutboundReview,
-} from "@/lib/messages/outbound-review";
-import { nextSendAttempt, type SendAttempt } from "@/lib/messages/send-attempt";
+import { sageChatHref } from "@/lib/sage-sessions-client";
 
 type ChildSummary = { id: string; first_name: string };
 
@@ -116,20 +107,7 @@ export function MessagesSplitView({
   const [newTopic, setNewTopic] = useState<string>("General");
   const [newRecordCategories, setNewRecordCategories] = useState<RecordCategoryId[]>([]);
   const [creating, setCreating] = useState(false);
-  const [composeText, setComposeText] = useState("");
-  /** True only while the approved text is being saved and sent. */
-  const [sending, setSending] = useState(false);
-  /** True only while Sage reviews the draft. Nothing is sent in this state. */
-  const [reviewing, setReviewing] = useState(false);
-  const [review, setReview] = useState<OutboundReview | null>(null);
-  /** Proof from the review route that this draft was reviewed. The send route requires it. */
-  const [reviewReceipt, setReviewReceipt] = useState<string | null>(null);
-  /** The parent's first draft, kept when an edit was reviewed again. */
-  const [reviewFirstOriginal, setReviewFirstOriginal] = useState<string | null>(null);
-  const [reviewingEdit, setReviewingEdit] = useState(false);
-  /** One approval of one final text is one send attempt. A retry keeps the id. */
-  const sendAttemptRef = useRef<SendAttempt | null>(null);
-  const [composeError, setComposeError] = useState<string | null>(null);
+  const [replyOpening, setReplyOpening] = useState(false);
   const [dismissedSuggestions, setDismissedSuggestions] = useState<
     Record<string, { expense?: boolean; calendar?: boolean }>
   >({});
@@ -181,7 +159,6 @@ export function MessagesSplitView({
   const [showCourtOrderModal, setShowCourtOrderModal] = useState(false);
   const [deleteConversationId, setDeleteConversationId] = useState<string | null>(null);
   const [confirmArchiveOpen, setConfirmArchiveOpen] = useState(false);
-  const [discardDraftOpen, setDiscardDraftOpen] = useState(false);
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
 
   const [attachExpenses, setAttachExpenses] = useState<
@@ -594,6 +571,37 @@ export function MessagesSplitView({
     await loadMessages(id);
   }
 
+  async function openBoundSageChat(conversationId: string, draft?: string | null) {
+    const res = await fetch("/api/sage/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ conversation_id: conversationId }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      showErrorToast((data as { message?: string }).message ?? "Could not open a reply.");
+      return;
+    }
+    const id = (data as { session?: { id?: string } }).session?.id;
+    if (!id) {
+      showErrorToast("Could not open a reply.");
+      return;
+    }
+    const pending = draft?.trim();
+    if (pending) window.sessionStorage.setItem(`sage-reply-draft:${id}`, pending);
+    router.push(sageChatHref(id));
+  }
+
+  async function startReply() {
+    if (!activeConversation || replyOpening) return;
+    setReplyOpening(true);
+    try {
+      await openBoundSageChat(activeConversation.id);
+    } finally {
+      setReplyOpening(false);
+    }
+  }
+
   async function handleCreateConversation(e: React.FormEvent) {
     e.preventDefault();
     if (!newSubject.trim() || !newTopic) return;
@@ -638,106 +646,13 @@ export function MessagesSplitView({
       await loadConversations();
       setSelectedId(conv.id);
       await loadMessages(conv.id);
-      if (initialMessage?.trim()) setComposeText(initialMessage.trim());
+      if (initialMessage?.trim()) {
+        await openBoundSageChat(conv.id, initialMessage);
+        return;
+      }
       showSuccessToast("Conversation created");
     } finally {
       setCreating(false);
-    }
-  }
-
-  async function handleSend() {
-    if (!selectedId || !composeText.trim()) return;
-    if (blockSend) {
-      setComposeError(
-        coolOffActive
-          ? "Sending is paused while you take a break."
-          : "This conversation is paused. It will reopen at the scheduled time."
-      );
-      return;
-    }
-    if (reviewing || sending || review) return;
-    setReviewing(true);
-    setComposeError(null);
-    try {
-      // Review only. Nothing is saved or sent until the parent approves the exact text.
-      const reviewed = await requestOutboundReviewWithReceipt(composeText);
-      sendAttemptRef.current = null;
-      setReviewFirstOriginal(null);
-      setReviewReceipt(reviewed.receipt);
-      setReview(reviewed.review);
-    } finally {
-      setReviewing(false);
-    }
-  }
-
-  /** Text the parent changed after Sage's review gets its own review. */
-  async function handleReviewEdit(text: string) {
-    if (!review || reviewingEdit || sending) return;
-    setComposeError(null);
-    setReviewingEdit(true);
-    try {
-      const next = await requestEditReview(
-        { review, receipt: reviewReceipt, firstOriginal: reviewFirstOriginal ?? undefined },
-        text
-      );
-      setReviewReceipt(next.receipt);
-      setReviewFirstOriginal(next.firstOriginal ?? null);
-      setReview(next.review);
-    } finally {
-      setReviewingEdit(false);
-    }
-  }
-
-  function clearReview() {
-    sendAttemptRef.current = null;
-    setReviewFirstOriginal(null);
-    setReview(null);
-  }
-
-  async function handleApproveReview(finalText: string, options?: { editUnreviewedAck?: boolean }) {
-    if (!selectedId || !review || sending) return;
-    setSending(true);
-    setComposeError(null);
-    try {
-      sendAttemptRef.current = nextSendAttempt(sendAttemptRef.current, finalText);
-      const reviewedDraft = { review, receipt: reviewReceipt, firstOriginal: reviewFirstOriginal ?? undefined };
-      const approveRes = await fetch("/api/messages/approve", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          case_id: caseId,
-          conversation_id: selectedId,
-          original_content: originalForSend(reviewedDraft),
-          ai_rewritten_content: finalText,
-          send_attempt_id: sendAttemptRef.current.id,
-          ...reviewProofForSend(reviewedDraft, { editUnreviewedAck: options?.editUnreviewedAck }),
-        }),
-      });
-      const approveData = await approveRes.json().catch(() => ({}));
-      if (!approveRes.ok) {
-        setComposeError(
-          (approveData as { message?: string }).message ?? "Failed to send message."
-        );
-        return;
-      }
-      clearReview();
-      setComposeText("");
-      await loadMessages(selectedId);
-      await loadConversations();
-      router.refresh();
-    } catch (e) {
-      setComposeError(e instanceof Error ? e.message : "Failed to send message.");
-    } finally {
-      setSending(false);
-    }
-  }
-
-  function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      if (!sending && !reviewing && !review && composeText.trim()) {
-        void handleSend();
-      }
     }
   }
 
@@ -766,17 +681,6 @@ export function MessagesSplitView({
     (userSettings?.proactive_sage_incoming_enabled ?? true) &&
     (conversationSettings?.proactive_sage_enabled !== false);
 
-  const showDraftNudge =
-    (userSettings?.proactive_sage_enabled ?? true) &&
-    (userSettings?.proactive_sage_drafts_enabled ?? true) &&
-    (conversationSettings?.proactive_sage_enabled !== false);
-
-  const draftIntensityResult = useMemo(
-    () => estimateIntensity(composeText),
-    [composeText]
-  );
-  const draftIntensityFlag = draftIntensityResult.flag;
-
   const tenMinAgo = new Date(now.getTime() - 10 * 60 * 1000).toISOString();
   const sixtyMinAgo = new Date(now.getTime() - 60 * 60 * 1000).toISOString();
   const intensityInLast10 = messages.filter(
@@ -789,8 +693,6 @@ export function MessagesSplitView({
     (userSettings?.structured_pause_enabled ?? true) &&
     (conversationSettings?.structured_pause_enabled !== false) &&
     (intensityInLast10 >= 3 || intensityInLast60 >= 5);
-
-  const blockSend = !!coolOffActive || (!!activePause && activePause.blocks_sending);
 
   useEffect(() => {
     if (sageOpen && activeConversation) {
@@ -1243,6 +1145,14 @@ export function MessagesSplitView({
                   </p>
                 </div>
               </div>
+              <button
+                type="button"
+                onClick={() => void startReply()}
+                disabled={replyOpening}
+                className="shrink-0 rounded-full border border-[#E8E4DC] bg-[#F2F5EF] px-3 py-1 text-xs font-medium text-[#5B7A52] hover:bg-[#E8EDE3] disabled:opacity-60"
+              >
+                {replyOpening ? "Opening…" : "Reply"}
+              </button>
             </div>
             {coolOffActive && (
               <div className="border-b border-[#E8E4DC] bg-[#F2F5EF] px-4 py-2 text-[11px] text-[#3D3D3D]">
@@ -1620,139 +1530,17 @@ export function MessagesSplitView({
               </ScrollArea>
 
               <div className="border-t border-[#E8E4DC] bg-transparent px-4 py-3 space-y-2">
-                {draftIntensityFlag && showDraftNudge && composeText.trim() && (
+                {(userSettings?.cool_off_enabled ?? true) && !coolOffActive && (
                   <div className="flex justify-end">
                     <button
                       type="button"
-                      onClick={() => {
-                        setSageContextMessage(composeText.trim());
-                        setSageOpen(true);
-                      }}
-                      className="inline-flex items-center gap-1.5 rounded-full bg-[#F2F5EF] border border-[#E8E4DC] px-2.5 py-1 text-[11px] text-[#5B7A52] hover:bg-[#E8EDE3]"
+                      onClick={() => setShowCoolOffModal(true)}
+                      className="rounded-full border border-[#E8E4DC] bg-[#FDFBF7] px-2.5 py-1 text-[11px] text-[#5B7A52] hover:bg-[#F2F5EF]"
                     >
-                      <span role="img" aria-hidden>🕊</span>
-                      <span>Let&apos;s talk before you hit send</span>
+                      Take a cool-off break
                     </button>
                   </div>
                 )}
-                {reviewing && (
-                  <div
-                    className="mb-3 rounded-2xl border border-[#E8E4DC] bg-[#FDFBF7] px-3 py-2 text-[11px] text-[#8A8A8A]"
-                    role="status"
-                  >
-                    Sage is reviewing your message. Nothing has been sent.
-                  </div>
-                )}
-                {review && (
-                  <OutboundReviewPanel
-                    key={`${review.status}:${review.original}:${reviewReceipt ?? ""}`}
-                    review={review}
-                    approveLabel="Send"
-                    busy={sending}
-                    busyLabel="Sending…"
-                    error={composeError}
-                    onApprove={(finalText, options) => void handleApproveReview(finalText, options)}
-                    onReviewEdit={reviewReceipt ? (text) => void handleReviewEdit(text) : undefined}
-                    reviewingEdit={reviewingEdit}
-                    onCancel={() => {
-                      clearReview();
-                      setComposeText(review.original);
-                    }}
-                    onDiscard={() => setDiscardDraftOpen(true)}
-                  />
-                )}
-
-                <div className="flex items-end gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setSageOpen(true)}
-                    title="Talk to Sage"
-                    aria-label="Talk to Sage"
-                    className="flex-shrink-0"
-                    style={{
-                      width: "44px",
-                      height: "44px",
-                      borderRadius: "50%",
-                      backgroundColor: "#dce5d3",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      border: "none",
-                      cursor: "pointer",
-                      flexShrink: 0,
-                      padding: 0,
-                    }}
-                  >
-                    <div style={{ isolation: "isolate" }}>
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src="/dove-translucent.png"
-                        alt="Sage"
-                        style={{
-                          width: "30px",
-                          height: "30px",
-                          objectFit: "contain",
-                          display: "block",
-                          mixBlendMode: "multiply",
-                        }}
-                      />
-                    </div>
-                  </button>
-                  <Textarea
-                    value={composeText}
-                    onChange={(e) => setComposeText(e.target.value)}
-                    onKeyDown={handleKeyDown}
-                    placeholder="Type your message..."
-                    rows={2}
-                    className="min-h-[52px] flex-1 resize-none rounded-[10px] border border-[#E8E4DC] bg-[#F9F6F0] text-sm text-[#3D3D3D] placeholder:text-[#B0A899] focus-visible:ring-[#7C8B6E]"
-                    disabled={sending || reviewing || review !== null}
-                  />
-                  <div className="flex flex-col items-end gap-1">
-                    <button
-                      type="button"
-                      onClick={() => void handleSend()}
-                      disabled={sending || reviewing || review !== null || !composeText.trim() || blockSend}
-                      className={cn(
-                        "flex h-[42px] w-[42px] items-center justify-center rounded-full text-white shadow-sm transition-colors",
-                        composeText.trim()
-                          ? "bg-[#5B7A52] hover:bg-[#476242]"
-                          : "bg-[#E0E4DC] cursor-not-allowed"
-                      )}
-                      aria-label={reviewing ? "Reviewing message" : "Review message before sending"}
-                    >
-                      <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        viewBox="0 0 24 24"
-                        className="h-4 w-4"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="1.8"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      >
-                        <path d="M22 2L11 13" />
-                        <path d="M22 2L15 22L11 13L2 9L22 2Z" />
-                      </svg>
-                    </button>
-                    {(userSettings?.cool_off_enabled ?? true) && !coolOffActive && (
-                      <button
-                        type="button"
-                        onClick={() => setShowCoolOffModal(true)}
-                        className="rounded-full border border-[#E8E4DC] bg-[#FDFBF7] px-2.5 py-1 text-[11px] text-[#5B7A52] hover:bg-[#F2F5EF]"
-                      >
-                        Take a cool-off break
-                      </button>
-                    )}
-                  </div>
-                </div>
-                {composeError && !review && (
-                  <p className="text-[11px] text-[#C7524A]">{composeError}</p>
-                )}
-                <div className="space-y-1">
-                  <div className="flex items-center gap-1 text-[10px] text-[#8A8A8A]">
-                    <Shield className="h-3 w-3 text-[#7C8B6E]" />
-                    <span>Your message will be reviewed by AI before sending.</span>
-                  </div>
                   <div className="flex flex-wrap items-center gap-2 text-[11px]">
                     <span className="text-[#8A8A8A]">Attach:</span>
                     {(() => {
@@ -1826,7 +1614,6 @@ export function MessagesSplitView({
                       );
                     })()}
                   </div>
-                </div>
               </div>
             </div>
           </>
@@ -2771,24 +2558,6 @@ export function MessagesSplitView({
         }}
       />
 
-      <ConfirmModal
-        open={discardDraftOpen}
-        title="Discard message?"
-        description="This cannot be undone."
-        confirmLabel="Discard"
-        confirmTone="danger"
-        onCancel={() => setDiscardDraftOpen(false)}
-        onConfirm={() => {
-          if (sending) {
-            setDiscardDraftOpen(false);
-            return;
-          }
-          clearReview();
-          setComposeText("");
-          setComposeError(null);
-          setDiscardDraftOpen(false);
-        }}
-      />
     </div>
   );
 }

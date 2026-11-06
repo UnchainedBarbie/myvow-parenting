@@ -37,7 +37,7 @@ export async function GET(
     const { data, error } = await admin
       .from("sage_sessions")
       .select(
-        "id, user_id, title, category, created_at, updated_at, flagged, archived, documented, documented_at, session_type"
+        "id, user_id, title, category, created_at, updated_at, flagged, archived, documented, documented_at, session_type, conversation_id"
       )
       .eq("id", id)
       .eq("user_id", user.id)

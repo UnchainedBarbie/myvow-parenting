@@ -476,7 +476,6 @@ async function main() {
     assert.match(route, /insertOutgoingMessage\(/);
     assert.ok(route.indexOf("decideSendAttempt(") < route.indexOf("reviewGate("), "a retry is answered before the review gate");
     for (const file of [
-      "components/messages/messages-split-view.tsx",
       "components/messages/compose-bar.tsx",
       "components/dashboard/dashboard-status-cards.tsx",
     ]) {
@@ -486,7 +485,8 @@ async function main() {
       assert.match(source, /onReviewEdit=/, `${file} lets edited text skip review`);
     }
     const cards = readFileSync(join(process.cwd(), "components/sage/proposal-card-list.tsx"), "utf8");
-    assert.match(cards, /onReviewEdit=/);
+    assert.match(cards, /reviewCardEdit/);
+    assert.match(cards, /needsEditChoice/);
     const migration = readFileSync(join(process.cwd(), "supabase/migrations/20261028160000_messages_send_attempt.sql"), "utf8");
     assert.match(migration, /send_attempt_id/);
     assert.match(migration, /create unique index/i);

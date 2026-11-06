@@ -690,7 +690,13 @@ async function main() {
     };
     const files = [...scan(join(root, "components")), ...scan(join(root, "app")), ...scan(join(root, "lib"))];
     const approveCallers = files.filter((file) => readFileSync(file, "utf8").includes('fetch("/api/messages/approve"'));
-    assert.ok(approveCallers.length >= 3, "expected the Messages, compose bar, and reminder senders");
+    assert.ok(approveCallers.length >= 2, "expected the compose bar and the reminder sender");
+    const messagesView = readFileSync(join(root, "components/messages/messages-split-view.tsx"), "utf8");
+    assert.equal(messagesView.includes('fetch("/api/messages/approve"'), false);
+    assert.match(messagesView, /conversation_id: conversationId/);
+    const sageClient = readFileSync(join(root, "components/sage/SageClient.tsx"), "utf8");
+    assert.match(sageClient, /conversation_id: boundConversationId/);
+    assert.match(sageClient, /wasFirstMessage && !boundConversationId/);
     for (const file of approveCallers) {
       assert.match(readFileSync(file, "utf8"), /reviewProofForSend/, `${file} sends without review proof`);
     }

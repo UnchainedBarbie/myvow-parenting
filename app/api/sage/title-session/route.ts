@@ -28,7 +28,7 @@ export async function POST(request: NextRequest) {
 
     const { data: session, error: sessionError } = await admin
       .from("sage_sessions")
-      .select("id, user_id")
+      .select("id, user_id, title, conversation_id")
       .eq("id", sessionId)
       .eq("user_id", user.id)
       .maybeSingle();
@@ -38,6 +38,14 @@ export async function POST(request: NextRequest) {
         { message: "Session not found." },
         { status: 404 }
       );
+    }
+
+    // A reply chat already carries the conversation's title. Leave that title alone.
+    const boundId = (session as { conversation_id?: string | null }).conversation_id;
+    if (typeof boundId === "string" && boundId.trim()) {
+      return NextResponse.json({
+        title: (session as { title?: string | null }).title ?? "",
+      });
     }
 
     let title = trimmed.slice(0, 40);

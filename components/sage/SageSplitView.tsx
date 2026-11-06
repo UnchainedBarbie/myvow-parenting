@@ -684,6 +684,7 @@ export function SageSplitView() {
               key={urlSessionId ?? "new"}
               sessionId={urlSessionId}
               sessionTitle={selectedSession?.title ?? undefined}
+              boundConversationId={selectedSession?.conversation_id ?? null}
               onSessionTitleGenerated={() => {
                 void loadSessions();
                 notifySageSessionsChanged();

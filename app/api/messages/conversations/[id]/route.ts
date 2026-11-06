@@ -5,6 +5,7 @@ import {
   parseChildIds,
   replaceConversationChildren,
 } from "@/lib/messages/conversation-children";
+import { isConversationTopic } from "@/lib/messages/conversation-topics";
 import { isMissingRelation } from "@/lib/record/record-categories";
 
 export async function GET(
@@ -129,15 +130,21 @@ export async function PATCH(
     const body = (await request.json().catch(() => ({}))) as {
       subject?: unknown;
       child_ids?: unknown;
+      topic?: unknown;
     };
     const hasSubject = Object.prototype.hasOwnProperty.call(body, "subject");
     const hasChildren = Array.isArray(body.child_ids);
-    if (!hasSubject && !hasChildren) {
+    const hasTopic = Object.prototype.hasOwnProperty.call(body, "topic");
+    if (!hasSubject && !hasChildren && !hasTopic) {
       return NextResponse.json({ error: "Nothing to update." }, { status: 400 });
     }
     const subject = hasSubject && typeof body.subject === "string" ? body.subject.trim() : "";
     if (hasSubject && !subject) {
       return NextResponse.json({ error: "A title is required." }, { status: 400 });
+    }
+    const topic = hasTopic && typeof body.topic === "string" ? body.topic.trim() : "";
+    if (hasTopic && !isConversationTopic(topic)) {
+      return NextResponse.json({ error: "That topic is not one of the conversation topics." }, { status: 400 });
     }
     const childIds = hasChildren ? parseChildIds(body.child_ids) : null;
 
@@ -198,12 +205,13 @@ export async function PATCH(
     const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
     if (hasSubject) updates.subject = subject;
     if (childIds) updates.child_id = childIds[0] ?? null;
+    if (hasTopic) updates.topic = topic;
 
     const { data: updated, error: updateError } = await admin
       .from("conversations")
       .update(updates)
       .eq("id", conversationId)
-      .select("id, subject, child_id")
+      .select("id, subject, child_id, topic")
       .single();
     if (updateError || !updated) {
       return NextResponse.json(

@@ -335,6 +335,43 @@ async function main() {
     assert.doesNotMatch(briefing, /confirm and follow up/i);
   }
 
+  // An expense reminder is a delivered notice, not four ways to respond and not a restatement.
+  {
+    const body =
+      "Hi, just a friendly reminder that there are outstanding shared expenses totaling $392.49. Could you please review and confirm when you get a chance? Thank you.";
+    const ctx = context({
+      message: { ...input().message, original_content: body },
+      documents: [],
+    });
+    const reading = normalizeReading(
+      {
+        intentions: [
+          {
+            kind: "expense",
+            summary: "There are outstanding shared expenses totaling $392.49.",
+            asksRecipientTo: "review the outstanding expenses and confirm",
+          },
+        ],
+        pendingDecisions: [{ topic: "the expense total", participants: "both_parents", authorityCategory: null }],
+        responseOptions: [
+          "There are outstanding shared expenses totaling $392.49. I will review and follow up.",
+          "I will review the expenses",
+          "I need a breakdown of each expense",
+          "I dispute the total",
+        ],
+      },
+      ctx
+    )!;
+    const briefing = composeBriefing(reading, ctx);
+    assert.match(briefing, /Your co-parent says outstanding shared expenses total \$392\.49 and asks you to review them\./);
+    assert.match(briefing, /Reply: I'll review them\./);
+    assert.equal(briefing.split("$392.49").length - 1, 1);
+    assert.doesNotMatch(briefing, /Ways to respond/i);
+    assert.doesNotMatch(briefing, /I will review and follow up/i);
+    assert.doesNotMatch(briefing, /Open decision/i);
+    assert.doesNotMatch(briefing, /asking you to review the outstanding/i);
+  }
+
   // Attention and narration follow the reading; a failed reading keeps the existing line.
   {
     const ctx = context();

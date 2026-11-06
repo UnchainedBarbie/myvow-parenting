@@ -4,16 +4,8 @@ import { linkUnassignedParentMessages } from "@/lib/messages/deliver-parent-mess
 import { presentMessageForViewer } from "@/lib/messages/parent-message-visibility";
 import { latestThreadPreview } from "@/lib/messages/thread-preview";
 import { assignedChildIds } from "@/lib/messages/conversation-child-ids";
+import { ALLOWED_TOPICS } from "@/lib/messages/conversation-topics";
 import { isMissingRelation, isRecordCategoryId } from "@/lib/record/record-categories";
-
-const ALLOWED_TOPICS = new Set([
-  "Medical",
-  "School",
-  "Schedule",
-  "Expenses",
-  "General",
-  "Emergency",
-]);
 
 type ConversationRow = {
   id: string;

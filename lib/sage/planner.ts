@@ -22,6 +22,10 @@ import {
   voiceProblems,
 } from "@/lib/sage/outbound-facts";
 import { coparentShareInvolves } from "@/lib/expenses-share";
+import {
+  EXPENSE_REMINDER_REPLY,
+  inboundExpenseKind,
+} from "@/lib/sage/inbound-expense";
 import { isParentFacingQuestion } from "@/lib/sage/proposal-kind";
 
 const SAGE_MODEL = "claude-sonnet-4-6";
@@ -38,6 +42,8 @@ export type PlanContext = {
   sender: string;
   /** Adapter source ("chat" | "email"). Chat = user command on own records. */
   source_type?: string;
+  /** The inbound or parent message, without ledger or conversation context. */
+  message_text?: string;
   /** True when the inbound message included at least one attachment. */
   has_attachments?: boolean;
   /** Plan-driven co-parent share for expense items, if computed. */
@@ -269,6 +275,16 @@ function templateReviewDocument(ctx: PlanContext): string {
 
 function userCommand(ctx: PlanContext): boolean {
   return isUserCommand({ sender: ctx.sender, source_type: ctx.source_type });
+}
+
+function inboundMessage(ctx: PlanContext): string {
+  return (ctx.message_text ?? ctx.summary ?? "").trim();
+}
+
+/** A reminder gets an acknowledgement. Anything that is not a new expense is not logged. */
+function inboundExpenseReply(ctx: PlanContext): string | null {
+  if (userCommand(ctx)) return null;
+  return inboundExpenseKind(inboundMessage(ctx)) === "reminder" ? EXPENSE_REMINDER_REPLY : null;
 }
 
 function templateCalendar(ctx: PlanContext): string {
@@ -815,8 +831,19 @@ async function buildPlan(ctx: PlanContext): Promise<Plan> {
     };
   }
 
-  // 6. Expense → ready, unless the sharing rule still has to be chosen.
+  // 6. Expense → ready, unless this inbound message is not a new cost to record.
   if (ctx.item_type === "expense") {
+    if (!userCommand(ctx) && inboundExpenseKind(inboundMessage(ctx)) !== "new") {
+      const replyDraft =
+        inboundExpenseReply(ctx) ??
+        (await draftWithLlm("reply_coparent", ctx, fallbackReply(ctx)));
+      return {
+        status: "ready",
+        proposals: [proposal("reply_coparent", replyDraft, null)],
+        reasoning:
+          "Inbound message is a reminder or an unclear expense mention — no ledger row was proposed.",
+      };
+    }
     if (userCommand(ctx)) {
       const share = ctx.expense_allocation?.other_parent_share;
       const involved = coparentShareInvolves(share);
@@ -855,11 +882,9 @@ async function buildPlan(ctx: PlanContext): Promise<Plan> {
     ctx.action_required &&
     ctx.action_type === "respond"
   ) {
-    const replyDraft = await draftWithLlm(
-      "reply_coparent",
-      ctx,
-      fallbackReply(ctx)
-    );
+    const replyDraft =
+      inboundExpenseReply(ctx) ??
+      (await draftWithLlm("reply_coparent", ctx, fallbackReply(ctx)));
     return {
       status: "ready",
       proposals: [proposal("reply_coparent", replyDraft, null)],

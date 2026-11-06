@@ -28,28 +28,18 @@ import { Textarea } from "@/components/ui/textarea";
 import { showErrorToast, showSuccessToast } from "@/components/ui/toaster";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { AlertCircle } from "lucide-react";
-import { ConversationCategories } from "./conversation-categories";
 import { RECORD_CATEGORIES, type RecordCategoryId } from "@/lib/record/record-categories";
+import { CONVERSATION_TOPICS, isConversationTopic } from "@/lib/messages/conversation-topics";
 import { latestThreadPreview } from "@/lib/messages/thread-preview";
 import { sageChatHref } from "@/lib/sage-sessions-client";
-import { assignedChildIds } from "@/lib/messages/conversation-child-ids";
+import { assignedChildIds, conversationRowChildLabel } from "@/lib/messages/conversation-child-ids";
 import { ChildMultiSelect } from "@/components/documents/child-multi-select";
 
 type ChildSummary = { id: string; first_name: string };
 
-const CONVERSATION_TOPICS = [
-  { value: "Medical", label: "Medical" },
-  { value: "School", label: "School" },
-  { value: "Schedule", label: "Schedule" },
-  { value: "Expenses", label: "Expenses" },
-  { value: "General", label: "General" },
-  { value: "Emergency", label: "Emergency" },
-] as const;
-
 function getTopicLabel(topic: string | undefined | null): string {
+  if (topic && isConversationTopic(topic)) return topic;
   if (!topic) return "General";
-  const found = CONVERSATION_TOPICS.find((x) => x.value === topic);
-  if (found) return found.label;
   return topic.charAt(0).toUpperCase() + topic.slice(1).toLowerCase();
 }
 
@@ -119,6 +109,8 @@ export function MessagesSplitView({
   const [savingTitle, setSavingTitle] = useState(false);
   const [childEdit, setChildEdit] = useState<string[] | null>(null);
   const [savingChildren, setSavingChildren] = useState(false);
+  const [topicEdit, setTopicEdit] = useState<string | null>(null);
+  const [savingTopic, setSavingTopic] = useState(false);
   const [dismissedSuggestions, setDismissedSuggestions] = useState<
     Record<string, { expense?: boolean; calendar?: boolean }>
   >({});
@@ -333,10 +325,8 @@ export function MessagesSplitView({
     const body = searchParams.get("body");
     if (!openNew && !topic && !subject && !body) return;
     if (topic) {
-      const match = CONVERSATION_TOPICS.find(
-        (t) => t.value.toLowerCase() === topic.toLowerCase()
-      );
-      setNewTopic(match ? match.value : "General");
+      const match = CONVERSATION_TOPICS.find((item) => item.toLowerCase() === topic.toLowerCase());
+      setNewTopic(match ?? "General");
     } else if (openNew || subject || body) setNewTopic("General");
     if (subject) setNewSubject(decodeURIComponent(subject));
     if (body) setNewInitialMessage(decodeURIComponent(body));
@@ -541,6 +531,7 @@ export function MessagesSplitView({
   useEffect(() => {
     setRenamingTitle(false);
     setChildEdit(null);
+    setTopicEdit(null);
     if (!selectedId) {
       setConversationSettings(null);
       setActivePause(null);
@@ -645,6 +636,43 @@ export function MessagesSplitView({
       setChildEdit(null);
     } finally {
       setSavingChildren(false);
+    }
+  }
+
+  const savedTopic = isConversationTopic(activeConversation?.category ?? "")
+    ? (activeConversation?.category as string)
+    : "General";
+  const shownTopic = topicEdit ?? savedTopic;
+
+  function chooseTopic(next: string) {
+    setTopicEdit(next === savedTopic ? null : next);
+  }
+
+  async function saveTopic() {
+    if (!activeConversation || !topicEdit || savingTopic || !isConversationTopic(topicEdit)) return;
+    setSavingTopic(true);
+    try {
+      const res = await fetch(`/api/messages/conversations/${activeConversation.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ topic: topicEdit }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showErrorToast((data as { error?: string }).error ?? "Could not update the topic.");
+        return;
+      }
+      const topic = topicEdit;
+      setConversations((current) =>
+        current.map((conversation) =>
+          conversation.id === activeConversation.id
+            ? { ...conversation, category: topic }
+            : conversation
+        )
+      );
+      setTopicEdit(null);
+    } finally {
+      setSavingTopic(false);
     }
   }
 
@@ -763,8 +791,6 @@ export function MessagesSplitView({
       setCreating(false);
     }
   }
-
-  const [activeTone] = useState<"calm" | "elevated" | "tense">("calm");
 
   const now = new Date();
   const last30Start = new Date(
@@ -921,9 +947,9 @@ export function MessagesSplitView({
               )}
             >
               <option value="all">Topics</option>
-              {CONVERSATION_TOPICS.map(({ value, label }) => (
-                <option key={value} value={value}>
-                  {label}
+              {CONVERSATION_TOPICS.map((topic) => (
+                <option key={topic} value={topic}>
+                  {topic}
                 </option>
               ))}
             </select>
@@ -1003,10 +1029,10 @@ export function MessagesSplitView({
                 const isDeletable = (c.message_count ?? 0) === 0;
                 const isEmergencyConversation =
                   c.has_emergency === true || c.category === "Emergency";
-                const childLabel = assignedChildIds({ childIds: c.child_ids, childId: c.child_id })
-                  .map((id) => childMap[id])
-                  .filter(Boolean)
-                  .join(", ");
+                const childRow = conversationRowChildLabel(
+                  assignedChildIds({ childIds: c.child_ids, childId: c.child_id }),
+                  children
+                );
                 return (
                   <div
                     key={c.id}
@@ -1033,8 +1059,14 @@ export function MessagesSplitView({
                           >
                             {c.subject}
                           </p>
-                          {childLabel ? (
-                            <span className="shrink-0 text-[10px] text-[#8A8A8A]">{childLabel}</span>
+                          {childRow ? (
+                            <span
+                              className="max-w-[5.5rem] shrink-0 truncate text-[10px] text-[#8A8A8A]"
+                              title={childRow.full}
+                              aria-label={childRow.full}
+                            >
+                              {childRow.label}
+                            </span>
                           ) : null}
                           {isEmergencyConversation && (
                             <span className="inline-flex shrink-0 text-[#C97B7B]" aria-label="Emergency">
@@ -1254,15 +1286,48 @@ export function MessagesSplitView({
                       {activeConversation.subject}
                     </p>
                   )}
-                  {children.length > 0 ? (
                     <div className="mt-1 flex min-w-0 flex-wrap items-center gap-2">
-                      <ChildMultiSelect
-                        id="conversation-children"
-                        children={children}
-                        value={shownChildIds}
-                        onChange={chooseChildren}
-                        className="min-w-0 w-full max-w-[220px]"
-                      />
+                      <select
+                        id="conversation-topic"
+                        aria-label="Topic"
+                        value={shownTopic}
+                        onChange={(event) => chooseTopic(event.target.value)}
+                        className="h-8 min-w-0 w-full max-w-[220px] rounded-card border border-input bg-background px-3 text-xs text-[#3D3D3D] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                      >
+                        {CONVERSATION_TOPICS.map((topic) => (
+                          <option key={topic} value={topic}>
+                            {topic}
+                          </option>
+                        ))}
+                      </select>
+                      {topicEdit ? (
+                        <>
+                          <button
+                            type="button"
+                            disabled={savingTopic}
+                            onClick={() => void saveTopic()}
+                            className="shrink-0 text-[12px] text-[#5B7A52] hover:text-[#3D3D3D] disabled:opacity-50"
+                          >
+                            {savingTopic ? "Saving…" : "Save"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setTopicEdit(null)}
+                            className="shrink-0 text-[12px] text-[#8A8A8A] hover:text-[#3D3D3D]"
+                          >
+                            Cancel
+                          </button>
+                        </>
+                      ) : null}
+                      {children.length > 0 ? (
+                        <ChildMultiSelect
+                          id="conversation-children"
+                          children={children}
+                          value={shownChildIds}
+                          onChange={chooseChildren}
+                          className="min-w-0 w-full max-w-[220px]"
+                        />
+                      ) : null}
                       {childEdit ? (
                         <>
                           <button
@@ -1283,7 +1348,6 @@ export function MessagesSplitView({
                         </>
                       ) : null}
                     </div>
-                  ) : null}
                 </div>
               </div>
               <div className="flex shrink-0 items-center gap-3">
@@ -1330,29 +1394,6 @@ export function MessagesSplitView({
             <div className="flex min-h-0 flex-1 flex-col">
               <div className="border-b border-[#E8E4DC] bg-transparent px-4 py-2">
                 <div className="flex flex-col gap-2">
-                  <div
-                    className={cn(
-                      "inline-flex items-center gap-2 rounded-full px-3 py-1 text-[11px]",
-                      activeTone === "elevated"
-                        ? "bg-[#FDF6E3] text-[#B8960F]"
-                        : "bg-[#F2F5EF] text-[#5B7A52]"
-                    )}
-                  >
-                    <span
-                      className={cn(
-                        "h-2 w-2 rounded-full",
-                        activeTone === "elevated" ? "bg-[#D4A843]" : "bg-[#7C8B6E]"
-                      )}
-                    />
-                    <span className="font-medium">
-                      {activeTone === "elevated" ? "Sage Monitoring" : "Sage Active"}
-                    </span>
-                    <span className="text-[10px]">
-                      {activeTone === "elevated"
-                        ? "Tone support recommended."
-                        : "Messages are reviewed before sending."}
-                    </span>
-                  </div>
                   <details className="text-[11px] text-[#8A8A8A]">
                     <summary className="cursor-pointer list-none text-[11px] hover:text-[#5B7A52]">
                       Thread summary
@@ -1380,7 +1421,6 @@ export function MessagesSplitView({
                       </p>
                     </div>
                   </details>
-                  {selectedId ? <ConversationCategories conversationId={selectedId} /> : null}
                   {activePause && activePause.blocks_sending && (
                     <div className="mt-2 rounded-xl border border-[#E8E4DC] bg-[#F2F5EF] px-3 py-2 text-[11px] text-[#3D3D3D]">
                       This conversation has been temporarily paused to allow cooling. It will reopen at{" "}
@@ -1502,7 +1542,11 @@ export function MessagesSplitView({
                     )}
                 </div>
               </div>
-              <ScrollArea ref={threadPaneRef} className="flex-1 px-4 py-4">
+              <ScrollArea
+                ref={threadPaneRef}
+                className="min-w-0 flex-1 [&_[data-radix-scroll-area-viewport]>div]:!block [&_[data-radix-scroll-area-viewport]>div]:!min-w-0 [&_[data-radix-scroll-area-viewport]>div]:!w-full"
+              >
+                <div className="mx-auto w-full max-w-[700px] px-4 py-4">
                 {loadingMessages && messages.length === 0 ? (
                   <p className="py-6 text-center text-xs text-[#8A8A8A]">
                     Loading conversation…
@@ -1687,6 +1731,7 @@ export function MessagesSplitView({
                     </div>
                   </div>
                 )}
+                </div>
               </ScrollArea>
 
               <div className="border-t border-[#E8E4DC] bg-transparent px-4 py-3 space-y-2">
@@ -1834,9 +1879,9 @@ export function MessagesSplitView({
                   required
                 >
                   <option value="">Select a topic</option>
-                  {CONVERSATION_TOPICS.map(({ value, label }) => (
-                    <option key={value} value={value}>
-                      {label}
+                  {CONVERSATION_TOPICS.map((topic) => (
+                    <option key={topic} value={topic}>
+                      {topic}
                     </option>
                   ))}
                 </select>

@@ -11,7 +11,6 @@ import { EventRequestsCard } from "@/components/dashboard/event-requests-card";
 import { OpenItemsSection } from "@/components/dashboard/open-items-section";
 import { CalendarNotices } from "@/components/dashboard/calendar-notices";
 import { loadCalendarNoticeCards } from "@/lib/calendar/load-calendar-notices";
-import { documentAuthorizedForViewer } from "@/lib/documents-tab";
 import { loadVisibleExpenses } from "@/lib/expenses-visibility";
 import { linkUnassignedParentMessages } from "@/lib/messages/deliver-parent-message";
 import { presentMessageForViewer } from "@/lib/messages/parent-message-visibility";
@@ -245,102 +244,6 @@ export default async function DashboardPage() {
       }
     : null;
 
-  // Recent activity: calendar events, expenses, documents (and messages) merged by created_at DESC, limit 10
-  const [
-    recentExpensesRaw,
-    { data: recentDocumentsRaw },
-    { data: recentEventsRaw },
-    { data: recentMessagesRaw },
-  ] = await Promise.all([
-    loadVisibleExpenses(
-      (columns) =>
-        admin
-          .from("expenses")
-          .select(columns)
-          .eq("case_id", caseId)
-          .is("deleted_at", null)
-          .order("created_at", { ascending: false })
-          .limit(40),
-      "id, description, created_at",
-      { userId: user.id, role: membership?.role ?? null }
-    ),
-    admin
-      .from("documents")
-      .select("id, title, created_at, visibility, uploaded_by")
-      .eq("case_id", caseId)
-      .eq("status", "active")
-      .is("deleted_at", null)
-      .order("created_at", { ascending: false })
-      .limit(10),
-    admin
-      .from("calendar_events")
-      .select("id, title, created_at")
-      .eq("case_id", caseId)
-      .is("deleted_at", null)
-      .order("created_at", { ascending: false })
-      .limit(10),
-    admin
-      .from("messages")
-      .select("id, created_at")
-      .eq("case_id", caseId)
-      .order("created_at", { ascending: false })
-      .limit(10),
-  ]);
-
-  type RecentActivityItem = {
-    id: string;
-    type: "expense" | "document" | "event" | "message";
-    label: string;
-    description: string;
-    created_at: string;
-  };
-
-  const recentActivity: RecentActivityItem[] = [
-    ...(recentExpensesRaw.rows ?? []).slice(0, 10).map((e) => ({
-      id: e.id as string,
-      type: "expense" as const,
-      label: "Expense added",
-      description: (e.description as string) ?? "Expense",
-      created_at: e.created_at as string,
-    })),
-    ...(recentDocumentsRaw ?? [])
-      .filter((d) =>
-        documentAuthorizedForViewer(
-          {
-            visibility: (d as { visibility?: string | null }).visibility,
-            uploadedBy: (d as { uploaded_by?: string | null }).uploaded_by,
-          },
-          { userId: user.id, role: membership?.role ?? null }
-        )
-      )
-      .map((d) => ({
-      id: d.id as string,
-      type: "document" as const,
-      label: "Document uploaded",
-      description: (d.title as string) ?? "Document",
-      created_at: d.created_at as string,
-    })),
-    ...(recentEventsRaw ?? []).map((ev) => ({
-      id: ev.id as string,
-      type: "event" as const,
-      label: "Calendar event created",
-      description: (ev.title as string) ?? "Calendar event",
-      created_at: ev.created_at as string,
-    })),
-    ...(recentMessagesRaw ?? []).map((m) => ({
-      id: m.id as string,
-      type: "message" as const,
-      label: "Message sent",
-      description: "Message sent",
-      created_at: m.created_at as string,
-    })),
-  ]
-    .sort(
-      (a, b) =>
-        new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-    )
-    .slice(0, 10);
-
   // Pending event requests (from kids) — only those directed to this parent
   const isPrimary = membership?.is_primary === true;
   const { data: eventRequestsRaw } = await admin
@@ -553,9 +456,7 @@ export default async function DashboardPage() {
         </div>
       )}
 
-      <div className="flex flex-col lg:flex-row lg:items-stretch gap-6 lg:gap-8 max-w-[1600px]">
-        {/* Left: main content ~65% */}
-        <div className="min-w-0 flex-1 lg:max-w-[65%]">
+      <div className="max-w-[1600px]">
           {/* Greeting header */}
           <div className="mb-4">
             <h1 className="font-heading text-xl md:text-2xl font-semibold text-foreground mb-1">
@@ -740,65 +641,6 @@ export default async function DashboardPage() {
               </>
             }
           />
-        </div>
-
-        {/* Right: Recent Activity */}
-        <div className="hidden lg:block lg:w-[35%] lg:max-w-[35%] lg:min-w-0 shrink-0">
-          <Card className="shadow-card border-border rounded-card sticky top-4">
-            <CardHeader className="pb-2 px-4 pt-4">
-              <CardTitle className="font-heading text-lg text-foreground">
-                Recent activity
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="px-4 pb-4">
-              {recentActivity.length === 0 ? (
-                <p className="text-sm text-foreground-secondary">
-                  Nothing yet.
-                </p>
-              ) : (
-                <ul className="space-y-2">
-                  {recentActivity.map((item) => (
-                    <li
-                      key={`${item.type}-${item.id}`}
-                      className="flex items-center justify-between gap-2 text-sm"
-                    >
-                      <div className="flex items-center gap-2 min-w-0">
-                        <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-[#F2F5EF] text-[#5B7A52] shrink-0">
-                          {item.type === "expense" ? (
-                            <span className="text-[11px]">$</span>
-                          ) : item.type === "document" ? (
-                            <span className="text-[11px]">D</span>
-                          ) : item.type === "event" ? (
-                            <span className="text-[11px]">C</span>
-                          ) : (
-                            <span className="text-[11px]">M</span>
-                          )}
-                        </span>
-                        <div className="min-w-0">
-                          <p className="text-[11px] text-foreground-secondary">
-                            {item.label}
-                          </p>
-                          <p className="truncate text-sm text-foreground">
-                            {item.description}
-                          </p>
-                        </div>
-                      </div>
-                      <span className="shrink-0 text-[11px] text-foreground-secondary">
-                        {new Date(item.created_at).toLocaleDateString(
-                          "en-US",
-                          {
-                            month: "short",
-                            day: "numeric",
-                          }
-                        )}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </CardContent>
-          </Card>
-        </div>
       </div>
     </div>
   );

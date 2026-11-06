@@ -17,6 +17,11 @@ import {
   type IncomingAttachment,
   type IncomingContext,
 } from "@/lib/sage/incoming-context";
+import {
+  EXPENSE_REMINDER_REPLY,
+  expenseReminderNotice,
+  inboundExpenseKind,
+} from "@/lib/sage/inbound-expense";
 
 export const INTENTION_KINDS = [
   "decision_input",
@@ -305,9 +310,12 @@ function emptyReply(option: string): boolean {
 export function composeBriefing(reading: CommunicationReading, ctx: IncomingContext): string {
   const parts: string[] = [];
   const notice = isPlanNotice(ctx.text);
+  const expenseReminder = inboundExpenseKind(ctx.text) === "reminder";
 
   if (notice) {
     parts.push(recipientNotice(ctx.text));
+  } else if (expenseReminder) {
+    parts.push(expenseReminderNotice(ctx.text));
   } else {
     const said = [...new Set(reading.intentions.map((item) => sentence(item.summary)).filter(Boolean))];
     if (said.length > 0) parts.push(said.join(" "));
@@ -346,6 +354,8 @@ export function composeBriefing(reading: CommunicationReading, ctx: IncomingCont
 
   if (notice) {
     parts.push(`Reply: ${confirmReply(ctx.text)}`);
+  } else if (expenseReminder) {
+    parts.push(`Reply: ${EXPENSE_REMINDER_REPLY}`);
   } else {
     const options = reading.responseOptions.filter((item) => !emptyReply(item));
     if (options.length > 0) {

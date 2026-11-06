@@ -35,13 +35,11 @@ export type MessageRecord = {
   ai_rewritten_content: string | null;
   ai_classification: string | null;
   category: string | null;
-  conversation_topic?: string | null;
   flags?: { flag_type: string; description: string | null }[];
 };
 
 export type TranscriptOptions = {
   tone_classifications?: boolean;
-  thread_summaries?: boolean;
 };
 
 export async function buildMessageTranscriptPdf(
@@ -51,7 +49,6 @@ export async function buildMessageTranscriptPdf(
   options?: TranscriptOptions
 ): Promise<{ buffer: Buffer; verificationPayload: string }> {
   const includeTone = options?.tone_classifications === true;
-  const includeThreads = options?.thread_summaries === true;
   const doc = new jsPDF();
   const dateRange =
     dateRangeStart && dateRangeEnd
@@ -85,10 +82,6 @@ export async function buildMessageTranscriptPdf(
     y += LINE_HEIGHT;
     doc.text(`Direction: ${m.direction}`, MARGIN, y);
     y += LINE_HEIGHT;
-    if (includeThreads && m.conversation_topic) {
-      doc.text(`Conversation topic: ${m.conversation_topic}`, MARGIN, y);
-      y += LINE_HEIGHT;
-    }
     const content = (m.ai_rewritten_content ?? m.original_content).slice(0, 200) +
       ((m.ai_rewritten_content ?? m.original_content).length > 200 ? "…" : "");
     const contentLines = doc.splitTextToSize(`Content (mediated): ${content}`, CONTENT_WIDTH);

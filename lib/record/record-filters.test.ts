@@ -269,6 +269,24 @@ function run() {
     }),
     "Saturday Pickup Confirmation Request for Kevin"
   );
+  assert.strictEqual(
+    conversationHeading({
+      id: "conv-blank",
+      subject: "  ",
+      topic: "Medical",
+      conversation_number: 4,
+    }),
+    "CNV-004"
+  );
+  assert.strictEqual(
+    conversationHeading({
+      id: "conv-empty",
+      subject: "",
+      topic: "Emergency",
+      conversation_number: null,
+    }),
+    "Conversation"
+  );
 
   console.log("record-filters.test.ts: all assertions passed.");
 }

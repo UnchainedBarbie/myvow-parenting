@@ -67,16 +67,6 @@ const NOT_PASSED = new Set([
 
 const DEFAULT_TIMEZONE = "America/Denver";
 
-const TOPIC_LABELS: Record<string, string> = {
-  medical: "Medical",
-  school: "School",
-  schedule: "Schedule",
-  expenses: "Expenses",
-  expense: "Expenses",
-  general: "General",
-  emergency: "Emergency",
-};
-
 export function zoneOrDenver(timezone: string | null | undefined): string {
   const trimmed = timezone?.trim();
   return trimmed ? trimmed : DEFAULT_TIMEZONE;
@@ -294,10 +284,11 @@ export function senderLine(direction: string, sender: { name: string; email: str
 
 export function conversationHeading(conversation: ConversationRow | undefined): string {
   const subject = conversation?.subject?.trim() || "";
-  const raw = conversation?.topic?.trim() || "";
-  const label = subject || (raw ? TOPIC_LABELS[raw.toLowerCase()] ?? raw : "") || "Conversation";
   const number = formatConversationNumber(conversation?.conversation_number);
-  return number ? `${number} · ${label}` : label;
+  if (number && subject) return `${number} · ${subject}`;
+  if (number) return number;
+  if (subject) return subject;
+  return "Conversation";
 }
 
 export function messageTime(iso: string): number {

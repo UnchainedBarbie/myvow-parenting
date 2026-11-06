@@ -115,25 +115,15 @@ export async function POST(request: NextRequest) {
 
     if (report_type === "communication_report") {
       const includeTone = options?.tone_classifications === true;
-      const includeThreads = options?.thread_summaries === true;
       let query = admin
         .from("messages")
-        .select("id, conversation_id, created_at, direction, original_content, ai_rewritten_content, ai_classification, category")
+        .select("id, created_at, direction, original_content, ai_rewritten_content, ai_classification, category")
         .eq("case_id", case_id)
         .order("created_at", { ascending: true });
       if (start) query = query.gte("created_at", start);
       if (end) query = query.lte("created_at", end);
       const { data: messages } = await query;
       const ids = (messages ?? []).map((m) => m.id);
-      const convIds = [...new Set((messages ?? []).map((m) => (m as { conversation_id?: string | null }).conversation_id).filter(Boolean) as string[])];
-      const topicByConv: Record<string, string> = {};
-      if (includeThreads && convIds.length > 0) {
-        const { data: convs } = await admin.from("conversations").select("id, topic").in("id", convIds);
-        for (const c of convs ?? []) {
-          const tag = (c as { topic?: string | null }).topic?.trim();
-          if (tag) topicByConv[c.id as string] = tag;
-        }
-      }
       const { data: flags } =
         includeTone && ids.length > 0
           ? await admin.from("message_flags").select("message_id, flag_type, description").in("message_id", ids)
@@ -143,11 +133,7 @@ export async function POST(request: NextRequest) {
         if (!flagsByMsg[f.message_id]) flagsByMsg[f.message_id] = [];
         flagsByMsg[f.message_id].push({ flag_type: f.flag_type, description: f.description });
       }
-      const topicLabels: Record<string, string> = { medical: "Medical", school: "School", schedule: "Schedule", expenses: "Expenses", general: "General", emergency: "Emergency", expense: "Expenses" };
       const rows: MessageRecord[] = (messages ?? []).map((m) => {
-        const convId = (m as { conversation_id?: string | null }).conversation_id;
-        const rawTopic = convId ? topicByConv[convId] : null;
-        const conversation_topic = rawTopic ? (topicLabels[rawTopic] ?? rawTopic) : null;
         return {
           id: m.id,
           created_at: m.created_at,
@@ -156,14 +142,12 @@ export async function POST(request: NextRequest) {
           ai_rewritten_content: m.ai_rewritten_content,
           ai_classification: includeTone ? m.ai_classification : null,
           category: m.category,
-          conversation_topic: includeThreads ? conversation_topic : null,
           flags: includeTone ? (flagsByMsg[m.id] ?? []) : [],
         };
       });
       recordCount = rows.length;
       const result = await buildMessageTranscriptPdf(rows, start, end, {
         tone_classifications: includeTone,
-        thread_summaries: includeThreads,
       });
       buffer = result.buffer;
       verificationPayload = result.verificationPayload;

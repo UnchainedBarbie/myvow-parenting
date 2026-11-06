@@ -41,6 +41,7 @@ import {
   parseExpenseAmountFromText,
   userAskedToNotifyCoparent,
 } from "@/lib/expenses-share";
+import { applyInboundExpenseGate } from "@/lib/sage/inbound-expense";
 
 export type ObservationProcessContext = {
   case_id: string;
@@ -131,15 +132,13 @@ export async function processObservation(
     .filter(Boolean)
     .join(" ");
 
-  // Dentist/doctor bills are expenses (medical), not calendar-only medical_update.
-  if (
-    intent.item_type !== "expense" &&
-    (intent.tool_name === "expense" || looksLikeExpenseCommand(messageBodies))
-  ) {
-    intent.item_type = "expense";
-    intent.tool_name = "expense";
-    intent.action_required = true;
-  }
+  // A parent telling Sage to log a bill stays an expense. An inbound reminder of
+  // expenses already recorded does not, and an unclear mention is not logged.
+  const inbound = !isUserCommand({
+    sender: context.plan_sender ?? context.sender,
+    source_type: context.source_type,
+  });
+  applyInboundExpenseGate(intent, messageBodies, inbound);
 
   const childNames = entities.children
     .map((c) => c.name)
@@ -296,10 +295,6 @@ export async function processObservation(
     observation.messages.some((m) => (m.attachments?.length ?? 0) > 0) ||
     /\[Attachment:/i.test(turnText);
 
-  const inbound = !isUserCommand({
-    sender: context.plan_sender ?? context.sender,
-    source_type: context.source_type,
-  });
   const asked = inbound ? detectDetailQuestion(messageBodies) : null;
   const lookupIso =
     resolved_dates.find((d) => d.status === "resolved" && d.iso)?.iso ?? null;
@@ -352,6 +347,7 @@ export async function processObservation(
     })),
     sender: context.plan_sender ?? context.sender,
     source_type: context.source_type,
+    message_text: messageBodies,
     expense_allocation,
     outbound_sources: outboundSources,
     detail_request: asked

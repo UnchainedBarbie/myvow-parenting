@@ -92,14 +92,13 @@ const GENERATED_REPORTS: GeneratedReport[] = [
   {
     id: "communication_report",
     title: "Message Analysis",
-    description: "Message timelines, tone classifications, and thread summaries.",
+    description: "Message timelines and tone classifications.",
     icon: MessageSquare,
     group: "private",
     hasDateRange: true,
     options: [
       { id: "message_timeline", label: "Message timeline", default: true },
       { id: "tone_classifications", label: "Tone classifications per message", default: false },
-      { id: "thread_summaries", label: "Thread summaries", default: false },
     ],
     formats: ["pdf"],
   },

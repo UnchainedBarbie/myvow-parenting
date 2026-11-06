@@ -11,6 +11,7 @@ import {
   reviewFromModelText,
   reviewFromResponse,
   reviewOutboundMessage,
+  reviewSendsWithoutAnotherStep,
   validateSuggestion,
   type OutboundReview,
 } from "@/lib/messages/outbound-review";
@@ -229,6 +230,17 @@ async function main() {
   assert.equal(reviewEditSeed(suggestion), suggestion.suggestion);
   assert.equal(reviewDefaultChoice({ status: "no_change", original: pickup }), "original");
   assert.equal(reviewEditSeed({ status: "no_change", original: pickup }), pickup);
+  const unchanged = { review: { status: "no_change" as const, original: pickup }, receipt: "receipt" };
+  assert.equal(reviewSendsWithoutAnotherStep(unchanged, pickup), true);
+  assert.equal(reviewSendsWithoutAnotherStep(unchanged, `${pickup} Thanks.`), false);
+  assert.equal(reviewSendsWithoutAnotherStep({ ...unchanged, receipt: null }, pickup), false);
+  assert.equal(
+    reviewSendsWithoutAnotherStep(
+      { review: { status: "suggestion", original: pickup, suggestion: "Could you please pick Ashley up at 5 on Friday?" }, receipt: "receipt" },
+      pickup
+    ),
+    false
+  );
   assert.equal(reviewDefaultChoice(throwing), null);
   assert.equal(reviewEditSeed(throwing), pickup);
 

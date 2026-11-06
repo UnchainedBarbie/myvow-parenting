@@ -338,6 +338,19 @@ export function reviewCoversText(review: OutboundReview, text: string): boolean 
   return review.status === "suggestion" && exact === exactReviewText(review.suggestion);
 }
 
+/**
+ * Sage read this exact text and suggested nothing different. The parent's send
+ * press is the approval, so the screen does not ask them to confirm it again.
+ * A suggestion, a failed review, or text the review did not read stays on screen.
+ */
+export function reviewSendsWithoutAnotherStep(reviewed: ReviewedDraft, text: string): boolean {
+  return (
+    reviewed.review.status === "no_change" &&
+    Boolean(reviewed.receipt) &&
+    reviewCoversText(reviewed.review, text)
+  );
+}
+
 /** A review and the receipt the send route needs. A missing receipt means the review did not run. */
 export type ReviewedDraft = {
   review: OutboundReview;

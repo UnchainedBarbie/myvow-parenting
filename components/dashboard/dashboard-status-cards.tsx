@@ -14,6 +14,7 @@ import {
   requestEditReview,
   requestOutboundReviewWithReceipt,
   reviewProofForSend,
+  reviewSendsWithoutAnotherStep,
   type ReviewedDraft,
 } from "@/lib/messages/outbound-review";
 import { nextSendAttempt, type SendAttempt } from "@/lib/messages/send-attempt";
@@ -67,8 +68,13 @@ export function DashboardStatusCards({
     if (!text || reviewingReminder || sendingReminder) return;
     setReviewingReminder(true);
     try {
-      // Review only. Nothing is sent until the parent approves the exact text.
-      setReminderReviewed(await requestOutboundReviewWithReceipt(text));
+      const reviewed = await requestOutboundReviewWithReceipt(text);
+      // The press is the approval. Identical text is not shown again.
+      if (reviewSendsWithoutAnotherStep(reviewed, text)) {
+        await handleSendReminder(text, reviewed);
+        return;
+      }
+      setReminderReviewed(reviewed);
     } finally {
       setReviewingReminder(false);
     }
@@ -83,14 +89,22 @@ export function DashboardStatusCards({
     if (!reminderReviewed || reviewingReminderEdit) return;
     setReviewingReminderEdit(true);
     try {
-      setReminderReviewed(await requestEditReview(reminderReviewed, text));
+      const reviewed = await requestEditReview(reminderReviewed, text);
+      if (reviewSendsWithoutAnotherStep(reviewed, text)) {
+        await handleSendReminder(text, reviewed);
+        return;
+      }
+      setReminderReviewed(reviewed);
     } finally {
       setReviewingReminderEdit(false);
     }
   }
 
-  async function handleSendReminder(finalText: string, options?: { editUnreviewedAck?: boolean }) {
-    const reviewed = reminderReviewed;
+  async function handleSendReminder(
+    finalText: string,
+    reviewed: ReviewedDraft,
+    options?: { editUnreviewedAck?: boolean }
+  ) {
     const text = finalText.trim();
     if (!text || !reviewed) return;
     setSendingReminder(true);
@@ -327,13 +341,26 @@ export function DashboardStatusCards({
             </p>
             {reminderReviewed ? (
               <div className="mt-3">
+                {reminderReviewed.review.status === "suggestion" ? (
+                  <div className="mb-3 space-y-1">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-[#8A8A8A]">
+                      Your message
+                    </p>
+                    <p className="whitespace-pre-wrap rounded-lg border border-[#E8E4DC] bg-white px-3 py-2 text-sm text-[#3D3D3D]">
+                      {reminderReviewed.review.original}
+                    </p>
+                    <p className="text-[11px] text-[#8A8A8A]">
+                      Sage suggests a change. The field below is what will be sent.
+                    </p>
+                  </div>
+                ) : null}
                 <OutboundReviewPanel
                   key={`${reminderReviewed.review.status}:${reminderReviewed.review.original}:${reminderReviewed.receipt ?? ""}`}
                   review={reminderReviewed.review}
                   approveLabel="Send Reminder"
                   busy={sendingReminder}
                   busyLabel="Sending…"
-                  onApprove={(finalText, options) => void handleSendReminder(finalText, options)}
+                  onApprove={(finalText, options) => void handleSendReminder(finalText, reminderReviewed, options)}
                   onReviewEdit={reminderReviewed.receipt ? (text) => void handleReviewReminderEdit(text) : undefined}
                   reviewingEdit={reviewingReminderEdit}
                   onCancel={() => {
@@ -345,13 +372,18 @@ export function DashboardStatusCards({
             ) : (
             <>
             <div className="mt-3 space-y-2">
-              <Label className="text-xs font-medium text-[#3D3D3D]">
-                Message
+              <Label
+                htmlFor="expense-reminder-text"
+                className="text-[10px] font-semibold uppercase tracking-wide text-[#8A8A8A]"
+              >
+                This exact text will be sent
               </Label>
               <textarea
+                id="expense-reminder-text"
                 value={reminderText}
                 onChange={(e) => setReminderText(e.target.value)}
-                className="w-full min-h-[96px] rounded-lg border border-[#E8E4DC] bg-white px-3 py-2 text-sm text-[#3D3D3D] placeholder:text-[#B0A899] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E]"
+                disabled={reviewingReminder || sendingReminder}
+                className="w-full min-h-[96px] rounded-lg border border-[#E8E4DC] bg-white px-3 py-2 text-sm text-[#3D3D3D] placeholder:text-[#B0A899] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E] disabled:opacity-60"
               />
               <p className="mt-1 flex items-center gap-1.5 text-[11px] text-[#8A8A8A]">
                 <span className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-[#E8E4DC] bg-[#F2F5EF]">
@@ -366,7 +398,7 @@ export function DashboardStatusCards({
                     />
                   </svg>
                 </span>
-                <span>This message will be reviewed by Sage before delivery.</span>
+                <span>Sage reviews this when you send. Nothing is sent until you press Send Reminder.</span>
               </p>
             </div>
             <div className="mt-4 flex justify-end gap-2">
@@ -375,7 +407,7 @@ export function DashboardStatusCards({
                 variant="outline"
                 size="sm"
                 className="h-8 rounded-full text-xs"
-                disabled={sendingReminder}
+                disabled={sendingReminder || reviewingReminder}
                 onClick={() => setShowReminderModal(false)}
               >
                 Cancel
@@ -384,10 +416,10 @@ export function DashboardStatusCards({
                 type="button"
                 size="sm"
                 className="h-8 rounded-full bg-[#5B7A52] text-xs text-white hover:bg-[#476242]"
-                disabled={reviewingReminder || !reminderText.trim()}
+                disabled={reviewingReminder || sendingReminder || !reminderText.trim()}
                 onClick={() => void handleReviewReminder()}
               >
-                {reviewingReminder ? "Reviewing…" : "Review message"}
+                {sendingReminder ? "Sending…" : reviewingReminder ? "Reviewing…" : "Send Reminder"}
               </Button>
             </div>
             </>

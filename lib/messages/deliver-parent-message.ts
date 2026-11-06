@@ -185,6 +185,11 @@ async function conversationForParents(
   return { id: row.id, subject: (row.subject ?? "").trim(), emailThreadId: row.email_thread_id ?? null };
 }
 
+function isProposalIdConflict(error: { code?: string; message?: string } | null | undefined): boolean {
+  if (!error) return false;
+  return error.code === "23505" || /duplicate key/i.test(error.message ?? "");
+}
+
 async function savedProposalMessage(
   admin: Admin,
   caseId: string,
@@ -584,32 +589,34 @@ export async function deliverParentMessage(
   if (paused) return { ok: false, status: 403, message: paused };
 
   const proposalId = (input.proposalId ?? "").trim();
+  const replaySaved = async (
+    existing: NonNullable<Awaited<ReturnType<typeof savedProposalMessage>>>
+  ) => {
+    try {
+      await announceSavedMessage(admin, {
+        caseId: input.caseId,
+        senderId: input.senderId,
+        messageId: existing.id,
+        conversationId: existing.conversationId,
+        runInBackground: input.runInBackground,
+        readMessage: input.readMessage,
+      });
+    } catch (error) {
+      console.error("[deliver-parent-message] announce on retry:", error);
+    }
+    return {
+      ok: true as const,
+      messageId: existing.id,
+      deliveryStatus: existing.deliveryStatus,
+      recipientEmail,
+      recipientUserId: null as string | null,
+      created: false,
+      attachment: await savedAttachmentOutcome(admin, existing.id, input.attachment ?? null),
+    };
+  };
   if (proposalId) {
     const existing = await savedProposalMessage(admin, input.caseId, proposalId);
-    if (existing) {
-      // The saved message may predate its notice if the first attempt stopped early. Announcing is idempotent.
-      try {
-        await announceSavedMessage(admin, {
-          caseId: input.caseId,
-          senderId: input.senderId,
-          messageId: existing.id,
-          conversationId: existing.conversationId,
-          runInBackground: input.runInBackground,
-          readMessage: input.readMessage,
-        });
-      } catch (error) {
-        console.error("[deliver-parent-message] announce on retry:", error);
-      }
-      return {
-        ok: true,
-        messageId: existing.id,
-        deliveryStatus: existing.deliveryStatus,
-        recipientEmail,
-        recipientUserId: null,
-        created: false,
-        attachment: await savedAttachmentOutcome(admin, existing.id, input.attachment ?? null),
-      };
-    }
+    if (existing) return replaySaved(existing);
   }
 
   const directory = await parentDirectory(admin, input.caseId, input.senderId);
@@ -671,9 +678,18 @@ export async function deliverParentMessage(
   });
 
   let inserted = await admin.from("messages").insert(fields).select("id").single();
+  if (proposalId && inserted.error && isProposalIdConflict(inserted.error)) {
+    const existing = await savedProposalMessage(admin, input.caseId, proposalId);
+    if (existing) return replaySaved(existing);
+    return { ok: false, status: 409, message: "This message was already sent." };
+  }
   for (let attempt = 0; attempt < 2 && inserted.error; attempt += 1) {
     const message = inserted.error.message ?? "";
-    if (/sage_proposal_id/.test(message) && "sage_proposal_id" in fields) {
+    if (
+      /sage_proposal_id/.test(message) &&
+      !isProposalIdConflict(inserted.error) &&
+      "sage_proposal_id" in fields
+    ) {
       delete fields.sage_proposal_id;
     } else if (/recipient_email/.test(message) && "recipient_email" in fields) {
       delete fields.recipient_email;

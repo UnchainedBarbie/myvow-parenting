@@ -435,6 +435,40 @@ async function main() {
     assert.equal(h.read.length, 1);
   }
 
+  // A lookup that misses, then a unique violation, returns the message that won. It does not insert another.
+  {
+    const db = household();
+    const h = harness();
+    db.uniqueKeys.messages = [["sage_proposal_id"]];
+    db.blindSelects.messages = 1;
+    db.seed("messages", [
+      {
+        id: "msg-winner",
+        case_id: CASE,
+        sage_proposal_id: "prop-race",
+        delivery_status: "sent",
+        conversation_id: null,
+        sender_id: ASHLEY,
+        direction: "outgoing",
+        original_content: "already saved",
+      },
+    ]);
+    const lost = await send(db, h, {
+      senderId: ASHLEY,
+      to: "kevin.reply@example.com",
+      body: "already saved",
+      proposalId: "prop-race",
+    });
+    await h.settle();
+    assert.ok(lost.ok);
+    if (lost.ok) {
+      assert.equal(lost.created, false);
+      assert.equal(lost.messageId, "msg-winner");
+    }
+    assert.equal(rows(db, "messages").length, 1);
+    assert.equal(rows(db, "messages")[0].sage_proposal_id, "prop-race");
+  }
+
   // --- Sage send, Kevin (non-primary) to Ashley (primary) -------------------------------------
   {
     const db = household();

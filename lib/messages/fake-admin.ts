@@ -15,6 +15,8 @@ export class FakeDb {
   failInserts: Record<string, number> = {};
   /** Column sets that must be unique per table, to mimic unique indexes. */
   uniqueKeys: Record<string, string[][]> = {};
+  /** The next N selects from a table return no rows, so a later insert can lose a race. */
+  blindSelects: Record<string, number> = {};
 
   table(name: string): Row[] {
     if (!this.tables[name]) this.tables[name] = [];
@@ -174,6 +176,12 @@ class FakeQuery implements PromiseLike<{ data: unknown; error: { message: string
       const rows = this.matches();
       this.db.tables[this.name] = this.db.table(this.name).filter((row) => !rows.includes(row));
       return { data: null, error: null };
+    }
+    if ((this.db.blindSelects[this.name] ?? 0) > 0) {
+      this.db.blindSelects[this.name] -= 1;
+      if (this.wantsOne === "single") return { data: null, error: { message: "no rows" } };
+      if (this.wantsOne === "maybe") return { data: null, error: null };
+      return { data: [], error: null };
     }
     const unknown = this.filtered.find((column) => missing.includes(column));
     if (unknown) {

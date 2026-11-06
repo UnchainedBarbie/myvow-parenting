@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
 import { presentMessageForViewer } from "@/lib/messages/parent-message-visibility";
+import {
+  parseChildIds,
+  replaceConversationChildren,
+} from "@/lib/messages/conversation-children";
+import { isMissingRelation } from "@/lib/record/record-categories";
 
 export async function GET(
   _request: NextRequest,
@@ -121,11 +126,20 @@ export async function PATCH(
 
     const admin = getServiceRoleClient();
     const conversationId = params.id;
-    const body = (await request.json().catch(() => ({}))) as { subject?: unknown };
-    const subject = typeof body.subject === "string" ? body.subject.trim() : "";
-    if (!subject) {
+    const body = (await request.json().catch(() => ({}))) as {
+      subject?: unknown;
+      child_ids?: unknown;
+    };
+    const hasSubject = Object.prototype.hasOwnProperty.call(body, "subject");
+    const hasChildren = Array.isArray(body.child_ids);
+    if (!hasSubject && !hasChildren) {
+      return NextResponse.json({ error: "Nothing to update." }, { status: 400 });
+    }
+    const subject = hasSubject && typeof body.subject === "string" ? body.subject.trim() : "";
+    if (hasSubject && !subject) {
       return NextResponse.json({ error: "A title is required." }, { status: 400 });
     }
+    const childIds = hasChildren ? parseChildIds(body.child_ids) : null;
 
     const { data: conv, error: convError } = await admin
       .from("conversations")
@@ -149,20 +163,61 @@ export async function PATCH(
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
+    if (childIds && childIds.length > 0) {
+      const { data: caseChildren, error: childError } = await admin
+        .from("children")
+        .select("id")
+        .eq("case_id", conv.case_id)
+        .is("deleted_at", null)
+        .in("id", childIds);
+      if (childError) {
+        return NextResponse.json({ error: childError.message }, { status: 500 });
+      }
+      const found = new Set((caseChildren ?? []).map((row) => (row as { id: string }).id));
+      if (childIds.some((id) => !found.has(id))) {
+        return NextResponse.json({ error: "That child is not on this case." }, { status: 400 });
+      }
+    }
+
+    if (childIds) {
+      const replaced = await replaceConversationChildren(admin, conversationId, childIds);
+      if (replaced.error) {
+        const status = replaced.missing || isMissingRelation({ message: replaced.error }) ? 503 : 500;
+        return NextResponse.json(
+          {
+            error:
+              status === 503
+                ? "Assigning children needs the conversation children update applied first."
+                : replaced.error,
+          },
+          { status }
+        );
+      }
+    }
+
+    const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    if (hasSubject) updates.subject = subject;
+    if (childIds) updates.child_id = childIds[0] ?? null;
+
     const { data: updated, error: updateError } = await admin
       .from("conversations")
-      .update({ subject, updated_at: new Date().toISOString() })
+      .update(updates)
       .eq("id", conversationId)
-      .select("id, subject")
+      .select("id, subject, child_id")
       .single();
     if (updateError || !updated) {
       return NextResponse.json(
-        { error: updateError?.message ?? "Could not rename the conversation." },
+        { error: updateError?.message ?? "Could not update the conversation." },
         { status: 500 }
       );
     }
 
-    return NextResponse.json({ conversation: updated });
+    return NextResponse.json({
+      conversation: {
+        ...updated,
+        ...(childIds ? { child_ids: childIds } : {}),
+      },
+    });
   } catch (e) {
     return NextResponse.json(
       { error: e instanceof Error ? e.message : "Could not rename the conversation." },

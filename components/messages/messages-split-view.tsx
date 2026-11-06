@@ -32,6 +32,8 @@ import { ConversationCategories } from "./conversation-categories";
 import { RECORD_CATEGORIES, type RecordCategoryId } from "@/lib/record/record-categories";
 import { latestThreadPreview } from "@/lib/messages/thread-preview";
 import { sageChatHref } from "@/lib/sage-sessions-client";
+import { assignedChildIds } from "@/lib/messages/conversation-children";
+import { ChildMultiSelect } from "@/components/documents/child-multi-select";
 
 type ChildSummary = { id: string; first_name: string };
 
@@ -56,6 +58,7 @@ type ConversationSummary = {
   case_id: string;
   subject: string;
   child_id: string | null;
+  child_ids?: string[];
   created_at: string;
   updated_at: string;
   last_message_preview: string;
@@ -114,6 +117,8 @@ export function MessagesSplitView({
   const [renamingTitle, setRenamingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
   const [savingTitle, setSavingTitle] = useState(false);
+  const [childEdit, setChildEdit] = useState<string[] | null>(null);
+  const [savingChildren, setSavingChildren] = useState(false);
   const [dismissedSuggestions, setDismissedSuggestions] = useState<
     Record<string, { expense?: boolean; calendar?: boolean }>
   >({});
@@ -535,6 +540,7 @@ export function MessagesSplitView({
 
   useEffect(() => {
     setRenamingTitle(false);
+    setChildEdit(null);
     if (!selectedId) {
       setConversationSettings(null);
       setActivePause(null);
@@ -561,10 +567,13 @@ export function MessagesSplitView({
     if (search.trim()) {
       const q = search.toLowerCase();
       list = list.filter((c) => {
-        const childName = c.child_id ? childMap[c.child_id] ?? "" : "General";
+        const childNames = assignedChildIds({ childIds: c.child_ids, childId: c.child_id })
+          .map((id) => childMap[id] ?? "")
+          .filter(Boolean)
+          .join(" ");
         const text = [
           c.subject,
-          childName,
+          childNames,
           coparentName ?? "",
           c.last_message_preview ?? "",
         ]
@@ -577,7 +586,9 @@ export function MessagesSplitView({
       list = list.filter((c) => (c.category ?? "General") === filterTopic);
     }
     if (filterChild !== "all") {
-      list = list.filter((c) => c.child_id === filterChild);
+      list = list.filter((c) =>
+        assignedChildIds({ childIds: c.child_ids, childId: c.child_id }).some((id) => id === filterChild)
+      );
     }
     if (filterStatus === "open") {
       list = list.filter((c) => (c.status ?? "open") === "open");
@@ -592,10 +603,50 @@ export function MessagesSplitView({
   }, [conversations, search, filterTopic, filterChild, filterStatus, childMap, coparentName]);
 
   const activeConversation = conversations.find((c) => c.id === selectedId) ?? null;
+  const savedChildIds = activeConversation
+    ? assignedChildIds({ childIds: activeConversation.child_ids, childId: activeConversation.child_id })
+    : [];
+  const shownChildIds = childEdit ?? savedChildIds;
   const activeChildName =
-    activeConversation?.child_id && childMap[activeConversation.child_id]
-      ? childMap[activeConversation.child_id]
-      : null;
+    savedChildIds
+      .map((id) => childMap[id])
+      .filter(Boolean)
+      .join(", ") || null;
+
+  function chooseChildren(ids: string[]) {
+    const saved = [...savedChildIds].sort();
+    const next = [...ids].sort();
+    const same = saved.length === next.length && saved.every((id, index) => id === next[index]);
+    setChildEdit(same ? null : ids);
+  }
+
+  async function saveChildren() {
+    if (!activeConversation || !childEdit || savingChildren) return;
+    setSavingChildren(true);
+    try {
+      const res = await fetch(`/api/messages/conversations/${activeConversation.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ child_ids: childEdit }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showErrorToast((data as { error?: string }).error ?? "Could not update the children.");
+        return;
+      }
+      const ids = childEdit;
+      setConversations((current) =>
+        current.map((conversation) =>
+          conversation.id === activeConversation.id
+            ? { ...conversation, child_id: ids[0] ?? null, child_ids: ids }
+            : conversation
+        )
+      );
+      setChildEdit(null);
+    } finally {
+      setSavingChildren(false);
+    }
+  }
 
   async function handleSelectConversation(id: string) {
     setSelectedId(id);
@@ -954,7 +1005,10 @@ export function MessagesSplitView({
                 const isDeletable = (c.message_count ?? 0) === 0;
                 const isEmergencyConversation =
                   c.has_emergency === true || c.category === "Emergency";
-                const childLabel = c.child_id ? childMap[c.child_id] ?? null : null;
+                const childLabel = assignedChildIds({ childIds: c.child_ids, childId: c.child_id })
+                  .map((id) => childMap[id])
+                  .filter(Boolean)
+                  .join(", ");
                 return (
                   <div
                     key={c.id}
@@ -1202,8 +1256,35 @@ export function MessagesSplitView({
                       {activeConversation.subject}
                     </p>
                   )}
-                  {activeChildName ? (
-                    <p className="text-[11px] text-[#8A8A8A]">{activeChildName}</p>
+                  {children.length > 0 ? (
+                    <div className="mt-1 flex min-w-0 flex-wrap items-center gap-2">
+                      <ChildMultiSelect
+                        id="conversation-children"
+                        children={children}
+                        value={shownChildIds}
+                        onChange={chooseChildren}
+                        className="min-w-0 w-full max-w-[220px]"
+                      />
+                      {childEdit ? (
+                        <>
+                          <button
+                            type="button"
+                            disabled={savingChildren}
+                            onClick={() => void saveChildren()}
+                            className="shrink-0 text-[12px] text-[#5B7A52] hover:text-[#3D3D3D] disabled:opacity-50"
+                          >
+                            {savingChildren ? "Saving…" : "Save"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setChildEdit(null)}
+                            className="shrink-0 text-[12px] text-[#8A8A8A] hover:text-[#3D3D3D]"
+                          >
+                            Cancel
+                          </button>
+                        </>
+                      ) : null}
+                    </div>
                   ) : null}
                 </div>
               </div>

@@ -9,6 +9,7 @@ import {
   unassignedParentRepair,
   type RepairConversation,
 } from "@/lib/messages/parent-message-visibility";
+import { proposeConversationChildren } from "@/lib/messages/conversation-children";
 import { parentDirectory, type ParentDirectory } from "@/lib/messages/case-parents";
 import { messageRefPattern, withMessageRef } from "@/lib/messages/incoming-notice";
 import { resolveReceivingParent } from "@/lib/messages/receiving-parent";
@@ -116,6 +117,7 @@ async function conversationForParents(
     subject?: string | null;
     conversationId?: string | null;
     emailThreadId?: string | null;
+    message?: string | null;
   }
 ): Promise<
   { id: string; subject: string; emailThreadId: string | null } | { error: string; status: number }
@@ -154,6 +156,7 @@ async function conversationForParents(
     };
   }
   const subject = (input.subject ?? "").trim() || "Message";
+  const childIds = await proposeConversationChildren(admin, input.caseId, input.message ?? "");
   const created = await admin
     .from("conversations")
     .insert({
@@ -163,7 +166,7 @@ async function conversationForParents(
       category: "General",
       created_by: input.senderId,
       coparent_email: input.recipientEmail.trim(),
-      child_id: null,
+      child_id: childIds[0] ?? null,
     })
     .select("id, subject, email_thread_id")
     .single();
@@ -171,6 +174,14 @@ async function conversationForParents(
     return { error: created.error?.message ?? "The conversation could not be saved.", status: 500 };
   }
   const row = created.data as { id: string; subject?: string | null; email_thread_id?: string | null };
+  if (childIds.length > 0) {
+    const linked = await admin.from("conversation_children").insert(
+      childIds.map((child_id) => ({ conversation_id: row.id, child_id }))
+    );
+    if (linked.error) {
+      console.error("[deliver-parent-message] conversation_children insert failed:", linked.error.message);
+    }
+  }
   return { id: row.id, subject: (row.subject ?? "").trim(), emailThreadId: row.email_thread_id ?? null };
 }
 
@@ -645,6 +656,7 @@ export async function deliverParentMessage(
     subject: input.subject,
     conversationId: input.conversationId,
     emailThreadId: input.emailThreadId,
+    message: body,
   });
   if ("error" in conversation) {
     return { ok: false, status: conversation.status, message: conversation.error };

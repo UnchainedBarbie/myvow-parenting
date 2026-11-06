@@ -3,6 +3,7 @@ import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
 import { linkUnassignedParentMessages } from "@/lib/messages/deliver-parent-message";
 import { presentMessageForViewer } from "@/lib/messages/parent-message-visibility";
 import { latestThreadPreview } from "@/lib/messages/thread-preview";
+import { assignedChildIds } from "@/lib/messages/conversation-children";
 import { isMissingRelation, isRecordCategoryId } from "@/lib/record/record-categories";
 
 const ALLOWED_TOPICS = new Set([
@@ -102,6 +103,22 @@ export async function GET() {
     }
 
     const convIds = conversations.map((c) => c.id);
+    const childIdsByConversation = new Map<string, string[]>();
+    const { data: childRows, error: childLinkError } = await admin
+      .from("conversation_children")
+      .select("conversation_id, child_id")
+      .in("conversation_id", convIds);
+    if (childLinkError && !isMissingRelation(childLinkError)) {
+      return NextResponse.json({ error: childLinkError.message }, { status: 500 });
+    }
+    for (const row of childRows ?? []) {
+      const conversationId = (row as { conversation_id?: string }).conversation_id;
+      const childId = (row as { child_id?: string }).child_id;
+      if (!conversationId || !childId) continue;
+      const list = childIdsByConversation.get(conversationId) ?? [];
+      list.push(childId);
+      childIdsByConversation.set(conversationId, list);
+    }
 
     const { data: messagesRaw, error: msgError } = await admin
       .from("messages")
@@ -248,6 +265,10 @@ export async function GET() {
         case_id: c.case_id,
         subject: c.subject,
         child_id: c.child_id,
+        child_ids: assignedChildIds({
+          childIds: childIdsByConversation.get(c.id) ?? [],
+          childId: c.child_id,
+        }),
         created_at: c.created_at,
         updated_at: c.updated_at,
         last_message_preview: lastPreview,
@@ -366,6 +387,19 @@ export async function POST(request: NextRequest) {
         { error: error.message },
         { status: 500 }
       );
+    }
+
+    const createdChildId = (data as { id?: string; child_id?: string | null } | null)?.child_id;
+    if (data?.id && createdChildId) {
+      const linked = await admin
+        .from("conversation_children")
+        .insert({ conversation_id: data.id, child_id: createdChildId });
+      if (linked.error && !isMissingRelation(linked.error)) {
+        return NextResponse.json(
+          { conversation: data, children_error: linked.error.message },
+          { status: 201 }
+        );
+      }
     }
 
     const recordCategories = Array.isArray(record_categories)

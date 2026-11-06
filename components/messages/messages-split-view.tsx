@@ -982,7 +982,7 @@ export function MessagesSplitView({
                               e.stopPropagation();
                               setMenuOpenId(menuOpenId === c.id ? null : c.id);
                             }}
-                            className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded hover:bg-[#E8E4DC] text-[#B0A899] hover:text-[#6A7A6E]"
+                            className="shrink-0 p-0.5 rounded text-[#8A8A8A] opacity-0 transition-opacity hover:bg-[#E8E4DC] hover:text-[#3D3D3D] group-hover:opacity-100"
                             aria-label="Conversation options"
                             aria-expanded={menuOpenId === c.id}
                           >
@@ -1149,14 +1149,23 @@ export function MessagesSplitView({
                   ) : null}
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={() => void startReply()}
-                disabled={replyOpening}
-                className="shrink-0 rounded-full border border-[#E8E4DC] bg-[#F2F5EF] px-3 py-1 text-xs font-medium text-[#5B7A52] hover:bg-[#E8EDE3] disabled:opacity-60"
-              >
-                {replyOpening ? "Opening…" : "Reply"}
-              </button>
+              <div className="flex shrink-0 items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setConfirmArchiveOpen(true)}
+                  className="text-[12px] text-[#8A8A8A] hover:text-[#3D3D3D] underline-offset-2 hover:underline"
+                >
+                  {activeConversation.status === "archived" ? "Unarchive" : "Archive"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void startReply()}
+                  disabled={replyOpening}
+                  className="rounded-full border border-[#E8E4DC] bg-[#F2F5EF] px-3 py-1 text-xs font-medium text-[#5B7A52] hover:bg-[#E8EDE3] disabled:opacity-60"
+                >
+                  {replyOpening ? "Opening…" : "Reply"}
+                </button>
+              </div>
             </div>
             {coolOffActive && (
               <div className="border-b border-[#E8E4DC] bg-[#F2F5EF] px-4 py-2 text-[11px] text-[#3D3D3D]">

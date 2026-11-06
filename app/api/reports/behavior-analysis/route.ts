@@ -227,21 +227,17 @@ export async function POST(request: NextRequest) {
       )
     );
 
-    let conversationsById: Record<
-      string,
-      { topic: string | null; category: string | null }
-    > = {};
+    let conversationsById: Record<string, { topic: string | null }> = {};
 
     if (convIds.length > 0) {
       const { data: conversations } = await admin
         .from("conversations")
-        .select("id, topic, category")
+        .select("id, topic")
         .in("id", convIds);
       for (const c of conversations ?? []) {
         const id = (c as { id: string }).id;
         conversationsById[id] = {
           topic: (c as { topic?: string | null }).topic ?? null,
-          category: (c as { category?: string | null }).category ?? null,
         };
       }
     }
@@ -326,7 +322,6 @@ export async function POST(request: NextRequest) {
             delivery_status: m.delivery_status,
             current_status: m.current_status,
             topic: convMeta?.topic ?? null,
-            conversation_category: convMeta?.category ?? null,
             flags: flagsByMessageId[m.id as string] ?? [],
           };
         }),

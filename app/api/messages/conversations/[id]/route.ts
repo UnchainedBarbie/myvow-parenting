@@ -25,7 +25,7 @@ export async function GET(
 
     const { data: conv, error: convError } = await admin
       .from("conversations")
-      .select("id, case_id, subject, child_id, category, created_by, created_at, updated_at")
+      .select("id, case_id, subject, child_id, created_by, created_at, updated_at")
       .eq("id", conversationId)
       .maybeSingle();
 

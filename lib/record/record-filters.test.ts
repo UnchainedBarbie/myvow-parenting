@@ -256,7 +256,6 @@ function run() {
       id: "conv-1",
       subject: "Saturday Pickup Confirmation Request to Kevin",
       topic: "General",
-      category: "General",
       conversation_number: 4,
     }),
     "CNV-004 · Saturday Pickup Confirmation Request to Kevin"
@@ -266,7 +265,6 @@ function run() {
       id: "conv-old",
       subject: "Saturday Pickup Confirmation Request for Kevin",
       topic: "General",
-      category: "General",
       conversation_number: null,
     }),
     "Saturday Pickup Confirmation Request for Kevin"

@@ -3,7 +3,7 @@ import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
 import { linkUnassignedParentMessages } from "@/lib/messages/deliver-parent-message";
 import { presentMessageForViewer } from "@/lib/messages/parent-message-visibility";
 import { latestThreadPreview } from "@/lib/messages/thread-preview";
-import { assignedChildIds } from "@/lib/messages/conversation-children";
+import { assignedChildIds } from "@/lib/messages/conversation-child-ids";
 import { isMissingRelation, isRecordCategoryId } from "@/lib/record/record-categories";
 
 const ALLOWED_TOPICS = new Set([
@@ -20,7 +20,6 @@ type ConversationRow = {
   case_id: string;
   subject: string;
   child_id: string | null;
-  category: string | null;
   topic: string | null;
   created_at: string;
   updated_at: string;
@@ -75,7 +74,7 @@ export async function GET() {
     const { data: conversationsRaw, error: convError } = await admin
       .from("conversations")
       .select(
-        "id, case_id, subject, child_id, category, topic, created_at, updated_at, status"
+        "id, case_id, subject, child_id, topic, created_at, updated_at, status"
       )
       .eq("case_id", caseId)
       .order("updated_at", { ascending: false });
@@ -224,8 +223,7 @@ export async function GET() {
       ).length;
       const lastPreview = latest.preview;
 
-      // Topic/category from DB (conversations_topic_check allows title case only)
-      const rawTopicTag = (c.topic ?? c.category ?? "General").trim();
+      const rawTopicTag = (c.topic ?? "General").trim();
       const category: string = ALLOWED_TOPICS.has(rawTopicTag)
         ? rawTopicTag
         : "General";
@@ -375,7 +373,6 @@ export async function POST(request: NextRequest) {
         case_id: caseId,
         subject: trimmedSubject,
         child_id: child_id || null,
-        category: topicValue,
         topic: topicValue,
         created_by: user.id,
       })

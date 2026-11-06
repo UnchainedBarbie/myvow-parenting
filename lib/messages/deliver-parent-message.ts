@@ -163,7 +163,6 @@ async function conversationForParents(
       case_id: input.caseId,
       subject,
       topic: "General",
-      category: "General",
       created_by: input.senderId,
       coparent_email: input.recipientEmail.trim(),
       child_id: childIds[0] ?? null,

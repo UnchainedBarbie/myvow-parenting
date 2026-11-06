@@ -32,7 +32,7 @@ import { ConversationCategories } from "./conversation-categories";
 import { RECORD_CATEGORIES, type RecordCategoryId } from "@/lib/record/record-categories";
 import { latestThreadPreview } from "@/lib/messages/thread-preview";
 import { sageChatHref } from "@/lib/sage-sessions-client";
-import { assignedChildIds } from "@/lib/messages/conversation-children";
+import { assignedChildIds } from "@/lib/messages/conversation-child-ids";
 import { ChildMultiSelect } from "@/components/documents/child-multi-select";
 
 type ChildSummary = { id: string; first_name: string };
@@ -717,12 +717,10 @@ export function MessagesSplitView({
     if (!newSubject.trim() || !newTopic) return;
     setCreating(true);
     try {
-      // When "This is an emergency communication" is checked, set topic/category to 'Emergency' (title case per DB constraint).
       const topicValue = newIsEmergency ? "Emergency" : newTopic;
       const body = {
         subject: newSubject.trim(),
         child_id: newChildId === "general" ? null : newChildId,
-        category: topicValue,
         topic: topicValue,
         is_emergency: newIsEmergency,
         record_categories: newRecordCategories,

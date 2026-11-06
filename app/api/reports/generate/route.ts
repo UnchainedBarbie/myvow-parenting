@@ -128,9 +128,9 @@ export async function POST(request: NextRequest) {
       const convIds = [...new Set((messages ?? []).map((m) => (m as { conversation_id?: string | null }).conversation_id).filter(Boolean) as string[])];
       const topicByConv: Record<string, string> = {};
       if (includeThreads && convIds.length > 0) {
-        const { data: convs } = await admin.from("conversations").select("id, topic, category").in("id", convIds);
+        const { data: convs } = await admin.from("conversations").select("id, topic").in("id", convIds);
         for (const c of convs ?? []) {
-          const tag = (c as { topic?: string | null; category?: string | null }).topic ?? (c as { category?: string | null }).category;
+          const tag = (c as { topic?: string | null }).topic?.trim();
           if (tag) topicByConv[c.id as string] = tag;
         }
       }

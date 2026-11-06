@@ -110,7 +110,7 @@ export function DashboardStatusCards({
           body: JSON.stringify({
             subject: "Expense Reminder",
             child_id: null,
-            category: "expense",
+            topic: "Expenses",
           }),
         });
         const convData = await convRes.json().catch(() => ({}));
@@ -150,6 +150,8 @@ export function DashboardStatusCards({
       setShowReminderModal(false);
       setReminderReviewed(null);
       showSuccessToast("Reminder sent");
+    } catch (error) {
+      showErrorToast(error instanceof Error ? error.message : "Could not send reminder.");
     } finally {
       setSendingReminder(false);
     }

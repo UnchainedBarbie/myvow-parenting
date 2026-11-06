@@ -231,7 +231,7 @@ export async function loadCommunicationRecord(
 
   const { data: conversationRows, error: conversationError } = await admin
     .from("conversations")
-    .select("id, topic, category, subject, conversation_number")
+    .select("id, topic, subject, conversation_number")
     .eq("case_id", caseId);
   if (conversationError) {
     console.error("[record] conversations", conversationError);

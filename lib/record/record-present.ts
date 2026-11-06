@@ -38,7 +38,6 @@ export type MessageRow = {
 export type ConversationRow = {
   id: string;
   topic: string | null;
-  category: string | null;
   subject: string | null;
   conversation_number?: number | null;
 };
@@ -295,7 +294,7 @@ export function senderLine(direction: string, sender: { name: string; email: str
 
 export function conversationHeading(conversation: ConversationRow | undefined): string {
   const subject = conversation?.subject?.trim() || "";
-  const raw = conversation?.topic?.trim() || conversation?.category?.trim() || "";
+  const raw = conversation?.topic?.trim() || "";
   const label = subject || (raw ? TOPIC_LABELS[raw.toLowerCase()] ?? raw : "") || "Conversation";
   const number = formatConversationNumber(conversation?.conversation_number);
   return number ? `${number} · ${label}` : label;

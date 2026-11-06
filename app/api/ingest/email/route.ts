@@ -313,7 +313,6 @@ async function resolveOrCreateConversation(
         case_id: caseId,
         subject: createdSubject,
         topic: "General",
-        category: "General",
         created_by: visibleTo,
         coparent_email: coparentEmail,
         email_thread_id: thread.messageId,

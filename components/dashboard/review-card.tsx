@@ -1,13 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
-type InboxItemType = "expense" | "document" | "calendar_event" | "message" | "other";
+export type InboxItemType = "expense" | "document" | "calendar_event" | "message" | "other";
 
 type InboxItem = {
   id: string;
@@ -45,7 +43,7 @@ function formatRelativeTime(iso: string): string {
   return `${diffWeeks} week${diffWeeks === 1 ? "" : "s"} ago`;
 }
 
-function normalizeInboxType(item: { item_type?: string | null; ai_type?: string | null }): InboxItemType {
+export function normalizeInboxType(item: { item_type?: string | null; ai_type?: string | null }): InboxItemType {
   const raw = (item.item_type ?? "").toString().toLowerCase();
   if (raw === "expense") return "expense";
   if (raw === "document") return "document";
@@ -74,21 +72,50 @@ function getAcceptDestination(type: InboxItemType): string | null {
   return null;
 }
 
-export function ReviewCard() {
+type InboxReviewState = {
+  items: InboxItem[];
+  loading: boolean;
+  error: string | null;
+  dismissingId: string | null;
+  reload: () => Promise<void>;
+  accept: (item: InboxItem) => Promise<void>;
+  dismiss: (item: InboxItem) => Promise<void>;
+};
+
+const InboxReviewContext = createContext<InboxReviewState | null>(null);
+
+export function InboxReviewProvider({ children }: { children: ReactNode }) {
+  const state = useInboxReviewState();
+  return <InboxReviewContext.Provider value={state}>{children}</InboxReviewContext.Provider>;
+}
+
+export function useInboxReview(): InboxReviewState {
+  const state = useContext(InboxReviewContext);
+  if (!state) throw new Error("Review items are unavailable.");
+  return state;
+}
+
+function useInboxReviewState(): InboxReviewState {
   const router = useRouter();
   const [items, setItems] = useState<InboxItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [dismissingId, setDismissingId] = useState<string | null>(null);
 
   async function fetchInbox() {
     setLoading(true);
     try {
       const res = await fetch("/api/inbox");
-      if (!res.ok) return;
+      if (!res.ok) {
+        setError("Couldn't load items waiting for review.");
+        return;
+      }
       const data = (await res.json()) as InboxItem[];
+      setError(null);
       setItems(Array.isArray(data) ? data : []);
     } catch (e) {
       console.error("[ReviewCard] fetch failed:", e);
+      setError("Couldn't load items waiting for review.");
     } finally {
       setLoading(false);
     }
@@ -98,7 +125,7 @@ export function ReviewCard() {
     fetchInbox();
   }, []);
 
-  async function handleAccept(item: InboxItem) {
+  async function accept(item: InboxItem) {
     const type = normalizeInboxType(item);
     const res = await fetch("/api/inbox", {
       method: "PATCH",
@@ -110,11 +137,11 @@ export function ReviewCard() {
     if (destination) {
       router.push(destination);
     } else {
-      fetchInbox();
+      void fetchInbox();
     }
   }
 
-  async function handleDismiss(item: InboxItem) {
+  async function dismiss(item: InboxItem) {
     setDismissingId(item.id);
     const res = await fetch("/api/inbox", {
       method: "PATCH",
@@ -129,41 +156,19 @@ export function ReviewCard() {
     setDismissingId(null);
   }
 
-  const count = items.length;
-  const displayItems = items.slice(0, 5);
+  return { items, loading, error, dismissingId, reload: fetchInbox, accept, dismiss };
+}
+
+export function InboxReviewList({ type }: { type: Exclude<InboxItemType, "other"> }) {
+  const { items, dismissingId, accept, dismiss } = useInboxReview();
+  const moduleItems = items.filter((item) => normalizeInboxType(item) === type);
+  if (moduleItems.length === 0) return null;
 
   return (
-    <Card className="shadow-card border-border rounded-card">
-      <CardHeader className="pb-2 px-4 pt-4 flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <CardTitle className="font-heading text-lg text-foreground">
-            Review
-          </CardTitle>
-          {count > 0 && (
-            <span className="inline-flex items-center justify-center rounded-full bg-[#F2F5EF] px-2 py-0.5 text-[11px] font-medium text-[#5B7A52]">
-              {count}
-            </span>
-          )}
-        </div>
-        {count > 5 && (
-          <Link
-            href="/uploads/review"
-            className="text-[11px] text-[#5B7A52] hover:underline whitespace-nowrap"
-          >
-            View all ({count})
-          </Link>
-        )}
-      </CardHeader>
-      <CardContent className="px-4 pb-4 space-y-3">
-        {loading ? (
-          <p className="text-sm text-foreground-secondary">Loading…</p>
-        ) : count === 0 ? (
-          <p className="text-sm text-foreground-secondary">All caught up.</p>
-        ) : (
-          <ul className="space-y-2">
-            {displayItems.map((item) => {
-              const type = normalizeInboxType(item);
-              const icon = inboxTypeIcon(type);
+    <ul className="space-y-2">
+      {moduleItems.map((item) => {
+              const itemType = normalizeInboxType(item);
+              const icon = inboxTypeIcon(itemType);
               const category = (item.suggested_category || item.ai_category || "").trim();
               const primary =
                 (item.subject ?? "") || (item.summary ?? "") || "(no subject)";
@@ -201,7 +206,7 @@ export function ReviewCard() {
                       type="button"
                       size="sm"
                       className="h-7 rounded-full px-3 text-[11px] bg-[#7B9E87] text-white hover:bg-[#6A8A78]"
-                      onClick={() => handleAccept(item)}
+                      onClick={() => void accept(item)}
                     >
                       Accept ✓
                     </Button>
@@ -210,7 +215,7 @@ export function ReviewCard() {
                       size="sm"
                       variant="outline"
                       className="h-7 rounded-full px-3 text-[11px]"
-                      onClick={() => handleDismiss(item)}
+                      onClick={() => void dismiss(item)}
                       disabled={isDismissing}
                     >
                       Dismiss ✗
@@ -219,9 +224,6 @@ export function ReviewCard() {
                 </li>
               );
             })}
-          </ul>
-        )}
-      </CardContent>
-    </Card>
+    </ul>
   );
 }

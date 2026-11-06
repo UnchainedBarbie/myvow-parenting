@@ -1,10 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { OpenItemReview } from "@/components/dashboard/open-item-review";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { showErrorToast } from "@/components/ui/toaster";
 import {
   openItemsPreviewLimit,
@@ -23,20 +22,45 @@ const TYPE_LABEL: Record<OpenItemType, string> = {
   message: "Message",
 };
 
-export function OpenItemsSection() {
+type OpenItemsState = {
+  items: OpenItemView[];
+  loading: boolean;
+  error: string | null;
+  caseId: string | null;
+  children: Child[];
+  reviewKey: string | null;
+  busyKey: string | null;
+  selected: string[];
+  load: (opts?: { silent?: boolean }) => Promise<void>;
+  retrySave: (entry: OpenItemView) => Promise<void>;
+  toggleSelected: (key: string) => void;
+  dismissEntries: (entries: OpenItemView[]) => Promise<void>;
+  openEntry: (entry: OpenItemView) => void;
+};
+
+const OpenItemsContext = createContext<OpenItemsState | null>(null);
+
+export function OpenItemsProvider({ children }: { children: ReactNode }) {
+  const state = useOpenItemsState();
+  return <OpenItemsContext.Provider value={state}>{children}</OpenItemsContext.Provider>;
+}
+
+export function useOpenItems(): OpenItemsState {
+  const state = useContext(OpenItemsContext);
+  if (!state) throw new Error("Open items are unavailable.");
+  return state;
+}
+
+function useOpenItemsState(): OpenItemsState {
   const router = useRouter();
   const [items, setItems] = useState<OpenItemView[]>([]);
-  const [count, setCount] = useState(0);
   const [caseId, setCaseId] = useState<string | null>(null);
   const [children, setChildren] = useState<Child[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [expanded, setExpanded] = useState(false);
   const [reviewKey, setReviewKey] = useState<string | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [selected, setSelected] = useState<string[]>([]);
-  const [confirmDismiss, setConfirmDismiss] = useState(false);
-
   const load = useCallback(async (opts?: { silent?: boolean }) => {
     if (!opts?.silent) setLoading(true);
     try {
@@ -53,7 +77,6 @@ export function OpenItemsSection() {
         return;
       }
       setError(null);
-      setCount(typeof data.count === "number" ? data.count : (data.items ?? []).length);
       setCaseId(data.caseId ?? null);
       setChildren(Array.isArray(data.children) ? data.children : []);
       const nextItems = Array.isArray(data.items) ? data.items : [];
@@ -92,16 +115,6 @@ export function OpenItemsSection() {
     };
   }, [load, reviewKey]);
 
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    if (window.location.hash !== "#open-items" && params.get("open") !== "items") return;
-    document.getElementById("open-items")?.scrollIntoView({ block: "start" });
-  }, [loading]);
-
-  const visible = expanded ? items : items.slice(0, openItemsPreviewLimit());
-  const hiddenCount = Math.max(0, items.length - visible.length);
-  const selectedEntries = items.filter((entry) => selected.includes(entry.key));
-
   async function retrySave(entry: OpenItemView) {
     if (entry.proposalIndex == null || !entry.retry) return;
     setBusyKey(entry.key);
@@ -133,7 +146,6 @@ export function OpenItemsSection() {
   }
 
   function toggleSelected(key: string) {
-    setConfirmDismiss(false);
     setSelected((current) =>
       current.includes(key) ? current.filter((value) => value !== key) : [...current, key]
     );
@@ -176,10 +188,8 @@ export function OpenItemsSection() {
         showErrorToast(data.errors?.[0]?.error || "Couldn't dismiss every selected item.");
       }
       setItems((current) => current.filter((entry) => !dropped.has(entry.key)));
-      setCount((current) => Math.max(0, current - dropped.size));
       setSelected((current) => current.filter((key) => !dropped.has(key)));
       setReviewKey((current) => (current && dropped.has(current) ? null : current));
-      setConfirmDismiss(false);
       await load({ silent: true });
     } catch {
       showErrorToast("Couldn't dismiss that item.");
@@ -200,18 +210,52 @@ export function OpenItemsSection() {
     setReviewKey((current) => (current === entry.key ? null : entry.key));
   }
 
+  return {
+    items,
+    loading,
+    error,
+    caseId,
+    children,
+    reviewKey,
+    busyKey,
+    selected,
+    load,
+    retrySave,
+    toggleSelected,
+    dismissEntries,
+    openEntry,
+  };
+}
+
+export function OpenItemModuleList({ type }: { type: OpenItemType }) {
+  const router = useRouter();
+  const {
+    items,
+    loading,
+    error,
+    caseId,
+    children,
+    reviewKey,
+    busyKey,
+    selected,
+    load,
+    toggleSelected,
+    dismissEntries,
+    openEntry,
+  } = useOpenItems();
+  const [expanded, setExpanded] = useState(false);
+  const [confirmDismiss, setConfirmDismiss] = useState(false);
+  const moduleItems = items.filter((entry) => entry.type === type);
+  const visible = expanded ? moduleItems : moduleItems.slice(0, openItemsPreviewLimit());
+  const hiddenCount = Math.max(0, moduleItems.length - visible.length);
+  const selectedEntries = moduleItems.filter((entry) => selected.includes(entry.key));
+
+  if (loading || error || moduleItems.length === 0) return null;
+
   return (
-    <Card id="open-items" className="mb-4 scroll-mt-4 shadow-card border-border rounded-card">
-      <CardHeader className="flex flex-row items-center justify-between gap-2 px-4 pb-2 pt-4">
-        <div className="flex items-center gap-2">
-          <CardTitle className="font-heading text-lg text-foreground">Open items</CardTitle>
-          {!loading && !error && (
-            <span className="inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-[#F2F5EF] px-2 py-0.5 text-[11px] font-medium text-[#5B7A52]">
-              {count}
-            </span>
-          )}
-        </div>
-        {!loading && !error && selectedEntries.length > 0 && (
+    <div className="space-y-2">
+      {selectedEntries.length > 0 && (
+        <div className="flex justify-end">
           <Button
             type="button"
             size="sm"
@@ -222,65 +266,43 @@ export function OpenItemsSection() {
           >
             Dismiss selected
           </Button>
-        )}
-      </CardHeader>
-      <CardContent className="space-y-2 px-4 pb-4">
-        {loading ? (
-          <p className="text-sm text-foreground-secondary">Loading open items…</p>
-        ) : error ? (
-          <div className="space-y-2">
-            <p className="text-sm text-[#7A3434]" role="alert">
-              {error}
-            </p>
+        </div>
+      )}
+      {confirmDismiss && selectedEntries.length > 0 && (
+        <div
+          role="dialog"
+          aria-labelledby={`dismiss-selected-${type}`}
+          className="space-y-2 rounded-lg border border-[#E8E4DC] bg-[#F7F5F0] px-3 py-2"
+        >
+          <p id={`dismiss-selected-${type}`} className="text-sm text-foreground">
+            Dismiss {selectedEntries.length} open{" "}
+            {selectedEntries.length === 1 ? "item" : "items"}? This means no further action is
+            needed. Nothing is sent, approved, or deleted.
+          </p>
+          <div className="flex gap-2">
+            <Button
+              type="button"
+              size="sm"
+              className="h-7 rounded-full bg-[#7B9E87] px-3 text-[11px] text-white hover:bg-[#6A8A78]"
+              disabled={busyKey === "bulk"}
+              onClick={() => void dismissEntries(selectedEntries).then(() => setConfirmDismiss(false))}
+            >
+              {busyKey === "bulk" ? "Dismissing…" : `Dismiss ${selectedEntries.length}`}
+            </Button>
             <Button
               type="button"
               size="sm"
               variant="outline"
               className="h-7 rounded-full px-3 text-[11px]"
-              onClick={() => void load()}
+              disabled={busyKey === "bulk"}
+              onClick={() => setConfirmDismiss(false)}
             >
-              Try again
+              Cancel
             </Button>
           </div>
-        ) : items.length === 0 ? (
-          <p className="text-sm text-foreground-secondary">You&apos;re all caught up.</p>
-        ) : (
-          <>
-            {confirmDismiss && selectedEntries.length > 0 && (
-              <div
-                role="dialog"
-                aria-labelledby="dismiss-selected-title"
-                className="space-y-2 rounded-lg border border-[#E8E4DC] bg-[#F7F5F0] px-3 py-2"
-              >
-                <p id="dismiss-selected-title" className="text-sm text-foreground">
-                  Dismiss {selectedEntries.length} open{" "}
-                  {selectedEntries.length === 1 ? "item" : "items"}? This means no further action
-                  is needed. Nothing is sent, approved, or deleted.
-                </p>
-                <div className="flex gap-2">
-                  <Button
-                    type="button"
-                    size="sm"
-                    className="h-7 rounded-full bg-[#7B9E87] px-3 text-[11px] text-white hover:bg-[#6A8A78]"
-                    disabled={busyKey === "bulk"}
-                    onClick={() => void dismissEntries(selectedEntries)}
-                  >
-                    {busyKey === "bulk" ? "Dismissing…" : `Dismiss ${selectedEntries.length}`}
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    className="h-7 rounded-full px-3 text-[11px]"
-                    disabled={busyKey === "bulk"}
-                    onClick={() => setConfirmDismiss(false)}
-                  >
-                    Cancel
-                  </Button>
-                </div>
-              </div>
-            )}
-            <ul className="space-y-2">
+        </div>
+      )}
+      <ul className="space-y-2">
               {visible.map((entry) => {
                 const reviewing = reviewKey === entry.key;
                 const rowBusy = busyKey === entry.key || busyKey === "bulk";
@@ -325,6 +347,17 @@ export function OpenItemsSection() {
                         >
                           {busyKey === entry.key ? "Saving…" : entry.actionLabel}
                         </Button>
+                        {entry.chatHref ? (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-7 rounded-full px-3 text-[11px]"
+                            onClick={() => router.push(entry.chatHref as string)}
+                          >
+                            Open chat
+                          </Button>
+                        ) : null}
                         <Button
                           type="button"
                           size="sm"
@@ -350,19 +383,16 @@ export function OpenItemsSection() {
                 );
               })}
             </ul>
-            {items.length > openItemsPreviewLimit() && (
-              <button
-                type="button"
-                className="text-[11px] text-[#5B7A52] hover:underline"
-                onClick={() => setExpanded((value) => !value)}
-              >
-                {expanded ? "Show fewer" : `Show all (${hiddenCount + visible.length})`}
-              </button>
-            )}
-          </>
-        )}
-      </CardContent>
-    </Card>
+      {moduleItems.length > openItemsPreviewLimit() && (
+        <button
+          type="button"
+          className="text-[11px] text-[#5B7A52] hover:underline"
+          onClick={() => setExpanded((value) => !value)}
+        >
+          {expanded ? "Show fewer" : `Show all (${hiddenCount + visible.length})`}
+        </button>
+      )}
+    </div>
   );
 }
 

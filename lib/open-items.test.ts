@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import {
   deriveOpenItems,
   isClosedOpenItemProposal,
+  chatTurnForSource,
+  openChatHref,
   openItemHref,
   type OpenItemSource,
 } from "@/lib/open-items";
@@ -247,5 +249,24 @@ assert.equal(
   true
 );
 assert.equal(openItemHref(null, "item-4", 0), null);
+
+const turns = new Map<string, string | null>([
+  ["journal-1", "session-9"],
+  ["journal-nosession", null],
+  ["journal-blank", "  "],
+]);
+assert.deepEqual(chatTurnForSource("journal-1", turns), {
+  sessionId: "session-9",
+  turnId: "journal-1",
+});
+assert.equal(chatTurnForSource("5b6e3e48-943c-41c9-95de-e15e2f472235", turns), null);
+assert.equal(chatTurnForSource("journal-nosession", turns), null);
+assert.equal(chatTurnForSource("journal-blank", turns), null);
+assert.equal(chatTurnForSource(null, turns), null);
+assert.equal(chatTurnForSource("  ", turns), null);
+assert.equal(openChatHref("session-9", "journal-1"), "/sage/session-9?turn=journal-1");
+assert.equal(openChatHref(null, "journal-1"), null);
+assert.equal(openChatHref("session-9", null), null);
+assert.equal(openChatHref("session-9", "journal-1")?.includes("item"), false);
 
 console.log("open-items tests passed");

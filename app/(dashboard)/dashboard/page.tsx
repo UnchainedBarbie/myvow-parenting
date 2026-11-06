@@ -5,10 +5,8 @@ import { Button } from "@/components/ui/button";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { DashboardStatusCards } from "@/components/dashboard/dashboard-status-cards";
-import { ReviewCard } from "@/components/dashboard/review-card";
 import { DashboardOnboardingGate } from "@/components/dashboard/dashboard-onboarding-gate";
 import { EventRequestsCard } from "@/components/dashboard/event-requests-card";
-import { OpenItemsSection } from "@/components/dashboard/open-items-section";
 import { CalendarNotices } from "@/components/dashboard/calendar-notices";
 import { loadCalendarNoticeCards } from "@/lib/calendar/load-calendar-notices";
 import { loadVisibleExpenses } from "@/lib/expenses-visibility";
@@ -330,13 +328,11 @@ export default async function DashboardPage() {
   // Messages over last 14 days for tone/communication status
   const twoWeeksAgo = new Date(now);
   twoWeeksAgo.setDate(now.getDate() - 14);
-  const oneWeekAgo = new Date(now);
-  oneWeekAgo.setDate(now.getDate() - 7);
   await linkUnassignedParentMessages(admin, caseId);
   const { data: messagesLast14Raw } = await admin
     .from("messages")
     .select(
-      "id, case_id, conversation_id, sender_id, direction, delivery_status, delivered_at, read_at, created_at, ai_classification, emotional_intensity_score"
+      "id, case_id, conversation_id, sender_id, direction, delivery_status, delivered_at, read_at, created_at"
     )
     .eq("case_id", caseId)
     .gte("created_at", twoWeeksAgo.toISOString())
@@ -350,52 +346,7 @@ export default async function DashboardPage() {
     delivered_at?: string | null;
     read_at: string | null;
     created_at: string;
-    ai_classification: string | null;
-    emotional_intensity_score: number | null;
   }[];
-
-  function isElevated(m: {
-    ai_classification: string | null;
-    emotional_intensity_score: number | null;
-  }) {
-    const cls = (m.ai_classification ?? "").toLowerCase();
-    const intensity =
-      typeof m.emotional_intensity_score === "number"
-        ? Number(m.emotional_intensity_score)
-        : 0;
-    if (
-      cls === "escalatory" ||
-      cls === "threatening" ||
-      cls === "coercive" ||
-      cls === "manipulative"
-    ) {
-      return true;
-    }
-    return intensity >= 0.7;
-  }
-
-  const messagesPrevWeek = messagesLast14.filter((m) => {
-    const d = new Date(m.created_at);
-    return d >= twoWeeksAgo && d < oneWeekAgo;
-  });
-  const messagesThisWeek = messagesLast14.filter((m) => {
-    const d = new Date(m.created_at);
-    return d >= oneWeekAgo && d <= now;
-  });
-
-  const elevatedPrevWeek = messagesPrevWeek.filter(isElevated).length;
-  const elevatedThisWeek = messagesThisWeek.filter(isElevated).length;
-  const householdElevated = elevatedThisWeek > 0;
-
-  const householdClimateLabel = householdElevated
-    ? "More active this week"
-    : "Steady this week";
-  const disputesLabel =
-    openExpenseItems === 0
-      ? "No open disputes"
-      : openExpenseItems === 1
-        ? "1 unresolved expense item"
-        : `${openExpenseItems} unresolved expense items`;
 
   // Communication status: conversations awaiting response (last message incoming & unread)
   const lastMessageByConversation: Record<
@@ -426,7 +377,6 @@ export default async function DashboardPage() {
     Object.entries(lastMessageByConversation).find(
       ([_, m]) => m.direction === "incoming" && m.read_at == null
     )?.[0] ?? null;
-  const communicationMainLabel = "All conversations up to date";
   const communicationToneLabel =
     awaitingResponseCount === 0
       ? "No replies waiting"
@@ -470,18 +420,12 @@ export default async function DashboardPage() {
             </p>
           </div>
 
-          <OpenItemsSection />
-
           <DashboardOnboardingGate
             contentAboveChecklist={
               <DashboardStatusCards
                 caseId={caseId}
-                householdElevated={householdElevated}
-                householdClimateLabel={householdClimateLabel}
-                disputesLabel={disputesLabel}
                 openExpenseItems={openExpenseItems}
                 awaitingResponseCount={awaitingResponseCount}
-                communicationMainLabel={communicationMainLabel}
                 communicationToneLabel={communicationToneLabel}
                 firstUnreadConversationId={firstUnreadConversationId}
                 netLabel={netLabel}
@@ -636,8 +580,6 @@ export default async function DashboardPage() {
                 children={(childrenRaw ?? []).map((c) => ({ id: c.id, first_name: c.first_name as string }))}
               />
             )}
-
-            <ReviewCard />
               </>
             }
           />

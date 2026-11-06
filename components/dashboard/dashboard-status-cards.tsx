@@ -2,11 +2,18 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import Link from "next/link";
-import { cn } from "@/lib/utils";
+import { OpenItemModuleList, OpenItemsProvider, useOpenItems } from "@/components/dashboard/open-items-section";
+import {
+  InboxReviewList,
+  InboxReviewProvider,
+  normalizeInboxType,
+  useInboxReview,
+} from "@/components/dashboard/review-card";
+import type { OpenItemType } from "@/lib/open-items";
 import { showErrorToast, showSuccessToast } from "@/components/ui/toaster";
 import { OutboundReviewPanel } from "@/components/messages/outbound-review-panel";
 import {
@@ -19,37 +26,46 @@ import {
 } from "@/lib/messages/outbound-review";
 import { nextSendAttempt, type SendAttempt } from "@/lib/messages/send-attempt";
 
-const CARD_LINK_CLASS =
-  "cursor-pointer transition-all hover:shadow-sm hover:border-[#C5CFBC] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#7C8B6E] focus-visible:ring-offset-1";
 const SUB_LINK_CLASS =
   "text-[11px] text-[#5B7A52] underline-offset-2 hover:underline";
 
 type Props = {
   caseId: string;
-  householdElevated: boolean;
-  householdClimateLabel: string;
-  disputesLabel: string;
   openExpenseItems: number;
   awaitingResponseCount: number;
-  communicationMainLabel: string;
   communicationToneLabel: string;
   firstUnreadConversationId: string | null;
   netLabel: string;
 };
 
-export function DashboardStatusCards({
+const MODULES: { type: OpenItemType; title: string }[] = [
+  { type: "message", title: "Communication" },
+  { type: "expense", title: "Expenses" },
+  { type: "document", title: "Documents" },
+  { type: "calendar_event", title: "Calendar" },
+];
+
+export function DashboardStatusCards(props: Props) {
+  return (
+    <OpenItemsProvider>
+      <InboxReviewProvider>
+        <ModuleTiles {...props} />
+      </InboxReviewProvider>
+    </OpenItemsProvider>
+  );
+}
+
+function ModuleTiles({
   caseId,
-  householdElevated,
-  householdClimateLabel,
-  disputesLabel,
   openExpenseItems,
   awaitingResponseCount,
-  communicationMainLabel,
   communicationToneLabel,
   firstUnreadConversationId,
   netLabel,
 }: Props) {
   const router = useRouter();
+  const openItems = useOpenItems();
+  const inbox = useInboxReview();
   const [showReminderModal, setShowReminderModal] = useState(false);
   const [reminderText, setReminderText] = useState("");
   const [sendingReminder, setSendingReminder] = useState(false);
@@ -171,156 +187,128 @@ export function DashboardStatusCards({
     }
   }
 
-  function handleHouseholdClick() {
-    router.push("/messages");
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (window.location.hash !== "#open-items" && params.get("open") !== "items") return;
+    document.getElementById("open-items")?.scrollIntoView({ block: "start" });
+  }, [openItems.loading]);
+
+  function moduleCount(type: OpenItemType): number {
+    const proposals = openItems.items.filter((entry) => entry.type === type).length;
+    const reviews = inbox.items.filter((item) => normalizeInboxType(item) === type).length;
+    if (type === "message") return proposals + reviews + awaitingResponseCount;
+    if (type === "expense") return proposals + reviews + openExpenseItems;
+    return proposals + reviews;
   }
 
-  function handleCommunicationClick(e: React.MouseEvent) {
-    if ((e.target as HTMLElement).closest("a")) return;
-    const url = firstUnreadConversationId
-      ? `/messages?conversation_id=${encodeURIComponent(firstUnreadConversationId)}`
-      : "/messages";
-    router.push(url);
-  }
-
-  function handleSharedExpensesClick(e: React.MouseEvent) {
-    if ((e.target as HTMLElement).closest("a")) return;
-    router.push("/expenses");
-  }
+  const loading = openItems.loading || inbox.loading;
 
   return (
     <>
-      <div className="grid gap-3 md:grid-cols-3 items-stretch">
-        {/* Household climate */}
-        <Card
-          className={cn(
-            "rounded-card text-xs md:text-sm",
-            CARD_LINK_CLASS,
-            householdElevated
-              ? "border-[#E8E4DC] bg-[#FDF6E3]"
-              : "border-[#E8E4DC] bg-[#F2F5EF]"
-          )}
-          onClick={handleHouseholdClick}
-          role="button"
-          tabIndex={0}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === " ") {
-              e.preventDefault();
-              handleHouseholdClick();
-            }
-          }}
-        >
-          <CardContent className="px-3 py-3 space-y-1">
-            <div className="flex items-center gap-2">
-              <span
-                className={cn(
-                  "h-2.5 w-2.5 rounded-full",
-                  householdElevated ? "bg-[#D4A843]" : "bg-[#7C8B6E]"
-                )}
-              />
-              <p className="font-medium text-foreground text-xs md:text-sm">
-                Household climate
-              </p>
-            </div>
-            <p className="text-[11px] md:text-xs text-foreground-secondary">
-              {householdClimateLabel}
-            </p>
-            <div className="mt-1 space-y-0.5 text-[11px] md:text-xs text-foreground-secondary">
-              {openExpenseItems > 0 && (
-                <p>
-                  •{" "}
-                  <Link
-                    href="/expenses?status=pending"
-                    className={SUB_LINK_CLASS}
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    {disputesLabel}
-                  </Link>
-                </p>
-              )}
-              {awaitingResponseCount > 0 && (
-                <p>
-                  •{" "}
-                  {awaitingResponseCount} conversation
-                  {awaitingResponseCount > 1 ? "s" : ""} may need a response
-                </p>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Communication */}
-        <Card
-          className={cn(
-            "rounded-card border border-[#E8E4DC] bg-[#FDFBF7] text-xs md:text-sm",
-            CARD_LINK_CLASS
-          )}
-          onClick={handleCommunicationClick}
-          role="button"
-          tabIndex={0}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === " ") {
-              e.preventDefault();
-              handleCommunicationClick(e as unknown as React.MouseEvent);
-            }
-          }}
-        >
-          <CardContent className="px-3 py-3 space-y-1">
-            <p className="font-medium text-foreground text-xs md:text-sm">
-              Communication
-            </p>
-            <p className="text-[11px] md:text-xs text-foreground-secondary">
-              {communicationMainLabel}
-            </p>
-            <p className="text-[11px] md:text-xs text-foreground-secondary">
-              {communicationToneLabel}
-            </p>
-          </CardContent>
-        </Card>
-
-        {/* Shared expenses */}
-        <Card
-          className={cn(
-            "rounded-card border border-[#E8E4DC] bg-[#FDFBF7] text-xs md:text-sm",
-            CARD_LINK_CLASS
-          )}
-          onClick={handleSharedExpensesClick}
-          role="button"
-          tabIndex={0}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === " ") {
-              e.preventDefault();
-              handleSharedExpensesClick(e as unknown as React.MouseEvent);
-            }
-          }}
-        >
-          <CardContent className="px-3 py-3 space-y-1">
-            <p className="font-medium text-foreground text-xs md:text-sm">
-              Shared expenses: {netLabel}
-            </p>
-            <p className="text-[11px] md:text-xs text-foreground-secondary">
-              {openExpenseItems === 0
-                ? "0 open items"
-                : `${openExpenseItems} open item${openExpenseItems > 1 ? "s" : ""}`}
-            </p>
-            <div className="flex gap-3 pt-1" onClick={(e) => e.stopPropagation()}>
-              <Link href="/expenses" className={SUB_LINK_CLASS}>
-                View details
-              </Link>
-              <button
-                type="button"
-                className={SUB_LINK_CLASS}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setReminderReviewed(null);
-                  setShowReminderModal(true);
-                }}
-              >
-                Send reminder
+      {(openItems.error || inbox.error) && (
+        <div className="mb-3 space-y-2">
+          {openItems.error && (
+            <p className="text-sm text-[#7A3434]" role="alert">
+              {openItems.error}{" "}
+              <button type="button" className={SUB_LINK_CLASS} onClick={() => void openItems.load()}>
+                Try again
               </button>
-            </div>
-          </CardContent>
-        </Card>
+            </p>
+          )}
+          {inbox.error && (
+            <p className="text-sm text-[#7A3434]" role="alert">
+              {inbox.error}{" "}
+              <button type="button" className={SUB_LINK_CLASS} onClick={() => void inbox.reload()}>
+                Try again
+              </button>
+            </p>
+          )}
+        </div>
+      )}
+      <div id="open-items" className="grid scroll-mt-4 gap-3 md:grid-cols-2 items-start">
+        {MODULES.map((module) => {
+          const count = moduleCount(module.type);
+          return (
+            <Card
+              key={module.type}
+              className="rounded-card border border-[#E8E4DC] bg-[#FDFBF7] text-xs md:text-sm"
+            >
+              <CardHeader className="flex flex-row items-center gap-2 px-4 pb-2 pt-4">
+                <CardTitle className="font-heading text-lg text-foreground">{module.title}</CardTitle>
+                {!loading && (
+                  <span className="inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-[#F2F5EF] px-2 py-0.5 text-[11px] font-medium text-[#5B7A52]">
+                    {count}
+                  </span>
+                )}
+              </CardHeader>
+              <CardContent className="space-y-2 px-4 pb-4">
+                {loading ? (
+                  <p className="text-sm text-foreground-secondary">Loading…</p>
+                ) : (
+                  <>
+                    {module.type === "message" && awaitingResponseCount > 0 && (
+                      <div className="flex items-start justify-between gap-3 rounded-lg border border-[#E8E4DC] bg-white px-3 py-2">
+                        <p className="text-sm text-foreground">{communicationToneLabel}</p>
+                        <Button
+                          type="button"
+                          size="sm"
+                          className="h-7 shrink-0 rounded-full bg-[#7B9E87] px-3 text-[11px] text-white hover:bg-[#6A8A78]"
+                          onClick={() =>
+                            router.push(
+                              firstUnreadConversationId
+                                ? `/messages?conversation_id=${encodeURIComponent(firstUnreadConversationId)}`
+                                : "/messages"
+                            )
+                          }
+                        >
+                          Open
+                        </Button>
+                      </div>
+                    )}
+                    {module.type === "expense" && (
+                      <div className="space-y-1">
+                        <p className="text-[11px] text-foreground-secondary">{netLabel}</p>
+                        {openExpenseItems > 0 && (
+                          <div className="flex items-start justify-between gap-3 rounded-lg border border-[#E8E4DC] bg-white px-3 py-2">
+                            <p className="text-sm text-foreground">
+                              {openExpenseItems} submitted or disputed{" "}
+                              {openExpenseItems === 1 ? "expense" : "expenses"}
+                            </p>
+                            <Link href="/expenses?status=pending" className={SUB_LINK_CLASS}>
+                              View details
+                            </Link>
+                          </div>
+                        )}
+                        <div className="flex gap-3 pt-1">
+                          {openExpenseItems === 0 && (
+                            <Link href="/expenses" className={SUB_LINK_CLASS}>
+                              View details
+                            </Link>
+                          )}
+                          <button
+                            type="button"
+                            className={SUB_LINK_CLASS}
+                            onClick={() => {
+                              setReminderReviewed(null);
+                              setShowReminderModal(true);
+                            }}
+                          >
+                            Send reminder
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                    <OpenItemModuleList type={module.type} />
+                    <InboxReviewList type={module.type} />
+                    {count === 0 && !openItems.error && !inbox.error && (
+                      <p className="text-sm text-foreground-secondary">Nothing waiting.</p>
+                    )}
+                  </>
+                )}
+              </CardContent>
+            </Card>
+          );
+        })}
       </div>
 
       {showReminderModal && (

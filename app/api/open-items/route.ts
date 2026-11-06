@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { SageItem } from "@/components/sage/proposal-types";
-import { deriveOpenItems, openItemHref, type OpenItemSource } from "@/lib/open-items";
+import {
+  chatTurnForSource,
+  deriveOpenItems,
+  openChatHref,
+  openItemHref,
+  type OpenItemSource,
+} from "@/lib/open-items";
 import { ownerItemMatch, reconcileProposalPlan, supersededExecutionError } from "@/lib/sage/proposal-lifecycle";
 import {
   dismissProposalRecord,
@@ -88,6 +94,7 @@ export async function GET() {
     const relevant = items.filter((row) => needed.has(row.id));
 
     const sessionByItem = await sessionsForItems(admin, user.id, relevant);
+    const chatHrefByItem = await chatHrefsForItems(admin, user.id, relevant);
     const byId = new Map(items.map((row) => [row.id, row]));
 
     const { data: childrenData, error: childrenError } = await admin
@@ -115,6 +122,7 @@ export async function GET() {
           return {
             ...draft,
             href: openItemHref(sessionId, draft.sageItemId, draft.proposalIndex),
+            chatHref: chatHrefByItem.get(draft.sageItemId) ?? null,
             item: toSageItem(row),
           };
         }),
@@ -423,6 +431,66 @@ async function sessionsForItems(
     const sourceId = typeof item.source_id === "string" ? item.source_id : "";
     const sessionId = sourceId ? bySource.get(sourceId) : undefined;
     if (sessionId) result.set(item.id, sessionId);
+  }
+  return result;
+}
+
+/**
+ * Chat link for an open item. Only source_id → this parent's journal turn →
+ * that turn's session. A source_id with no journal row, or an item that never
+ * pointed at a turn, gets no link.
+ */
+async function chatHrefsForItems(
+  admin: Admin,
+  userId: string,
+  items: ItemRow[]
+): Promise<Map<string, string>> {
+  const result = new Map<string, string>();
+  const sourceIds = [
+    ...new Set(
+      items
+        .map((row) => (typeof row.source_id === "string" ? row.source_id.trim() : ""))
+        .filter((id) => id.length > 0)
+    ),
+  ];
+  if (sourceIds.length === 0) return result;
+
+  const { data: journals, error: journalError } = await admin
+    .from("sage_journal_messages")
+    .select("id, session_id")
+    .eq("user_id", userId)
+    .in("id", sourceIds);
+  if (journalError) throw new Error(journalError.message);
+
+  const sessionIds = [
+    ...new Set(
+      ((journals ?? []) as { session_id?: string | null }[])
+        .map((row) => (typeof row.session_id === "string" ? row.session_id.trim() : ""))
+        .filter((id) => id.length > 0)
+    ),
+  ];
+  const allowed = new Set<string>();
+  if (sessionIds.length > 0) {
+    const { data: sessions, error: sessionError } = await admin
+      .from("sage_sessions")
+      .select("id")
+      .eq("user_id", userId)
+      .in("id", sessionIds);
+    if (sessionError) throw new Error(sessionError.message);
+    for (const row of sessions ?? []) allowed.add(row.id as string);
+  }
+
+  const sessionByJournal = new Map<string, string | null>();
+  for (const row of (journals ?? []) as { id: string; session_id?: string | null }[]) {
+    const sessionId = typeof row.session_id === "string" ? row.session_id.trim() : "";
+    sessionByJournal.set(row.id, sessionId && allowed.has(sessionId) ? sessionId : null);
+  }
+
+  for (const item of items) {
+    const turn = chatTurnForSource(item.source_id, sessionByJournal);
+    if (!turn) continue;
+    const href = openChatHref(turn.sessionId, turn.turnId);
+    if (href) result.set(item.id, href);
   }
   return result;
 }

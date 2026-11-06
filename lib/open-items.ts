@@ -50,6 +50,8 @@ export type OpenItemDraft = {
 
 export type OpenItemView = OpenItemDraft & {
   href: string | null;
+  /** Chat that produced this item, when source_id is a journal turn. Navigation only. */
+  chatHref: string | null;
   item: SageItem | null;
 };
 
@@ -90,6 +92,34 @@ export function openItemHref(
     params.set("proposal", String(proposalIndex));
   }
   return `/sage/${sessionId}?${params.toString()}`;
+}
+
+/**
+ * The journal turn an open item came from.
+ * source_id must be that sage_journal_messages row, and the row must belong to
+ * a session. A missing row, a blank source, or a session-less row is not a chat.
+ */
+export function chatTurnForSource(
+  sourceId: string | null | undefined,
+  sessionIdByJournalId: ReadonlyMap<string, string | null | undefined>
+): { sessionId: string; turnId: string } | null {
+  const turnId = typeof sourceId === "string" ? sourceId.trim() : "";
+  if (!turnId) return null;
+  const sessionId = (sessionIdByJournalId.get(turnId) ?? "").trim();
+  if (!sessionId) return null;
+  return { sessionId, turnId };
+}
+
+/** Opens the chat scrolled to the journal turn. Null when either id is missing. */
+export function openChatHref(
+  sessionId: string | null | undefined,
+  turnId: string | null | undefined
+): string | null {
+  const session = (sessionId ?? "").trim();
+  const turn = (turnId ?? "").trim();
+  if (!session || !turn) return null;
+  const params = new URLSearchParams({ turn });
+  return `/sage/${session}?${params.toString()}`;
 }
 
 function clip(text: string, max: number): string {

@@ -239,9 +239,11 @@ export function SageClient({
   const [focusTarget, setFocusTarget] = useState<{ itemId: string; proposal: string | null } | null>(
     null
   );
+  const [turnId, setTurnId] = useState<string | null>(null);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
+    setTurnId(params.get("turn"));
     const itemId = params.get("item");
     if (!itemId) {
       setFocusTarget(null);
@@ -342,6 +344,13 @@ export function SageClient({
       skipScrollRef.current = false;
       return;
     }
+    if (turnId) {
+      const turn = document.getElementById(`sage-turn-${turnId}`);
+      if (turn) {
+        turn.scrollIntoView({ behavior: "smooth", block: "center" });
+        return;
+      }
+    }
     if (focusTarget) {
       const selector = focusTarget.proposal
         ? `sage-proposal-${focusTarget.itemId}-${focusTarget.proposal}`
@@ -353,7 +362,7 @@ export function SageClient({
       }
     }
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [messages, loading, focusTarget]);
+  }, [messages, loading, focusTarget, turnId]);
 
   function patchItemPlan(itemId: string, plan: SagePlan) {
     setMessages((prev) =>
@@ -1218,9 +1227,13 @@ export function SageClient({
                     <div
                       key={msg.id}
                       id={!historical && item ? `sage-item-${item.id}` : undefined}
-                      className="space-y-2"
+                      className={cn(
+                        "space-y-2",
+                        turnId === msg.id && "rounded-xl ring-2 ring-[#C5D0C0]"
+                      )}
                     >
                       <div
+                        id={`sage-turn-${msg.id}`}
                         className={cn(
                           "flex",
                           isUser ? "justify-end" : "justify-start"

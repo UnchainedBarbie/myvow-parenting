@@ -7,8 +7,6 @@ import {
   Search,
   Plus,
   MessageCircle,
-  Calendar as CalendarIcon,
-  Receipt,
   Paperclip,
   ScrollText,
   Lock,
@@ -1863,93 +1861,6 @@ export function MessagesSplitView({
                 )}
                 </div>
               </ScrollArea>
-
-              <div className="border-t border-[#E8E4DC] bg-transparent px-4 py-3 space-y-2">
-                {(userSettings?.cool_off_enabled ?? true) && !coolOffActive && (
-                  <div className="flex justify-end">
-                    <button
-                      type="button"
-                      onClick={() => setShowCoolOffModal(true)}
-                      className="rounded-full border border-[#E8E4DC] bg-[#FDFBF7] px-2.5 py-1 text-[11px] text-[#5B7A52] hover:bg-[#F2F5EF]"
-                    >
-                      Take a cool-off break
-                    </button>
-                  </div>
-                )}
-                  <div className="flex flex-wrap items-center gap-2 text-[11px]">
-                    <span className="text-[#8A8A8A]">Attach:</span>
-                    {(() => {
-                      const cat = activeConversation.category ?? "General";
-                      const childId = activeConversation.child_id;
-                      const showCalendar = true;
-                      const showExpense = true;
-                      const showDocument = true;
-                      const showCourt = true;
-
-                      const expenseCategoryParam =
-                        cat === "Medical"
-                          ? "medical"
-                          : cat === "School"
-                            ? "school"
-                            : cat === "Expenses"
-                              ? "other"
-                              : undefined;
-
-                      return (
-                        <>
-                          {showCalendar && (
-                            <button
-                              type="button"
-                              className="inline-flex items-center gap-1 text-[#7C8B6E] hover:text-[#5B7A52]"
-                              onClick={() => {
-                                setShowEventModal(true);
-                              }}
-                            >
-                              <CalendarIcon className="h-3.5 w-3.5" />
-                              <span>Event</span>
-                            </button>
-                          )}
-                          {showExpense && (
-                            <button
-                              type="button"
-                              className="inline-flex items-center gap-1 text-[#7C8B6E] hover:text-[#5B7A52]"
-                              onClick={() => {
-                                setShowExpenseModal(true);
-                              }}
-                            >
-                              <Receipt className="h-3.5 w-3.5" />
-                              <span>Expense</span>
-                            </button>
-                          )}
-                          {showDocument && (
-                            <button
-                              type="button"
-                              className="inline-flex items-center gap-1 text-[#7C8B6E] hover:text-[#5B7A52]"
-                              onClick={() => {
-                                setShowDocumentModal(true);
-                              }}
-                            >
-                              <Paperclip className="h-3.5 w-3.5" />
-                              <span>Document</span>
-                            </button>
-                          )}
-                          {showCourt && (
-                            <button
-                              type="button"
-                              className="inline-flex items-center gap-1 text-[#7C8B6E] hover:text-[#5B7A52]"
-                              onClick={() => {
-                                setShowCourtOrderModal(true);
-                              }}
-                            >
-                              <ScrollText className="h-3.5 w-3.5" />
-                              <span>Court Order</span>
-                            </button>
-                          )}
-                        </>
-                      );
-                    })()}
-                  </div>
-              </div>
             </div>
           </>
         ) : (

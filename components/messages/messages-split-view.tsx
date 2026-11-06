@@ -163,6 +163,11 @@ export function MessagesSplitView({
   const [deleteConversationId, setDeleteConversationId] = useState<string | null>(null);
   const [confirmArchiveOpen, setConfirmArchiveOpen] = useState(false);
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
+  const [selectedConversationIds, setSelectedConversationIds] = useState<string[]>([]);
+  const [bulkArchiveIds, setBulkArchiveIds] = useState<string[] | null>(null);
+  const [bulkArchiveBusy, setBulkArchiveBusy] = useState(false);
+  const selectAllRef = useRef<HTMLInputElement | null>(null);
+  const bulkArchiveLock = useRef(false);
 
   const [attachExpenses, setAttachExpenses] = useState<
     { id: string; description: string; amount: number; category: string; status: string; created_at: string }[]
@@ -593,6 +598,68 @@ export function MessagesSplitView({
     return list;
   }, [conversations, search, filterTopic, filterChild, filterStatus, childMap, coparentName]);
 
+  const visibleIds = filteredConversations.map((c) => c.id);
+  const selectedVisibleIds = visibleIds.filter((id) => selectedConversationIds.includes(id));
+  const allVisibleSelected =
+    visibleIds.length > 0 && selectedVisibleIds.length === visibleIds.length;
+  const bulkUnarchive = filterStatus === "archived";
+
+  useEffect(() => {
+    if (!selectAllRef.current) return;
+    selectAllRef.current.indeterminate =
+      selectedVisibleIds.length > 0 && !allVisibleSelected;
+  }, [selectedVisibleIds.length, allVisibleSelected]);
+
+  useEffect(() => {
+    const visible = new Set(filteredConversations.map((c) => c.id));
+    setSelectedConversationIds((current) => {
+      const next = current.filter((id) => visible.has(id));
+      return next.length === current.length ? current : next;
+    });
+  }, [filteredConversations]);
+
+  async function applyConversationStatus(ids: string[], nextStatus: "open" | "archived") {
+    if (ids.length === 0 || bulkArchiveLock.current) return;
+    bulkArchiveLock.current = true;
+    setBulkArchiveBusy(true);
+    try {
+      const results = await Promise.all(
+        ids.map(async (id) => {
+          const res = await fetch(`/api/messages/conversations/${id}/status`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ status: nextStatus }),
+          });
+          return res.ok;
+        })
+      );
+      if (results.some((ok) => !ok)) {
+        showErrorToast(
+          nextStatus === "archived"
+            ? "Could not archive every conversation."
+            : "Could not unarchive every conversation."
+        );
+      }
+      if (nextStatus === "archived" && selectedId && ids.includes(selectedId)) {
+        setSelectedId(null);
+        setMessages([]);
+      }
+      const done = new Set(ids.filter((_, index) => results[index]));
+      setSelectedConversationIds((current) => current.filter((id) => !done.has(id)));
+      await loadConversations();
+    } catch {
+      showErrorToast(
+        nextStatus === "archived"
+          ? "Could not archive every conversation."
+          : "Could not unarchive every conversation."
+      );
+    } finally {
+      bulkArchiveLock.current = false;
+      setBulkArchiveBusy(false);
+      setBulkArchiveIds(null);
+    }
+  }
+
   const activeConversation = conversations.find((c) => c.id === selectedId) ?? null;
   const savedChildIds = activeConversation
     ? assignedChildIds({ childIds: activeConversation.child_ids, childId: activeConversation.child_id })
@@ -997,6 +1064,55 @@ export function MessagesSplitView({
           </div>
         </div>
 
+        {filteredConversations.length > 0 && (
+          <div className="flex min-w-0 items-center gap-2 border-b border-[#E8E4DC] px-4 py-2">
+            <input
+              ref={selectAllRef}
+              type="checkbox"
+              className="h-4 w-4 shrink-0 rounded border-[#C5D0C0] accent-[#7B9E87]"
+              checked={allVisibleSelected}
+              onChange={() => {
+                setSelectedConversationIds((current) => {
+                  if (allVisibleSelected) {
+                    const visible = new Set(visibleIds);
+                    return current.filter((id) => !visible.has(id));
+                  }
+                  const next = new Set(current);
+                  for (const id of visibleIds) next.add(id);
+                  return [...next];
+                });
+              }}
+              aria-label="Select all conversations in this list"
+            />
+            <span className="min-w-0 truncate text-[11px] text-[#8A8A8A]">Select all</span>
+            {selectedVisibleIds.length > 0 && (
+              <div className="ml-auto flex shrink-0 items-center gap-2">
+                <span className="whitespace-nowrap text-[11px] text-[#3D3D3D]">
+                  {selectedVisibleIds.length} selected
+                </span>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-7 rounded-full px-3 text-[11px]"
+                  disabled={bulkArchiveBusy}
+                  onClick={() => {
+                    const ids = selectedVisibleIds;
+                    const nextStatus = bulkUnarchive ? "open" : "archived";
+                    if (ids.length > 1) {
+                      setBulkArchiveIds(ids);
+                      return;
+                    }
+                    void applyConversationStatus(ids, nextStatus);
+                  }}
+                >
+                  {bulkUnarchive ? "Unarchive" : "Archive"}
+                </Button>
+              </div>
+            )}
+          </div>
+        )}
+
         <ScrollArea className="min-w-0 flex-1 [&_[data-radix-scroll-area-viewport]>div]:!block [&_[data-radix-scroll-area-viewport]>div]:!min-w-0 [&_[data-radix-scroll-area-viewport]>div]:!w-full">
           <div className="w-full min-w-0 px-2 py-2 space-y-1.5">
             {loadingConversations && conversations.length === 0 ? (
@@ -1042,14 +1158,28 @@ export function MessagesSplitView({
                       if (menuOpenId === c.id) setMenuOpenId(null);
                     }}
                     className={cn(
-                      "group relative flex w-full min-w-0 items-start rounded-xl px-2.5 py-2 text-left text-xs transition-colors",
+                      "group relative flex w-full min-w-0 items-start gap-2 rounded-xl px-2.5 py-2 text-left text-xs transition-colors",
                       isActive
                         ? "border-l-4 border-l-[#7C8B6E] bg-[#F2F5EF]"
                         : isEmergencyConversation
                         ? "border-l-2 border-l-[#C97B7B] bg-[#FDF2F2] border border-[#E8C4C4] hover:bg-[#FDF2F2]"
                         : "border-l-4 border-l-transparent bg-white hover:bg-[#FDFBF7]"
                     )}
-                  >
+                    >
+                    <input
+                      type="checkbox"
+                      className="mt-0.5 h-4 w-4 shrink-0 rounded border-[#C5D0C0] accent-[#7B9E87]"
+                      checked={selectedConversationIds.includes(c.id)}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={() => {
+                        setSelectedConversationIds((current) =>
+                          current.includes(c.id)
+                            ? current.filter((id) => id !== c.id)
+                            : [...current, c.id]
+                        );
+                      }}
+                      aria-label={`Select ${c.subject || "conversation"}`}
+                    />
                     <div className="min-w-0 flex-1 space-y-0.5">
                       <div className="flex min-w-0 items-center justify-between gap-3">
                         <div className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden">
@@ -2760,6 +2890,28 @@ export function MessagesSplitView({
             setMessages([]);
           }
           setConfirmArchiveOpen(false);
+        }}
+      />
+
+      <ConfirmModal
+        open={bulkArchiveIds != null && bulkArchiveIds.length > 1}
+        title={
+          bulkUnarchive
+            ? `Unarchive ${bulkArchiveIds?.length ?? 0} conversations?`
+            : `Archive ${bulkArchiveIds?.length ?? 0} conversations?`
+        }
+        description={
+          bulkUnarchive
+            ? "These conversations will return to your Open list."
+            : "You can find these conversations later under Archived."
+        }
+        confirmLabel={bulkUnarchive ? "Unarchive" : "Archive"}
+        onCancel={() => {
+          if (!bulkArchiveBusy) setBulkArchiveIds(null);
+        }}
+        onConfirm={() => {
+          const ids = bulkArchiveIds ?? [];
+          void applyConversationStatus(ids, bulkUnarchive ? "open" : "archived");
         }}
       />
 

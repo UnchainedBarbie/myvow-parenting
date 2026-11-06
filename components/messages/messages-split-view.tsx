@@ -111,6 +111,9 @@ export function MessagesSplitView({
   const [newRecordCategories, setNewRecordCategories] = useState<RecordCategoryId[]>([]);
   const [creating, setCreating] = useState(false);
   const [replyOpening, setReplyOpening] = useState(false);
+  const [renamingTitle, setRenamingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState("");
+  const [savingTitle, setSavingTitle] = useState(false);
   const [dismissedSuggestions, setDismissedSuggestions] = useState<
     Record<string, { expense?: boolean; calendar?: boolean }>
   >({});
@@ -531,6 +534,7 @@ export function MessagesSplitView({
   }, [showCourtOrderModal]);
 
   useEffect(() => {
+    setRenamingTitle(false);
     if (!selectedId) {
       setConversationSettings(null);
       setActivePause(null);
@@ -617,6 +621,34 @@ export function MessagesSplitView({
     const pending = draft?.trim();
     if (pending) window.sessionStorage.setItem(`sage-reply-draft:${id}`, pending);
     router.push(sageChatHref(id));
+  }
+
+  async function saveTitle(event: React.FormEvent) {
+    event.preventDefault();
+    if (!activeConversation || savingTitle) return;
+    const subject = titleDraft.trim();
+    if (!subject) return;
+    setSavingTitle(true);
+    try {
+      const res = await fetch(`/api/messages/conversations/${activeConversation.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ subject }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showErrorToast((data as { error?: string }).error ?? "Could not rename the conversation.");
+        return;
+      }
+      setConversations((current) =>
+        current.map((conversation) =>
+          conversation.id === activeConversation.id ? { ...conversation, subject } : conversation
+        )
+      );
+      setRenamingTitle(false);
+    } finally {
+      setSavingTitle(false);
+    }
   }
 
   async function startReply() {
@@ -1139,17 +1171,53 @@ export function MessagesSplitView({
         {activeConversation ? (
           <>
             <div className="flex items-center justify-between gap-3 border-b border-[#E8E4DC] bg-white px-4 py-3">
-              <div className="flex items-center min-w-0">
-                <div className="min-w-0">
-                  <p className="break-words text-sm font-semibold text-[#3D3D3D]">
-                    {activeConversation.subject}
-                  </p>
+              <div className="flex min-w-0 flex-1 items-center">
+                <div className="min-w-0 flex-1">
+                  {renamingTitle ? (
+                    <form onSubmit={(event) => void saveTitle(event)} className="flex min-w-0 items-center gap-2">
+                      <input
+                        value={titleDraft}
+                        onChange={(event) => setTitleDraft(event.target.value)}
+                        aria-label="Conversation title"
+                        className="min-w-0 flex-1 rounded-md border border-[#E8E4DC] bg-[#FDFBF7] px-2 py-1 text-sm text-[#3D3D3D] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E]"
+                        autoFocus
+                      />
+                      <button
+                        type="submit"
+                        disabled={savingTitle || !titleDraft.trim()}
+                        className="shrink-0 text-[12px] text-[#5B7A52] hover:text-[#3D3D3D] disabled:opacity-50"
+                      >
+                        {savingTitle ? "Saving…" : "Save"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setRenamingTitle(false)}
+                        className="shrink-0 text-[12px] text-[#8A8A8A] hover:text-[#3D3D3D]"
+                      >
+                        Cancel
+                      </button>
+                    </form>
+                  ) : (
+                    <p className="break-words text-sm font-semibold text-[#3D3D3D]">
+                      {activeConversation.subject}
+                    </p>
+                  )}
                   {activeChildName ? (
                     <p className="text-[11px] text-[#8A8A8A]">{activeChildName}</p>
                   ) : null}
                 </div>
               </div>
               <div className="flex shrink-0 items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTitleDraft(activeConversation.subject);
+                    setRenamingTitle(true);
+                  }}
+                  className="text-[12px] text-[#8A8A8A] hover:text-[#3D3D3D] underline-offset-2 hover:underline"
+                >
+                  Rename
+                </button>
                 <button
                   type="button"
                   onClick={() => setConfirmArchiveOpen(true)}

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
+import { shapeTopicTitle } from "@/lib/sage/topic-title";
 
 export async function POST(request: NextRequest) {
   try {
@@ -48,10 +49,12 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    let title = trimmed.slice(0, 40);
+    const names = await namesOnCase(admin, user.id);
+    let title = shapeTopicTitle(trimmed, names);
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (apiKey) {
       try {
+        const people = names.length > 0 ? names.join(", ") : "none listed";
         const res = await fetch("https://api.anthropic.com/v1/messages", {
           method: "POST",
           headers: {
@@ -61,11 +64,11 @@ export async function POST(request: NextRequest) {
           },
           body: JSON.stringify({
             model: "claude-sonnet-4-6",
-            max_tokens: 60,
+            max_tokens: 30,
             messages: [
               {
                 role: "user",
-                content: `Generate a short title (max 6 words, no quotes, no punctuation) that captures the topic of this message: ${trimmed}`,
+                content: `Name this as a topic label of two to four words, like "Saturday pickup" or "Choir concert". Sentence case. No quotes. No punctuation. Do not use request, reminder, inquiry, or confirmation. Do not include a person's name unless that person is the subject. People who are not the subject: ${people}. Message: ${trimmed}`,
               },
             ],
           }),
@@ -75,15 +78,14 @@ export async function POST(request: NextRequest) {
             content?: Array<{ type: string; text?: string }>;
           };
           const text = data.content?.find((c) => c.type === "text")?.text?.trim();
-          if (text) {
-            const cleaned = text.replace(/^["']|["']$/g, "").slice(0, 80);
-            if (cleaned.length > 0) title = cleaned;
-          }
+          const shaped = text ? shapeTopicTitle(text, names) : "";
+          if (shaped) title = shaped;
         }
       } catch {
-        // Keep fallback title from first message
+        // Keep the label shaped from the message itself.
       }
     }
+    if (!title) title = "Message";
 
     const now = new Date().toISOString();
     const { error: updateError } = await admin
@@ -106,4 +108,56 @@ export async function POST(request: NextRequest) {
       { status: 500 }
     );
   }
+}
+
+/** First names on this parent's case. Used only to keep those names out of a topic label. */
+async function namesOnCase(
+  admin: ReturnType<typeof getServiceRoleClient>,
+  userId: string
+): Promise<string[]> {
+  const { data: membership } = await admin
+    .from("case_members")
+    .select("case_id")
+    .eq("user_id", userId)
+    .limit(1)
+    .maybeSingle();
+  const caseId = (membership as { case_id?: string } | null)?.case_id;
+  if (!caseId) return [];
+
+  const names = new Set<string>();
+  const { data: children } = await admin
+    .from("children")
+    .select("first_name")
+    .eq("case_id", caseId)
+    .is("deleted_at", null);
+  for (const child of children ?? []) {
+    const name = ((child as { first_name?: string | null }).first_name ?? "").trim();
+    if (name) names.add(name);
+  }
+
+  const { data: members } = await admin
+    .from("case_members")
+    .select("user_id, display_name")
+    .eq("case_id", caseId);
+  const otherIds = (members ?? [])
+    .map((member) => member as { user_id?: string | null; display_name?: string | null })
+    .filter((member) => member.user_id && member.user_id !== userId);
+  for (const member of otherIds) {
+    const display = (member.display_name ?? "").trim().split(/\s+/)[0] ?? "";
+    if (display) names.add(display);
+  }
+  const { data: users } = otherIds.length
+    ? await admin
+        .from("users")
+        .select("full_name")
+        .in(
+          "id",
+          otherIds.map((member) => member.user_id).filter((id): id is string => !!id)
+        )
+    : { data: [] };
+  for (const person of users ?? []) {
+    const first = ((person as { full_name?: string | null }).full_name ?? "").trim().split(/\s+/)[0] ?? "";
+    if (first) names.add(first);
+  }
+  return [...names];
 }

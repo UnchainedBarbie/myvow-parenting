@@ -106,6 +106,71 @@ export async function GET(
   }
 }
 
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  try {
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const admin = getServiceRoleClient();
+    const conversationId = params.id;
+    const body = (await request.json().catch(() => ({}))) as { subject?: unknown };
+    const subject = typeof body.subject === "string" ? body.subject.trim() : "";
+    if (!subject) {
+      return NextResponse.json({ error: "A title is required." }, { status: 400 });
+    }
+
+    const { data: conv, error: convError } = await admin
+      .from("conversations")
+      .select("id, case_id")
+      .eq("id", conversationId)
+      .maybeSingle();
+    if (convError) {
+      return NextResponse.json({ error: convError.message }, { status: 500 });
+    }
+    if (!conv) {
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
+
+    const { data: membership } = await admin
+      .from("case_members")
+      .select("id")
+      .eq("case_id", conv.case_id)
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (!membership) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+
+    const { data: updated, error: updateError } = await admin
+      .from("conversations")
+      .update({ subject, updated_at: new Date().toISOString() })
+      .eq("id", conversationId)
+      .select("id, subject")
+      .single();
+    if (updateError || !updated) {
+      return NextResponse.json(
+        { error: updateError?.message ?? "Could not rename the conversation." },
+        { status: 500 }
+      );
+    }
+
+    return NextResponse.json({ conversation: updated });
+  } catch (e) {
+    return NextResponse.json(
+      { error: e instanceof Error ? e.message : "Could not rename the conversation." },
+      { status: 500 }
+    );
+  }
+}
+
 export async function DELETE(
   _request: NextRequest,
   { params }: { params: { id: string } }

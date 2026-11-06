@@ -697,7 +697,7 @@ export async function POST(req: NextRequest) {
       if (!p || p.type === "note_only") continue;
 
       if (action === "undo") {
-        if (p.executed === true) {
+        if (p.executed === true || (p.result_message_id ?? "").trim()) {
           return NextResponse.json(
             { success: false, error: "already sent, cannot undo" },
             { status: 400 }
@@ -715,6 +715,17 @@ export async function POST(req: NextRequest) {
         settleOwnQuestions(proposals, idx, "undone", row as { item_type?: string | null; source_type?: string | null }, now);
         if (wasWaivedAsk) undidWaivedAskClarification = true;
         continue;
+      }
+
+      if (
+        action === "agree" &&
+        p.type === "reply_coparent" &&
+        (p.executed === true || (p.result_message_id ?? "").trim().length > 0)
+      ) {
+        return NextResponse.json(
+          { success: false, error: "This message was already sent." },
+          { status: 409 }
+        );
       }
 
       if (p.executed === true) continue;
@@ -735,13 +746,10 @@ export async function POST(req: NextRequest) {
           );
         }
         if (decision === "already_sent") {
-          proposals[idx] = {
-            ...p,
-            approved: true,
-            executed: true,
-            approved_at: p.approved_at ?? now,
-          };
-          continue;
+          return NextResponse.json(
+            { success: false, error: "This message was already sent." },
+            { status: 409 }
+          );
         }
         const draftBody = approvedMessageBody(p);
         const recipientEmail = (p.recipient_email ?? "").trim();
@@ -831,12 +839,10 @@ export async function POST(req: NextRequest) {
           claimedProposal?.executed === true ||
           (claimedProposal?.result_message_id ?? "").trim()
         ) {
-          proposals[idx] = {
-            ...(claimedProposal ?? p),
-            approved: true,
-            executed: true,
-          };
-          continue;
+          return NextResponse.json(
+            { success: false, error: "This message was already sent." },
+            { status: 409 }
+          );
         }
         const proposalSubject = (p.subject ?? "").trim();
         if (!proposalSubject && chatTitle === undefined) {

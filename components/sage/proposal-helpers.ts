@@ -252,6 +252,7 @@ export function displayDraft(p: SageProposal, showDateField: boolean): string {
 
 export function canUndo(p: SageProposal): boolean {
   if (p.executed === true || isSupersededProposal(p)) return false;
+  if ((p.result_message_id ?? "").trim()) return false;
   return p.approved === true || p.status === "waived_by_user";
 }
 

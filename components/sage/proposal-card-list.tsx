@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import {
@@ -28,7 +28,7 @@ import {
 } from "@/lib/sage/proposal-kind";
 import type { SageItem, SageProposal } from "./proposal-types";
 import { isSupersededProposal } from "@/lib/sage/proposal-lifecycle";
-import { parentProposalStatusMark } from "@/lib/messages/parent-message-visibility";
+import { parentDeliveryLabel, parentDeliveryKind } from "@/lib/messages/parent-message-visibility";
 import {
   calendarCardDate,
   canUndo,
@@ -81,6 +81,27 @@ export type ProposalCardListProps = {
   className?: string;
 };
 
+function sentMessageLabel(proposal: SageProposal): string {
+  const iso = proposal.executed_at || proposal.approved_at;
+  const when = iso ? new Date(iso) : null;
+  const time =
+    when && !Number.isNaN(when.getTime())
+      ? when.toLocaleString(undefined, {
+          month: "short",
+          day: "numeric",
+          hour: "numeric",
+          minute: "2-digit",
+        })
+      : null;
+  const state = parentDeliveryLabel(
+    parentDeliveryKind({
+      deliveryStatus: proposal.delivery_status,
+      deliveredAt: proposal.delivered_at,
+    })
+  );
+  return time ? `Sent ${time} · ${state}` : `Sent · ${state}`;
+}
+
 export function ProposalCardList({
   itemId,
   item,
@@ -121,6 +142,7 @@ export function ProposalCardList({
   };
   const [cardSend, setCardSend] = useState<CardSend | null>(null);
   const [showPrevious, setShowPrevious] = useState(false);
+  const sendInFlight = useRef(false);
 
   async function finishSend(
     current: CardSend,
@@ -174,6 +196,12 @@ export function ProposalCardList({
     const [index, ...rest] = queue;
     const proposal = proposals[index];
     if (!proposal) return;
+    if (
+      proposal.type === "reply_coparent" &&
+      (proposal.executed === true || (proposal.result_message_id ?? "").trim().length > 0)
+    ) {
+      return;
+    }
     const body = proposalMessageText(proposal);
     if (
       cardSend?.index === index &&
@@ -217,7 +245,13 @@ export function ProposalCardList({
     // A message never goes through onAgree without the review. Where no review can run, it is held.
     const routed = routeApprovals(indexes, proposals, reviewSends);
     if (routed.direct.length > 0) void onAgree(routed.direct);
-    if (routed.review.length > 0) void beginSend(routed.review);
+    if (routed.review.length > 0) {
+      if (sendInFlight.current) return;
+      sendInFlight.current = true;
+      void beginSend(routed.review).finally(() => {
+        sendInFlight.current = false;
+      });
+    }
   }
 
   /** The pencil edit is reviewed, then Send on the card sends that reviewed text. */
@@ -289,10 +323,12 @@ export function ProposalCardList({
           const waived = isWaived(p);
           const executed = p.executed === true;
           const savedMessageId = (p.result_message_id ?? "").trim();
+          const sentMessage =
+            p.type === "reply_coparent" && (savedMessageId.length > 0 || executed);
           const done = isCalendarUpdateProposal(p.type)
             ? isCommitted(p)
             : p.type === "reply_coparent"
-              ? savedMessageId.length > 0
+              ? sentMessage
               : executed;
           const noteOnly = p.type === "note_only";
           const actionable = isActionable(p);
@@ -303,7 +339,7 @@ export function ProposalCardList({
           const rowBusy = busyKey === `${itemId}:${idx}` || itemBusy;
           const formPending =
             isFormExecuteProposal(p.type) && !done && !waived && !blocked;
-          const showUndoOnly = canUndo(p) && !formPending;
+          const showUndoOnly = canUndo(p) && !formPending && !sentMessage;
           const sendable = p.type === "reply_coparent" && Boolean((p.recipient_email ?? "").trim());
           // A message on a surface that cannot run the review is shown, never approved or sent from here.
           const heldMessage = sendable && !reviewSends && !done;
@@ -323,7 +359,7 @@ export function ProposalCardList({
               {/* Left controls — hidden in item bulk-select mode */}
               {suppressActions ? null : noteOnly || blocked || superseded ? (
                 <span className="mt-0.5 w-12 shrink-0" aria-hidden />
-              ) : showUndoOnly ? (
+              ) : done ? null : showUndoOnly ? (
                 <button
                   type="button"
                   className="mt-0.5 shrink-0 text-[10px] text-[#5B7A52] hover:underline disabled:opacity-40"
@@ -420,7 +456,7 @@ export function ProposalCardList({
                     {proposalTypeLabel(p.type, p)}
                   </span>
                   {!historical && done ? (
-                    <span className="text-[10px] font-medium text-[#5B7A52]">
+                    <span className="text-[11px] text-[#3D3D3D]">
                       {isLogExpenseProposal(p.type)
                         ? "✓ done"
                         : isCalendarUpdateProposal(p.type)
@@ -430,10 +466,7 @@ export function ProposalCardList({
                           : isLogDocumentProposal(p.type)
                             ? "✓ filed"
                             : p.type === "reply_coparent"
-                              ? parentProposalStatusMark({
-                                  deliveryStatus: p.delivery_status,
-                                  deliveredAt: p.delivered_at,
-                                })
+                              ? sentMessageLabel(p)
                               : "✓ done"}
                     </span>
                   ) : !historical && approved && !formPending ? (
@@ -521,7 +554,7 @@ export function ProposalCardList({
                 >
                   {historical ? (p.draft ?? "").trim() : displayDraft(p, showDate)}
                 </p>
-                {cardSend?.index === idx && cardSend.needsEditChoice ? (
+                {!done && cardSend?.index === idx && cardSend.needsEditChoice ? (
                   <div className="space-y-1" data-testid="outbound-edit-unreviewed">
                     <p className="text-[11px] text-[#8A6A2F]">
                       Sage has not read this edited text. Review it first, or choose to use it without another review.
@@ -552,7 +585,7 @@ export function ProposalCardList({
                     </div>
                   </div>
                 ) : null}
-                {cardSend?.index === idx && cardSend.error ? (
+                {!done && cardSend?.index === idx && cardSend.error ? (
                   <p
                     className={cn(
                       "text-[11px]",
@@ -564,7 +597,7 @@ export function ProposalCardList({
                     {cardSend.error}
                   </p>
                 ) : null}
-                {cardSend?.index === idx && cardSend.attachmentBlocked ? (
+                {!done && cardSend?.index === idx && cardSend.attachmentBlocked ? (
                   <div className="space-y-1 rounded-xl border border-[#E8D9B5] bg-[#FDF6E3] px-2.5 py-2 text-[11px]">
                     <p>{cardSend.attachmentBlocked}</p>
                     <Button

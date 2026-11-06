@@ -17,7 +17,7 @@ import {
   type ParentIdentity,
   type RecordFilterInput,
 } from "./record-filters";
-import { messageNumber, separateExcluded, type RecordEntry } from "./record-present";
+import { messageNumber, separateExcluded, conversationHeading, formatConversationNumber, type RecordEntry } from "./record-present";
 
 const TZ = "America/Denver";
 const NOW = new Date("2026-10-20T18:00:00.000Z");
@@ -201,7 +201,9 @@ function run() {
     exclusions: [reason],
   });
   assert.ok(excluded.includes("2 stored records are omitted because they are a draft"));
-  assert.ok(excluded.includes(`and 1 stored record is excluded from this export: "${reason}".`));
+  const quotedReason = reason.replace(/\.$/, "");
+  assert.ok(excluded.includes(`and 1 stored record is excluded from this export: "${quotedReason}".`));
+  assert.ok(!excluded.includes('communication.".'));
   assert.ok(excluded.includes("not a complete certification"));
   assert.ok(!excluded.includes("3 stored records are omitted"));
   const onlyExcluded = completenessStatement({
@@ -215,7 +217,7 @@ function run() {
   });
   assert.strictEqual(
     exclusionDisclosure([reason, reason, "A second reason."]),
-    `3 stored records are excluded from this export: "${reason}" (2); "A second reason." (1)`
+    `3 stored records are excluded from this export: "${quotedReason}" (2); "A second reason" (1)`
   );
   assert.ok(onlyExcluded.includes(exclusionDisclosure([reason, reason, "A second reason."])));
 
@@ -246,6 +248,29 @@ function run() {
 
   const unfiltered = [ot, sibling].filter((item) => match(item, baseFilters));
   assert.strictEqual(unfiltered.length, 2);
+
+  assert.strictEqual(formatConversationNumber(3), "CNV-003");
+  assert.strictEqual(formatConversationNumber(null), null);
+  assert.strictEqual(
+    conversationHeading({
+      id: "conv-1",
+      subject: "Saturday Pickup Confirmation Request to Kevin",
+      topic: "General",
+      category: "General",
+      conversation_number: 4,
+    }),
+    "CNV-004 · Saturday Pickup Confirmation Request to Kevin"
+  );
+  assert.strictEqual(
+    conversationHeading({
+      id: "conv-old",
+      subject: "Saturday Pickup Confirmation Request for Kevin",
+      topic: "General",
+      category: "General",
+      conversation_number: null,
+    }),
+    "Saturday Pickup Confirmation Request for Kevin"
+  );
 
   console.log("record-filters.test.ts: all assertions passed.");
 }

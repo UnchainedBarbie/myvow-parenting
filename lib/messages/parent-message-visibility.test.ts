@@ -68,40 +68,44 @@ function main() {
     /not a parent on this case/i
   );
 
-  const threadFromKevinInbound = chooseSharedConversation({
-    conversations: [
-      { id: "conv-kevin-sent", coparentEmail: "kevin.reply@example.com", subject: "Schedule" },
-    ],
-    recipientEmail: "kevin.reply@example.com",
-    senderEmails: ashley.emails,
-    subject: "Re: Schedule",
-  });
-  assert.equal(threadFromKevinInbound, "conv-kevin-sent");
+  assert.equal(
+    chooseSharedConversation({
+      conversations: [
+        { id: "conv-to", emailThreadId: null },
+        { id: "conv-for", emailThreadId: null },
+      ],
+      conversationId: null,
+      emailThreadId: null,
+    }),
+    null
+  );
 
-  const threadFromAshleyInbound = chooseSharedConversation({
-    conversations: [
-      { id: "conv-newer", coparentEmail: "ashley.reply@example.com", subject: "Pediatrician listing" },
-      { id: "conv-ashley-sent", coparentEmail: "ashley.reply@example.com", subject: "Schedule" },
-    ],
-    recipientEmail: "kevin@example.com",
-    senderEmails: ashley.emails,
-    subject: "Something else",
-  });
-  assert.equal(threadFromAshleyInbound, null);
+  assert.equal(
+    chooseSharedConversation({
+      conversations: [{ id: "conv-named", emailThreadId: "<other@myvow.in>" }],
+      conversationId: "conv-named",
+      emailThreadId: "<different@myvow.in>",
+    }),
+    "conv-named"
+  );
+
+  assert.equal(
+    chooseSharedConversation({
+      conversations: [{ id: "conv-thread", emailThreadId: "<msg-1@myvow.in>" }],
+      conversationId: "conv-missing",
+      emailThreadId: "<msg-1@myvow.in>",
+    }),
+    null
+  );
 
   assert.equal(
     chooseSharedConversation({
       conversations: [
         {
           id: "conv-thread",
-          coparentEmail: "someone@example.com",
-          subject: "Other",
           emailThreadId: "<msg-1@myvow.in>",
         },
       ],
-      recipientEmail: kevin.emails[0],
-      senderEmails: ashley.emails,
-      subject: "Schedule",
       emailThreadId: "<msg-1@myvow.in>",
     }),
     "conv-thread"
@@ -109,9 +113,7 @@ function main() {
 
   assert.equal(
     chooseSharedConversation({
-      conversations: [{ id: "other", coparentEmail: "someone@example.com", subject: "Schedule" }],
-      recipientEmail: kevin.emails[0],
-      senderEmails: ashley.emails,
+      conversations: [{ id: "other", emailThreadId: null }],
     }),
     null
   );

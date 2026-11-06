@@ -113,11 +113,13 @@ async function conversationForParents(
     caseId: string;
     senderId: string;
     recipientEmail: string;
-    senderEmails: string[];
     subject?: string | null;
+    conversationId?: string | null;
     emailThreadId?: string | null;
   }
-): Promise<{ id: string; subject: string; emailThreadId: string | null } | { error: string }> {
+): Promise<
+  { id: string; subject: string; emailThreadId: string | null } | { error: string; status: number }
+> {
   const { data } = await admin
     .from("conversations")
     .select("id, subject, coparent_email, email_thread_id, updated_at")
@@ -129,20 +131,20 @@ async function conversationForParents(
     coparent_email?: string | null;
     email_thread_id?: string | null;
   }[];
+  const explicitId = (input.conversationId ?? "").trim();
   const existingId = chooseSharedConversation({
     conversations: rows
       .filter((row) => row.id)
       .map((row) => ({
         id: row.id as string,
-        coparentEmail: row.coparent_email ?? null,
-        subject: row.subject ?? null,
         emailThreadId: row.email_thread_id ?? null,
       })),
-    recipientEmail: input.recipientEmail,
-    senderEmails: input.senderEmails,
-    subject: input.subject,
+    conversationId: explicitId || null,
     emailThreadId: input.emailThreadId,
   });
+  if (explicitId && !existingId) {
+    return { error: "That conversation is not on this case.", status: 404 };
+  }
   const existing = rows.find((row) => row.id === existingId);
   if (existing?.id) {
     return {
@@ -166,7 +168,7 @@ async function conversationForParents(
     .select("id, subject, email_thread_id")
     .single();
   if (created.error || !created.data) {
-    return { error: created.error?.message ?? "The conversation could not be saved." };
+    return { error: created.error?.message ?? "The conversation could not be saved.", status: 500 };
   }
   const row = created.data as { id: string; subject?: string | null; email_thread_id?: string | null };
   return { id: row.id, subject: (row.subject ?? "").trim(), emailThreadId: row.email_thread_id ?? null };
@@ -536,6 +538,9 @@ export async function deliverParentMessage(
     body: string;
     recipientEmail: string;
     subject?: string | null;
+    /** A reply names the thread. Absent means a new conversation, unless emailThreadId matches. */
+    conversationId?: string | null;
+    emailThreadId?: string | null;
     proposalId?: string | null;
     /** The file the parent expects to share with this message. */
     attachment?: AttachmentIntent | null;
@@ -637,11 +642,12 @@ export async function deliverParentMessage(
     caseId: input.caseId,
     senderId: input.senderId,
     recipientEmail,
-    senderEmails: directory.senderEmails,
     subject: input.subject,
+    conversationId: input.conversationId,
+    emailThreadId: input.emailThreadId,
   });
   if ("error" in conversation) {
-    return { ok: false, status: 500, message: conversation.error };
+    return { ok: false, status: conversation.status, message: conversation.error };
   }
   const fields = parentMessageFields({
     caseId: input.caseId,

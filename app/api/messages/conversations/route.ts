@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
 import { linkUnassignedParentMessages } from "@/lib/messages/deliver-parent-message";
 import { presentMessageForViewer } from "@/lib/messages/parent-message-visibility";
+import { latestThreadPreview } from "@/lib/messages/thread-preview";
 import { isMissingRelation, isRecordCategoryId } from "@/lib/record/record-categories";
 
 const ALLOWED_TOPICS = new Set([
@@ -195,16 +196,16 @@ export async function GET() {
     }
 
     const summaries = conversations.map((c) => {
-      const list = (byConversation[c.id] ?? []).slice().sort((a, b) =>
-        a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0
-      );
-      const last = list[list.length - 1] ?? null;
+      const list = (byConversation[c.id] ?? []).slice().sort((a, b) => {
+        if (a.created_at < b.created_at) return -1;
+        if (a.created_at > b.created_at) return 1;
+        return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+      });
+      const latest = latestThreadPreview(list);
       const unreadCount = list.filter(
         (m) => m.direction === "incoming" && m.read_at == null
       ).length;
-      const lastPreview = last
-        ? (last.ai_rewritten_content ?? last.original_content ?? "")
-        : "";
+      const lastPreview = latest.preview;
 
       // Topic/category from DB (conversations_topic_check allows title case only)
       const rawTopicTag = (c.topic ?? c.category ?? "General").trim();
@@ -250,7 +251,7 @@ export async function GET() {
         created_at: c.created_at,
         updated_at: c.updated_at,
         last_message_preview: lastPreview,
-        last_message_created_at: last?.created_at ?? null,
+        last_message_created_at: latest.created_at,
         unread_count: unreadCount,
         category: topicTag,
         message_count: list.length,

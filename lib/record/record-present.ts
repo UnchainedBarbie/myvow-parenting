@@ -40,7 +40,13 @@ export type ConversationRow = {
   topic: string | null;
   category: string | null;
   subject: string | null;
+  conversation_number?: number | null;
 };
+
+export function formatConversationNumber(value: number | null | undefined): string | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  return `CNV-${String(Math.trunc(value)).padStart(3, "0")}`;
+}
 
 export type RecordEntry = {
   message: MessageRow;
@@ -289,10 +295,10 @@ export function senderLine(direction: string, sender: { name: string; email: str
 
 export function conversationHeading(conversation: ConversationRow | undefined): string {
   const subject = conversation?.subject?.trim() || "";
-  if (subject) return subject;
   const raw = conversation?.topic?.trim() || conversation?.category?.trim() || "";
-  if (raw) return TOPIC_LABELS[raw.toLowerCase()] ?? raw;
-  return "Conversation";
+  const label = subject || (raw ? TOPIC_LABELS[raw.toLowerCase()] ?? raw : "") || "Conversation";
+  const number = formatConversationNumber(conversation?.conversation_number);
+  return number ? `${number} · ${label}` : label;
 }
 
 export function messageTime(iso: string): number {

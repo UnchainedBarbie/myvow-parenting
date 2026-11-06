@@ -307,7 +307,8 @@ export function filtersRestrict(lines: AppliedFilterLine[]): boolean {
 }
 
 function quotedReason(reason: string): string {
-  return `"${reason.replace(/"/g, "'")}"`;
+  // The sentence that embeds this quote supplies the closing period.
+  return `"${reason.replace(/"/g, "'").replace(/\.$/, "")}"`;
 }
 
 /** One disclosure for every excluded row. Repeated reasons are counted. */

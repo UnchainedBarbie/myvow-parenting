@@ -346,6 +346,8 @@ export async function POST(req: NextRequest) {
       dates?: Record<string, string> | null;
       reviewed_message?: unknown;
       acknowledge_attachment_omission?: unknown;
+      conversation_id?: unknown;
+      email_thread_id?: unknown;
     } | null;
 
     const id = body?.id ? String(body.id) : "";
@@ -850,6 +852,8 @@ export async function POST(req: NextRequest) {
           body: sendBody,
           recipientEmail,
           subject: proposalSubject || chatTitle || null,
+          conversationId: typeof body?.conversation_id === "string" ? body.conversation_id : null,
+          emailThreadId: typeof body?.email_thread_id === "string" ? body.email_thread_id : null,
           proposalId: (p.id ?? "").trim() || null,
           attachment: attachmentIntent(p),
           acknowledgeAttachmentOmission: body?.acknowledge_attachment_omission === true,

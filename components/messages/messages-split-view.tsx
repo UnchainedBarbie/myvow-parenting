@@ -30,6 +30,7 @@ import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { AlertCircle } from "lucide-react";
 import { ConversationCategories } from "./conversation-categories";
 import { RECORD_CATEGORIES, type RecordCategoryId } from "@/lib/record/record-categories";
+import { latestThreadPreview } from "@/lib/messages/thread-preview";
 import { sageChatHref } from "@/lib/sage-sessions-client";
 
 type ChildSummary = { id: string; first_name: string };
@@ -98,6 +99,8 @@ export function MessagesSplitView({
   const [loadingConversations, setLoadingConversations] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [messages, setMessages] = useState<MessageRow[]>([]);
+  /** Conversation id the loaded `messages` belong to. The sidebar preview follows this thread. */
+  const [threadConversationId, setThreadConversationId] = useState<string | null>(null);
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [search, setSearch] = useState("");
   const [newModalOpen, setNewModalOpen] = useState(false);
@@ -235,6 +238,7 @@ export function MessagesSplitView({
       const data = await res.json().catch(() => ({}));
       if (!res.ok) return;
       if (selectedIdRef.current !== conversationId) return;
+      setThreadConversationId(conversationId);
       setMessages((data.messages ?? []) as MessageRow[]);
     } finally {
       setLoadingMessages(false);
@@ -250,6 +254,7 @@ export function MessagesSplitView({
       const data = await res.json().catch(() => ({}));
       if (!res.ok) return;
       if (selectedIdRef.current !== conversationId) return;
+      setThreadConversationId(conversationId);
       setMessages((data.messages ?? []) as MessageRow[]);
       if (viewport instanceof HTMLElement && scrollTop != null) {
         requestAnimationFrame(() => {
@@ -260,6 +265,30 @@ export function MessagesSplitView({
       // Leave the thread and the composer as they are.
     }
   }, []);
+
+  useEffect(() => {
+    if (!threadConversationId || messages.length === 0) return;
+    const live = latestThreadPreview(messages);
+    setConversations((current) => {
+      let changed = false;
+      const next = current.map((conversation) => {
+        if (conversation.id !== threadConversationId) return conversation;
+        if (
+          conversation.last_message_preview === live.preview &&
+          conversation.last_message_created_at === live.created_at
+        ) {
+          return conversation;
+        }
+        changed = true;
+        return {
+          ...conversation,
+          last_message_preview: live.preview,
+          last_message_created_at: live.created_at,
+        };
+      });
+      return changed ? next : current;
+    });
+  }, [messages, threadConversationId]);
 
   useEffect(() => {
     void loadConversations();
@@ -562,9 +591,7 @@ export function MessagesSplitView({
   const activeChildName =
     activeConversation?.child_id && childMap[activeConversation.child_id]
       ? childMap[activeConversation.child_id]
-      : activeConversation
-        ? "General"
-        : null;
+      : null;
 
   async function handleSelectConversation(id: string) {
     setSelectedId(id);
@@ -655,8 +682,6 @@ export function MessagesSplitView({
       setCreating(false);
     }
   }
-
-  const displayCoparentName = "Co-Parent";
 
   const [activeTone] = useState<"calm" | "elevated" | "tense">("calm");
 
@@ -878,22 +903,26 @@ export function MessagesSplitView({
             ) : (
               filteredConversations.map((c) => {
                 const isActive = c.id === selectedId;
-                const childName =
-                  c.child_id && childMap[c.child_id]
-                    ? childMap[c.child_id]
-                    : "General";
-                const dateLabel = c.last_message_created_at
-                  ? new Date(c.last_message_created_at).toLocaleDateString("en-US", {
-                      month: "short",
-                      day: "numeric",
-                    })
-                  : new Date(c.created_at).toLocaleDateString("en-US", {
-                      month: "short",
-                      day: "numeric",
-                    });
+                const livePreview = c.id === threadConversationId ? latestThreadPreview(messages) : null;
+                const preview = (
+                  livePreview && messages.length > 0
+                    ? livePreview.preview
+                    : (c.last_message_preview ?? "")
+                )
+                  .replace(/\s+/g, " ")
+                  .trim();
+                const activityAt =
+                  (livePreview && messages.length > 0 ? livePreview.created_at : null) ??
+                  c.last_message_created_at ??
+                  c.created_at;
+                const dateLabel = new Date(activityAt).toLocaleDateString("en-US", {
+                  month: "short",
+                  day: "numeric",
+                });
                 const isDeletable = (c.message_count ?? 0) === 0;
                 const isEmergencyConversation =
                   c.has_emergency === true || c.category === "Emergency";
+                const childLabel = c.child_id ? childMap[c.child_id] ?? null : null;
                 return (
                   <div
                     key={c.id}
@@ -912,16 +941,24 @@ export function MessagesSplitView({
                     )}
                   >
                     <div className="min-w-0 flex-1 space-y-0.5">
-                      <div className="flex items-center justify-between gap-2">
-                        <p className="truncate text-[13px] font-semibold text-[#3D3D3D]">
-                          <span className="truncate align-middle">{c.subject}</span>
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex min-w-0 flex-1 items-center gap-1">
+                          <p
+                            className="min-w-0 max-w-[60ch] truncate text-[13px] font-medium text-[#3D3D3D]"
+                            title={c.subject}
+                          >
+                            {c.subject}
+                          </p>
+                          {childLabel ? (
+                            <span className="shrink-0 text-[10px] text-[#8A8A8A]">{childLabel}</span>
+                          ) : null}
                           {isEmergencyConversation && (
-                            <span className="ml-1 inline-flex shrink-0 items-center gap-0.5 align-middle text-[#C97B7B]" aria-hidden>
+                            <span className="inline-flex shrink-0 text-[#C97B7B]" aria-label="Emergency">
                               <AlertCircle className="h-3 w-3" />
                             </span>
                           )}
-                        </p>
-                        <div className="flex items-center gap-1.5">
+                        </div>
+                        <div className="flex shrink-0 items-center gap-1.5">
                           {c.pinned_by_me && (
                             <span className="text-[#5B7A52]" title="Pinned">
                               <Pin className="h-3.5 w-3.5" />
@@ -932,13 +969,11 @@ export function MessagesSplitView({
                               <Flag className="h-3.5 w-3.5 fill-current" />
                             </span>
                           )}
-                          <span className="shrink-0 text-[10px] text-[#8A8A8A]">
+                          <span className="text-[10px] text-[#8A8A8A]">
                             {dateLabel}
                           </span>
                           {c.status === "archived" && (
-                            <span className="inline-flex items-center rounded-full border border-[#E2C877] bg-[#FDF6E3] px-2 py-0.5 text-[9px] font-medium text-[#B8960F]">
-                              Archived
-                            </span>
+                            <span className="text-[10px] text-[#8A8A8A]">Archived</span>
                           )}
                           <button
                             type="button"
@@ -1087,39 +1122,9 @@ export function MessagesSplitView({
                           )}
                         </div>
                       )}
-                      <p className="line-clamp-1 text-[11px] text-[#8A8A8A]">
-                        {c.last_message_preview || "No messages yet."}
+                      <p className="truncate text-[11px] text-[#8A8A8A]" title={preview || undefined}>
+                        {preview || "No messages yet."}
                       </p>
-                      <div className="flex items-center justify-between gap-2 pt-0.5">
-                        <div className="flex items-center gap-1.5">
-                          <span className="inline-flex items-center gap-1 rounded-full bg-[#F2F5EF] px-2 py-0.5 text-[10px] text-[#5B7A52]">
-                            <span className="h-1.5 w-1.5 rounded-full bg-[#7C8B6E]" />
-                            {getTopicLabel(c.category)}
-                          </span>
-                          <span className="inline-flex items-center gap-1 rounded-full bg-[#F2F5EF] px-2 py-0.5 text-[10px] text-[#5B7A52]">
-                            <span className="h-1.5 w-1.5 rounded-full bg-[#7C8B6E]" />
-                            {childName}
-                          </span>
-                          <span className="text-[10px] text-[#8A8A8A]">
-                            · Co-Parent
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span
-                            className={cn(
-                              "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium",
-                              c.status === "archived"
-                                ? "bg-[#F5F5F5] text-[#8A8A8A]"
-                                : "bg-[#F2F5EF] text-[#5B7A52]"
-                            )}
-                          >
-                            {c.status === "archived" ? "Archived" : "Open"}
-                          </span>
-                          {c.unread_count > 0 && (
-                            <span className="h-2 w-2 rounded-full bg-[#D0705A]" />
-                          )}
-                        </div>
-                      </div>
                     </div>
                   </div>
                 );
@@ -1136,13 +1141,12 @@ export function MessagesSplitView({
             <div className="flex items-center justify-between gap-3 border-b border-[#E8E4DC] bg-white px-4 py-3">
               <div className="flex items-center min-w-0">
                 <div className="min-w-0">
-                  <p className="truncate text-sm font-semibold text-[#3D3D3D]">
+                  <p className="break-words text-sm font-semibold text-[#3D3D3D]">
                     {activeConversation.subject}
                   </p>
-                  <p className="text-[11px] text-[#8A8A8A]">
-                    {displayCoparentName}
-                    {activeChildName ? ` · ${activeChildName}` : ""}
-                  </p>
+                  {activeChildName ? (
+                    <p className="text-[11px] text-[#8A8A8A]">{activeChildName}</p>
+                  ) : null}
                 </div>
               </div>
               <button

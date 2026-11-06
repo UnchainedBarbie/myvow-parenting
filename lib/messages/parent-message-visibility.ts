@@ -11,8 +11,6 @@ export type CaseParentAddress = {
 
 export type SharedConversationChoice = {
   id: string;
-  coparentEmail: string | null;
-  subject: string | null;
   emailThreadId?: string | null;
 };
 
@@ -43,41 +41,25 @@ export function resolveCaseRecipient(input: {
   return { error: "More than one parent on this case uses that address." };
 }
 
-function subjectKey(value: string | null | undefined): string {
-  return (value ?? "")
-    .trim()
-    .toLowerCase()
-    .replace(/^(re|fw|fwd)\s*:\s*/i, "")
-    .trim();
-}
-
 /**
- * A conversation stores one co-parent address, from whichever parent last received mail.
- * Match either parent's address so a reply in the other direction stays on the same thread.
- * No match returns null. A message is never attached to an unrelated thread.
+ * Thread membership. A title is not an identity.
+ * An explicit id that is not one of these conversations does not fall through
+ * to another thread. No match returns null, and the caller creates a new row.
  */
 export function chooseSharedConversation(input: {
   conversations: SharedConversationChoice[];
-  recipientEmail: string;
-  senderEmails: string[];
-  subject?: string | null;
+  conversationId?: string | null;
   emailThreadId?: string | null;
 }): string | null {
+  const explicit = (input.conversationId ?? "").trim();
+  if (explicit) {
+    const named = input.conversations.find((row) => row.id === explicit);
+    return named ? named.id : null;
+  }
   const threadId = (input.emailThreadId ?? "").trim();
   if (threadId) {
     const threadHit = input.conversations.find((row) => (row.emailThreadId ?? "").trim() === threadId);
     if (threadHit) return threadHit.id;
-  }
-  const needles = new Set(
-    [input.recipientEmail, ...input.senderEmails].map((email) => normalizeMessageEmail(email)).filter(Boolean)
-  );
-  const matches = input.conversations.filter((row) =>
-    needles.has(normalizeMessageEmail(row.coparentEmail))
-  );
-  const wanted = subjectKey(input.subject);
-  if (wanted) {
-    const subjectHit = matches.find((row) => subjectKey(row.subject) === wanted);
-    if (subjectHit) return subjectHit.id;
   }
   return null;
 }

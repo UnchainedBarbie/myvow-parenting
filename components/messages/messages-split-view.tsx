@@ -890,8 +890,8 @@ export function MessagesSplitView({
           </div>
         </div>
 
-        <ScrollArea className="flex-1">
-          <div className="px-2 py-2 space-y-1.5">
+        <ScrollArea className="min-w-0 flex-1 [&_[data-radix-scroll-area-viewport]>div]:!block [&_[data-radix-scroll-area-viewport]>div]:!min-w-0 [&_[data-radix-scroll-area-viewport]>div]:!w-full">
+          <div className="w-full min-w-0 px-2 py-2 space-y-1.5">
             {loadingConversations && conversations.length === 0 ? (
               <p className="px-2 py-4 text-xs text-[#8A8A8A]">Loading…</p>
             ) : filteredConversations.length === 0 ? (
@@ -932,7 +932,7 @@ export function MessagesSplitView({
                       if (menuOpenId === c.id) setMenuOpenId(null);
                     }}
                     className={cn(
-                      "group relative flex w-full items-start rounded-xl px-2.5 py-2 text-left text-xs transition-colors",
+                      "group relative flex w-full min-w-0 items-start rounded-xl px-2.5 py-2 text-left text-xs transition-colors",
                       isActive
                         ? "border-l-4 border-l-[#7C8B6E] bg-[#F2F5EF]"
                         : isEmergencyConversation
@@ -941,10 +941,10 @@ export function MessagesSplitView({
                     )}
                   >
                     <div className="min-w-0 flex-1 space-y-0.5">
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="flex min-w-0 flex-1 items-center gap-1">
+                      <div className="flex min-w-0 items-center justify-between gap-3">
+                        <div className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden">
                           <p
-                            className="min-w-0 max-w-[60ch] truncate text-[13px] font-medium text-[#3D3D3D]"
+                            className="min-w-0 flex-1 truncate text-[13px] font-medium text-[#3D3D3D]"
                             title={c.subject}
                           >
                             {c.subject}
@@ -960,16 +960,16 @@ export function MessagesSplitView({
                         </div>
                         <div className="flex shrink-0 items-center gap-1.5">
                           {c.pinned_by_me && (
-                            <span className="text-[#5B7A52]" title="Pinned">
+                            <span className="shrink-0 text-[#5B7A52]" title="Pinned">
                               <Pin className="h-3.5 w-3.5" />
                             </span>
                           )}
                           {c.conversation_flagged_by_me && (
-                            <span className="text-[#B45309]" title="Flagged (private)">
+                            <span className="shrink-0 text-[#B45309]" title="Flagged (private)">
                               <Flag className="h-3.5 w-3.5 fill-current" />
                             </span>
                           )}
-                          <span className="text-[10px] text-[#8A8A8A]">
+                          <span className="shrink-0 whitespace-nowrap text-[10px] text-[#8A8A8A]">
                             {dateLabel}
                           </span>
                           {c.status === "archived" && (
@@ -1122,7 +1122,7 @@ export function MessagesSplitView({
                           )}
                         </div>
                       )}
-                      <p className="truncate text-[11px] text-[#8A8A8A]" title={preview || undefined}>
+                      <p className="block w-full min-w-0 truncate text-[11px] text-[#8A8A8A]" title={preview || undefined}>
                         {preview || "No messages yet."}
                       </p>
                     </div>

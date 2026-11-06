@@ -50,8 +50,10 @@ export type OpenItemDraft = {
 
 export type OpenItemView = OpenItemDraft & {
   href: string | null;
-  /** Chat that produced this item, when source_id is a journal turn. Navigation only. */
+  /** Journal chat scrolled to the turn, when source_id is that journal row. */
   chatHref: string | null;
+  /** Co-parent message conversation. Open conversation uses the Reply session path. */
+  conversationId: string | null;
   item: SageItem | null;
 };
 
@@ -120,6 +122,28 @@ export function openChatHref(
   if (!session || !turn) return null;
   const params = new URLSearchParams({ turn });
   return `/sage/${session}?${params.toString()}`;
+}
+
+/**
+ * Where Open conversation goes.
+ * A journal turn wins. Otherwise a co-parent message opens that message's
+ * conversation through the same Reply session path. Anything else has no link.
+ */
+export function openConversationDestination(input: {
+  sourceType: string | null | undefined;
+  journal: { sessionId: string; turnId: string } | null;
+  messageConversationId: string | null | undefined;
+}): { chatHref: string | null; conversationId: string | null } | null {
+  if (input.journal) {
+    const chatHref = openChatHref(input.journal.sessionId, input.journal.turnId);
+    if (chatHref) return { chatHref, conversationId: null };
+  }
+  const source = (input.sourceType ?? "").trim().toLowerCase();
+  const conversationId = (input.messageConversationId ?? "").trim();
+  if (source === "message" && conversationId) {
+    return { chatHref: null, conversationId };
+  }
+  return null;
 }
 
 function clip(text: string, max: number): string {

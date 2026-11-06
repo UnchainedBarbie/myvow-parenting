@@ -4,6 +4,7 @@ import {
   isClosedOpenItemProposal,
   chatTurnForSource,
   openChatHref,
+  openConversationDestination,
   openItemHref,
   type OpenItemSource,
 } from "@/lib/open-items";
@@ -268,5 +269,46 @@ assert.equal(openChatHref("session-9", "journal-1"), "/sage/session-9?turn=journ
 assert.equal(openChatHref(null, "journal-1"), null);
 assert.equal(openChatHref("session-9", null), null);
 assert.equal(openChatHref("session-9", "journal-1")?.includes("item"), false);
+
+assert.deepEqual(
+  openConversationDestination({
+    sourceType: "message",
+    journal: { sessionId: "session-9", turnId: "journal-1" },
+    messageConversationId: "conv-1",
+  }),
+  { chatHref: "/sage/session-9?turn=journal-1", conversationId: null }
+);
+assert.deepEqual(
+  openConversationDestination({
+    sourceType: "message",
+    journal: null,
+    messageConversationId: "conv-1",
+  }),
+  { chatHref: null, conversationId: "conv-1" }
+);
+assert.equal(
+  openConversationDestination({
+    sourceType: "message",
+    journal: null,
+    messageConversationId: null,
+  }),
+  null
+);
+assert.equal(
+  openConversationDestination({
+    sourceType: "chat",
+    journal: null,
+    messageConversationId: "conv-1",
+  }),
+  null
+);
+assert.equal(
+  openConversationDestination({
+    sourceType: "email",
+    journal: null,
+    messageConversationId: null,
+  }),
+  null
+);
 
 console.log("open-items tests passed");

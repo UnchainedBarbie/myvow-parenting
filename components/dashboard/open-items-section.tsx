@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { OpenItemReview } from "@/components/dashboard/open-item-review";
 import { Button } from "@/components/ui/button";
 import { showErrorToast } from "@/components/ui/toaster";
+import { sageChatHref } from "@/lib/sage-sessions-client";
 import {
   openItemsPreviewLimit,
   SAGE_PROPOSALS_CHANGED_EVENT,
@@ -245,12 +246,44 @@ export function OpenItemModuleList({ type }: { type: OpenItemType }) {
   } = useOpenItems();
   const [expanded, setExpanded] = useState(false);
   const [confirmDismiss, setConfirmDismiss] = useState(false);
+  const [openingKey, setOpeningKey] = useState<string | null>(null);
   const moduleItems = items.filter((entry) => entry.type === type);
   const visible = expanded ? moduleItems : moduleItems.slice(0, openItemsPreviewLimit());
   const hiddenCount = Math.max(0, moduleItems.length - visible.length);
   const selectedEntries = moduleItems.filter((entry) => selected.includes(entry.key));
 
   if (loading || error || moduleItems.length === 0) return null;
+
+  async function openConversation(entry: OpenItemView) {
+    if (entry.chatHref) {
+      router.push(entry.chatHref);
+      return;
+    }
+    const conversationId = entry.conversationId?.trim();
+    if (!conversationId || openingKey) return;
+    setOpeningKey(entry.key);
+    try {
+      const res = await fetch("/api/sage/sessions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ conversation_id: conversationId }),
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        message?: string;
+        session?: { id?: string };
+      };
+      const sessionId = data.session?.id?.trim();
+      if (!res.ok || !sessionId) {
+        showErrorToast(data.message || "Could not open that conversation.");
+        return;
+      }
+      router.push(sageChatHref(sessionId));
+    } catch {
+      showErrorToast("Could not open that conversation.");
+    } finally {
+      setOpeningKey(null);
+    }
+  }
 
   return (
     <div className="space-y-2">
@@ -347,15 +380,16 @@ export function OpenItemModuleList({ type }: { type: OpenItemType }) {
                         >
                           {busyKey === entry.key ? "Saving…" : entry.actionLabel}
                         </Button>
-                        {entry.chatHref ? (
+                        {entry.chatHref || entry.conversationId ? (
                           <Button
                             type="button"
                             size="sm"
                             variant="outline"
                             className="h-7 rounded-full px-3 text-[11px]"
-                            onClick={() => router.push(entry.chatHref as string)}
+                            disabled={openingKey === entry.key}
+                            onClick={() => void openConversation(entry)}
                           >
-                            Open chat
+                            {openingKey === entry.key ? "Opening…" : "Open conversation"}
                           </Button>
                         ) : null}
                         <Button

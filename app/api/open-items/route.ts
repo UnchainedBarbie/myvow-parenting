@@ -3,7 +3,7 @@ import type { SageItem } from "@/components/sage/proposal-types";
 import {
   chatTurnForSource,
   deriveOpenItems,
-  openChatHref,
+  openConversationDestination,
   openItemHref,
   type OpenItemSource,
 } from "@/lib/open-items";
@@ -94,7 +94,7 @@ export async function GET() {
     const relevant = items.filter((row) => needed.has(row.id));
 
     const sessionByItem = await sessionsForItems(admin, user.id, relevant);
-    const chatHrefByItem = await chatHrefsForItems(admin, user.id, relevant);
+    const chatHrefByItem = await chatHrefsForItems(admin, user.id, caseId, relevant);
     const byId = new Map(items.map((row) => [row.id, row]));
 
     const { data: childrenData, error: childrenError } = await admin
@@ -119,10 +119,12 @@ export async function GET() {
         items: drafts.map((draft) => {
           const row = byId.get(draft.sageItemId);
           const sessionId = sessionByItem.get(draft.sageItemId) ?? null;
+          const destination = chatHrefByItem.get(draft.sageItemId);
           return {
             ...draft,
             href: openItemHref(sessionId, draft.sageItemId, draft.proposalIndex),
-            chatHref: chatHrefByItem.get(draft.sageItemId) ?? null,
+            chatHref: destination?.chatHref ?? null,
+            conversationId: destination?.conversationId ?? null,
             item: toSageItem(row),
           };
         }),
@@ -436,16 +438,17 @@ async function sessionsForItems(
 }
 
 /**
- * Chat link for an open item. Only source_id → this parent's journal turn →
- * that turn's session. A source_id with no journal row, or an item that never
- * pointed at a turn, gets no link.
+ * Open conversation for an open item.
+ * A journal turn opens that chat scrolled to the turn. A co-parent message
+ * opens the conversation Reply uses. The session is created on click, not here.
  */
 async function chatHrefsForItems(
   admin: Admin,
   userId: string,
+  caseId: string,
   items: ItemRow[]
-): Promise<Map<string, string>> {
-  const result = new Map<string, string>();
+): Promise<Map<string, { chatHref: string | null; conversationId: string | null }>> {
+  const result = new Map<string, { chatHref: string | null; conversationId: string | null }>();
   const sourceIds = [
     ...new Set(
       items
@@ -486,11 +489,56 @@ async function chatHrefsForItems(
     sessionByJournal.set(row.id, sessionId && allowed.has(sessionId) ? sessionId : null);
   }
 
+  const messageIds = [
+    ...new Set(
+      items
+        .filter((item) => (item.source_type ?? "").trim().toLowerCase() === "message")
+        .map((item) => (typeof item.source_id === "string" ? item.source_id.trim() : ""))
+        .filter((id) => id.length > 0 && !chatTurnForSource(id, sessionByJournal))
+    ),
+  ];
+  const conversationByMessage = new Map<string, string>();
+  if (messageIds.length > 0) {
+    const { data: messages, error: messageError } = await admin
+      .from("messages")
+      .select("id, conversation_id")
+      .eq("case_id", caseId)
+      .in("id", messageIds);
+    if (messageError) throw new Error(messageError.message);
+    const conversationIds = [
+      ...new Set(
+        ((messages ?? []) as { conversation_id?: string | null }[])
+          .map((row) => (typeof row.conversation_id === "string" ? row.conversation_id.trim() : ""))
+          .filter((id) => id.length > 0)
+      ),
+    ];
+    const existing = new Set<string>();
+    if (conversationIds.length > 0) {
+      const { data: conversations, error: conversationError } = await admin
+        .from("conversations")
+        .select("id")
+        .eq("case_id", caseId)
+        .in("id", conversationIds);
+      if (conversationError) throw new Error(conversationError.message);
+      for (const row of conversations ?? []) existing.add(row.id as string);
+    }
+    for (const row of (messages ?? []) as { id: string; conversation_id?: string | null }[]) {
+      const conversationId =
+        typeof row.conversation_id === "string" ? row.conversation_id.trim() : "";
+      if (conversationId && existing.has(conversationId)) {
+        conversationByMessage.set(row.id, conversationId);
+      }
+    }
+  }
+
   for (const item of items) {
-    const turn = chatTurnForSource(item.source_id, sessionByJournal);
-    if (!turn) continue;
-    const href = openChatHref(turn.sessionId, turn.turnId);
-    if (href) result.set(item.id, href);
+    const sourceId = typeof item.source_id === "string" ? item.source_id.trim() : "";
+    const destination = openConversationDestination({
+      sourceType: item.source_type,
+      journal: chatTurnForSource(sourceId, sessionByJournal),
+      messageConversationId: sourceId ? conversationByMessage.get(sourceId) : null,
+    });
+    if (destination) result.set(item.id, destination);
   }
   return result;
 }

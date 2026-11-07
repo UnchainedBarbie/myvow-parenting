@@ -5,6 +5,7 @@ import {
   expenseVisibilityKey,
   expenseVisibleToViewer,
   storedExpenseVisibility,
+  visibilityForExpenseSubmit,
   visibleExpenseRows,
   EXPENSE_VISIBILITY_UNSET_LABEL,
 } from "@/lib/expenses-visibility";
@@ -125,6 +126,18 @@ function main() {
   assert.equal(exported.includes("Ashley dentist"), false);
   assert.equal(exported.includes("Older expense"), true);
   assert.equal(exported.includes("Shared shoes"), true);
+  assert.equal(
+    visibilityForExpenseSubmit({ sharingIntent: "personal", visibility: "parents_only", visibilityTouched: false }),
+    "private"
+  );
+  assert.equal(
+    visibilityForExpenseSubmit({ sharingIntent: "personal", visibility: "family", visibilityTouched: true }),
+    "family"
+  );
+  assert.equal(
+    visibilityForExpenseSubmit({ sharingIntent: "shared", visibility: "parents_only", visibilityTouched: false }),
+    "parents_only"
+  );
 
   console.log("expense visibility tests passed");
 }

@@ -17,6 +17,16 @@ assert.equal(documentCategoryLabel("school"), "School");
 assert.equal(documentVisibilityLabel("private"), "Just me");
 assert.equal(documentVisibilityLabel("parents_only"), "Parents only");
 assert.equal(documentVisibilityLabel("family_read_only"), "Family");
+assert.equal(documentVisibilityLabel(null), "Just me");
+assert.equal(documentVisibilityLabel(""), "Just me");
+assert.equal(
+  documentAuthorizedForViewer({ visibility: null, uploadedBy: "alex" }, { userId: "jordan", role: "parent" }),
+  false
+);
+assert.equal(
+  documentAuthorizedForViewer({ visibility: "  ", uploadedBy: "alex" }, { userId: "alex", role: "parent" }),
+  true
+);
 assert.equal(
   documentAuthorizedForViewer({ visibility: "private", uploadedBy: "alex" }, { userId: "jordan", role: "parent" }),
   false

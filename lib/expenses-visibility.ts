@@ -51,6 +51,19 @@ export function parseExpenseVisibility(value: unknown): ExpenseVisibility | null
   return storedExpenseVisibility(value);
 }
 
+/**
+ * Visibility saved with a new expense.
+ * Personal defaults to private. A visibility the parent chose by hand is kept.
+ */
+export function visibilityForExpenseSubmit(input: {
+  sharingIntent: string | null | undefined;
+  visibility: unknown;
+  visibilityTouched: boolean;
+}): ExpenseVisibility | null {
+  if (input.sharingIntent === "personal" && !input.visibilityTouched) return "private";
+  return parseExpenseVisibility(input.visibility);
+}
+
 /** Filter and edit values. Known aliases use the canonical value. Unknown text stays as stored. */
 export function expenseVisibilityKey(value: unknown): string {
   const stored = storedExpenseVisibility(value);

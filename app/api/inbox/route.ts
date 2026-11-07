@@ -6,8 +6,11 @@ export const runtime = "nodejs";
 /**
  * GET /api/inbox
  * Authenticated parent user.
- * Returns up to 20 pending inbox_items for the user's case, ordered by created_at desc.
+ * Returns up to 20 pending inbox_items owned by this parent, newest first.
+ * The list is only what the Review card renders.
  */
+const INBOX_REVIEW_COLUMNS = "id, created_at, ai_category, ai_type";
+
 export async function GET(_req: NextRequest) {
   try {
     const supabase = await createClient();
@@ -40,8 +43,9 @@ export async function GET(_req: NextRequest) {
 
     const { data: items, error: itemsError } = await admin
       .from("inbox_items")
-      .select("*")
+      .select(INBOX_REVIEW_COLUMNS)
       .eq("case_id", caseId)
+      .eq("created_by", user.id)
       .eq("status", "pending_review")
       .order("created_at", { ascending: false })
       .limit(20);

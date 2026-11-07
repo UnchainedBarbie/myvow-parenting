@@ -3,6 +3,7 @@ import type { Proposal } from "@/lib/sage/planner";
 import { expenseWorkflowStatus } from "@/lib/expenses-share";
 import {
   coparentShareForExpense,
+  expenseTabTheirShareText,
   payableCoparentShare,
   parsePaymentAmount,
   paymentAmountError,
@@ -524,5 +525,16 @@ assert.equal(
   "The amount can't be more than the co-parent's share."
 );
 assert.equal(paymentAmountError(parsePaymentAmount(""), sharedShare), "Enter the amount paid.");
+const personalRow = {
+  amount: 15,
+  other_parent_share: 0,
+  amount_owed: 0,
+  split_label: "Personal",
+  submitted_by: "parent-a",
+  status: "logged",
+};
+assert.equal(coparentShareForExpense(personalRow, "parent-b"), 0);
+assert.equal(expenseTabTheirShareText(personalRow, "parent-b"), "");
+assert.equal(expenseTabTheirShareText(personalRow, "parent-a"), "");
 
 console.log("expense sharing tests passed");

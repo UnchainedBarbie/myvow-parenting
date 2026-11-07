@@ -572,7 +572,7 @@ export function ExpenseList({
         csvEnteredDate(exp.created_at),
         Number.isNaN(amountNum) ? "" : amountNum.toFixed(2),
         expenseTabSplitText(exp),
-        theirShare.toFixed(2),
+        expenseTabTheirShareText(exp, currentUserId),
         expenseVisibilityLabel(exp.visibility),
         statusLabel,
       ]
@@ -629,7 +629,7 @@ export function ExpenseList({
           csvEnteredDate(exp.created_at),
           Number.isNaN(amountNum) ? "" : amountNum.toFixed(2),
           expenseTabSplitText(exp),
-          theirShare.toFixed(2),
+          expenseTabTheirShareText(exp, currentUserId),
           expenseVisibilityLabel(exp.visibility),
           statusLabel,
           paymentMethod,

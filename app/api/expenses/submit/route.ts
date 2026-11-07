@@ -6,7 +6,7 @@ import { expenseWorkflowStatus } from "@/lib/expenses-share";
 import {
   alignReceiptDocumentVisibility,
   missingVisibilityColumn,
-  parseExpenseVisibility,
+  visibilityForExpenseSubmit,
 } from "@/lib/expenses-visibility";
 
 function parseChildIds(childIdsRaw: unknown, childId?: string | null): string[] {
@@ -51,6 +51,7 @@ export async function POST(request: NextRequest) {
       sharing_intent,
       stated_percent,
       visibility,
+      visibility_touched,
     } = body as {
       case_id?: string;
       description?: string;
@@ -66,8 +67,15 @@ export async function POST(request: NextRequest) {
       sharing_intent?: ExpenseLoggingIntent | null;
       stated_percent?: number | null;
       visibility?: string | null;
+      visibility_touched?: boolean;
     };
-    const savedVisibility = parseExpenseVisibility(visibility);
+    const intent =
+      sharing_intent === "personal" || sharing_intent === "shared" ? sharing_intent : "unspecified";
+    const savedVisibility = visibilityForExpenseSubmit({
+      sharingIntent: intent,
+      visibility,
+      visibilityTouched: visibility_touched === true,
+    });
     if (visibility != null && String(visibility).trim() !== "" && !savedVisibility) {
       return NextResponse.json({ message: "Invalid visibility" }, { status: 400 });
     }
@@ -96,8 +104,6 @@ export async function POST(request: NextRequest) {
       childId: primaryChildId,
     });
     const payer: ExpensePayer = paid_by === "coparent" ? "coparent" : "self";
-    const intent: ExpenseLoggingIntent =
-      sharing_intent === "personal" || sharing_intent === "shared" ? sharing_intent : "unspecified";
     const statedPercent =
       typeof stated_percent === "number" && Number.isFinite(stated_percent) ? stated_percent : null;
     const plan = planExpenseEntry({

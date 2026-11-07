@@ -131,9 +131,14 @@ export function ExpenseForm({
         ? [initialValues.childId]
         : []
   );
-  const [visibility, setVisibility] = useState<string>(
-    () => initialValues?.visibility ?? "parents_only"
+  const [visibilityTouched, setVisibilityTouched] = useState(
+    () => initialValues?.visibility != null && initialValues.visibility !== ""
   );
+  const [visibility, setVisibility] = useState<string>(() => {
+    if (initialValues?.visibility) return initialValues.visibility;
+    if (initialValues?.sharingMode === "personal") return "private";
+    return "parents_only";
+  });
   const [paidBy, setPaidBy] = useState<"self" | "coparent">(
     () => (initialValues?.paidBy === "coparent" ? "coparent" : "self")
   );
@@ -195,8 +200,11 @@ export function ExpenseForm({
     } else if (initialValues.childId) {
       setSelectedChildIds([initialValues.childId]);
     }
-    if (initialValues.visibility != null) {
+    if (initialValues.visibility != null && initialValues.visibility !== "") {
       setVisibility(initialValues.visibility);
+      setVisibilityTouched(true);
+    } else if (initialValues.sharingMode === "personal") {
+      setVisibility("private");
     }
     setPaidBy(initialValues.paidBy === "coparent" ? "coparent" : "self");
     if (initialValues.sharingMode) setSharingMode(initialValues.sharingMode);
@@ -429,6 +437,7 @@ export function ExpenseForm({
           ...(notifyTouched ? { notify_coparent: notifyCoparent } : {}),
           paid_by: paidBy,
           visibility,
+          visibility_touched: visibilityTouched,
           sharing_intent: sharingChoice ?? undefined,
           ...(statedPercent.trim() ? { stated_percent: Number(statedPercent) } : {}),
         }),
@@ -447,6 +456,7 @@ export function ExpenseForm({
       setCategoryDescription("");
       setSelectedChildIds([]);
       setVisibility("parents_only");
+      setVisibilityTouched(false);
       setNotifyCoparent(false);
       setReceiptFile(null);
       setStoredReceipt(null);
@@ -787,7 +797,10 @@ export function ExpenseForm({
             <select
               id="exp-visibility"
               value={visibility}
-              onChange={(e) => setVisibility(e.target.value)}
+              onChange={(e) => {
+                setVisibilityTouched(true);
+                setVisibility(e.target.value);
+              }}
               className={cn(
                 "flex h-8 w-full rounded-card border border-input bg-background px-2 py-1 text-xs",
                 "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
@@ -818,6 +831,7 @@ export function ExpenseForm({
                 onChange={() => {
                   setChoiceTouched(true);
                   setSharingChoice("personal");
+                  if (!visibilityTouched) setVisibility("private");
                   if (!notifyTouched) setNotifyCoparent(false);
                 }}
               />
@@ -832,6 +846,7 @@ export function ExpenseForm({
                 onChange={() => {
                   setChoiceTouched(true);
                   setSharingChoice("shared");
+                  if (!visibilityTouched) setVisibility("parents_only");
                   if (!notifyTouched) setNotifyCoparent(true);
                 }}
               />

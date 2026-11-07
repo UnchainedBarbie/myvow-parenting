@@ -127,8 +127,13 @@ export function paymentAmountError(amount: number | null, share: number | null):
   return null;
 }
 
+export function expenseIsPersonal(exp: { split_label?: string | null }): boolean {
+  return (exp.split_label ?? "").trim().toLowerCase() === "personal";
+}
+
 /** Co-parent share shown in the Expenses tab "Their share" column. */
 export function coparentShareForExpense(exp: ExpenseTabRow, currentUserId: string): number {
+  if (expenseIsPersonal(exp)) return 0;
   const amountNum = Number(exp.amount);
   const portion = coparentPortion(exp);
   const isMine = exp.submitted_by === currentUserId;
@@ -186,6 +191,7 @@ export function expenseTabSplitText(exp: Pick<ExpenseTabRow, "allocation_status"
 }
 
 export function expenseTabTheirShareText(exp: ExpenseTabRow, currentUserId: string): string {
+  if (expenseIsPersonal(exp)) return "";
   if (
     exp.allocation_status === "NONE" &&
     !exp.split_label?.trim() &&

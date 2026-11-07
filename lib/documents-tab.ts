@@ -41,7 +41,7 @@ export function formatDocumentNumber(value: number | null | undefined): string {
 }
 
 /**
- * Private documents are visible only to the parent who uploaded them.
+ * A blank visibility is labeled "Just me" and is private to the uploader.
  * Parents-only documents are visible to parents and professional viewers on the case.
  * Family documents are visible to any case member.
  */
@@ -49,8 +49,9 @@ export function documentAuthorizedForViewer(
   doc: { visibility: string | null | undefined; uploadedBy: string | null | undefined },
   viewer: { userId: string; role: string | null | undefined }
 ): boolean {
-  const visibility = (doc.visibility ?? "family").trim().toLowerCase();
-  if (visibility === "private") return doc.uploadedBy === viewer.userId;
+  const visibility = (doc.visibility ?? "").trim().toLowerCase();
+  // A blank value is labeled "Just me" and is private to the uploader.
+  if (!visibility || visibility === "private") return doc.uploadedBy === viewer.userId;
   if (visibility === "parents_only" || visibility === "shared_ai_review") {
     const role = (viewer.role ?? "").trim().toLowerCase();
     return role === "parent" || role === "professional_viewer" || doc.uploadedBy === viewer.userId;

@@ -9,6 +9,18 @@ import { CalendarYearView } from "@/components/calendar/calendar-year-view";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { safeEventId, viewerCanOpenCalendarEvent } from "@/lib/calendar/coparent-notice";
 
+function eventVisibleOnMonthGrid(
+  event: { visibility?: string | null; description?: string | null; created_by?: string | null },
+  viewerId: string
+): boolean {
+  const visibility = event.visibility ?? null;
+  const legacyPrivate = !visibility && (event.description ?? "").startsWith("[PRIVATE]");
+  if (visibility === "private" || visibility === "just_me_and_kids" || legacyPrivate) {
+    return event.created_by === viewerId;
+  }
+  return true;
+}
+
 function getMonthRange(year: number, month: number) {
   const start = new Date(year, month - 1, 1);
   const end = new Date(year, month, 0, 23, 59, 59, 999);
@@ -201,29 +213,7 @@ export default async function CalendarPage({
   console.log("[CalendarPage] eventsRaw", eventsRaw);
 
   const events: CalendarEventRow[] = (eventsRaw ?? [])
-    .filter((e) => {
-      // Respect explicit visibility when present; fall back to legacy [PRIVATE] marker.
-      const visibility = (e as any).visibility as
-        | "family"
-        | "parents_only"
-        | "just_me_and_kids"
-        | "private"
-        | "family_read_only"
-        | null
-        | undefined;
-      const legacyPrivate = e.description?.startsWith("[PRIVATE]") ?? false;
-
-      if (visibility === "private") {
-        return e.created_by === user.id;
-      }
-      if (visibility === "just_me_and_kids") {
-        return e.created_by === user.id;
-      }
-      if (!visibility && legacyPrivate) {
-        return e.created_by === user.id;
-      }
-      return true;
-    })
+    .filter((e) => eventVisibleOnMonthGrid(e, user.id))
     .map((e) => {
       const visibility = (e as any).visibility as
         | "family"
@@ -273,7 +263,8 @@ export default async function CalendarPage({
     .order("start_time", { ascending: true })
     .limit(10);
 
-  const upcoming = (upcomingRaw ?? []).map((e) => ({
+  const upcomingVisible = (upcomingRaw ?? []).filter((e) => eventVisibleOnMonthGrid(e, user.id));
+  const upcoming = upcomingVisible.map((e) => ({
     id: e.id,
     title: e.title,
     event_type: e.event_type as string | null,
@@ -320,23 +311,7 @@ export default async function CalendarPage({
       kid_title: (e as any).kid_title ?? null,
     };
   };
-  const upcomingFullRows: CalendarEventRow[] = (upcomingRaw ?? [])
-    .filter((e) => {
-      const visibility = (e as any).visibility as
-        | "family"
-        | "parents_only"
-        | "just_me_and_kids"
-        | "private"
-        | "family_read_only"
-        | null
-        | undefined;
-      const legacyPrivate = e.description?.startsWith("[PRIVATE]") ?? false;
-      if (visibility === "private") return e.created_by === user.id;
-      if (visibility === "just_me_and_kids") return e.created_by === user.id;
-      if (!visibility && legacyPrivate) return e.created_by === user.id;
-      return true;
-    })
-    .map((e) => toEventRow(e));
+  const upcomingFullRows: CalendarEventRow[] = upcomingVisible.map((e) => toEventRow(e));
   let eventsForModal: CalendarEventRow[] = [
     ...events,
     ...upcomingFullRows.filter((e) => !eventIdsInMonth.has(e.id)),

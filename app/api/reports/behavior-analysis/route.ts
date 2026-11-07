@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
 import { loadVisibleExpenses } from "@/lib/expenses-visibility";
+import { eventVisibleOnCalendar } from "@/lib/calendar/event-visibility";
 import {
   EXPENSE_STATUS_LABELS,
   canonicalExpenseStatus,
@@ -446,14 +447,25 @@ export async function POST(request: NextRequest) {
     const { data: events } = await admin
       .from("calendar_events")
       .select(
-        "id, event_type, start_time, end_time, all_day, visibility, kid_title"
+        "id, event_type, start_time, end_time, all_day, visibility, description, created_by, kid_title"
       )
       .eq("case_id", caseId)
       .gte("start_time", fromIso)
       .lte("start_time", toIso)
       .order("start_time", { ascending: true });
 
-    const eventTypeCounts = (events ?? []).reduce(
+    const visibleEvents = (events ?? []).filter((ev) =>
+      eventVisibleOnCalendar(
+        {
+          visibility: (ev as { visibility?: string | null }).visibility,
+          description: (ev as { description?: string | null }).description,
+          created_by: (ev as { created_by?: string | null }).created_by,
+        },
+        user.id
+      )
+    );
+
+    const eventTypeCounts = visibleEvents.reduce(
       (acc, ev) => {
         const type = (ev as { event_type?: string | null }).event_type ?? "other";
         acc[type] = (acc[type] ?? 0) + 1;
@@ -463,11 +475,11 @@ export async function POST(request: NextRequest) {
     );
 
     const calendarSummary = {
-      total_events: (events ?? []).length,
+      total_events: visibleEvents.length,
       event_type_counts: eventTypeCounts,
       custody_exchange_count:
         eventTypeCounts["custody_exchange"] ?? 0,
-      events: (events ?? []).map((ev) => ({
+      events: visibleEvents.map((ev) => ({
         id: ev.id,
         event_type: ev.event_type,
         start_time: (ev as { start_time?: string | null }).start_time ?? null,

@@ -144,6 +144,7 @@ export async function matchingLedgerText(input: LedgerLookup): Promise<string> {
     summary: input.subject ?? "",
     corpus: input.corpus,
     subject: input.subject ?? null,
+    viewerId: input.viewerId,
   });
   const parts: string[] = [];
   if (events && events.length === 1) parts.push(calendarLine(events[0]));
@@ -174,6 +175,7 @@ export async function resolveAskedDetail(input: LedgerLookup & {
     summary: input.asked.subject ?? input.subject ?? "",
     corpus: input.corpus,
     subject: input.asked.subject ?? input.subject ?? null,
+    viewerId: input.viewerId,
   });
 
   if (events != null && events.length > 1) {

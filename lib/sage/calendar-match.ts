@@ -4,6 +4,7 @@
  */
 
 import { getServiceRoleClient } from "@/lib/supabase/server";
+import { eventVisibleOnCalendar } from "@/lib/calendar/event-visibility";
 import type { Plan, Proposal } from "@/lib/sage/planner";
 import { eventSubjectFromTexts } from "@/lib/sage/event-subject";
 import { splitSchedule, type ScheduleParts } from "@/lib/sage/outbound-facts";
@@ -78,6 +79,8 @@ export type CalendarMatchInput = {
   childIds: string[];
   summary: string;
   corpus: string;
+  /** Parent whose calendar this match is allowed to read. */
+  viewerId?: string | null;
   subject?: string | null;
   childName?: string | null;
   /** Facts already stated on the open reply or calendar proposal. */
@@ -359,7 +362,7 @@ async function loadCandidates(input: CalendarMatchInput): Promise<CalendarRow[] 
   const admin = getServiceRoleClient();
   const { data, error } = await admin
     .from("calendar_events")
-    .select("id, title, description, child_id, start_time, all_day, status")
+    .select("id, title, description, child_id, start_time, all_day, status, visibility, created_by")
     .eq("case_id", input.caseId)
     .is("deleted_at", null)
     .gte("start_time", start.toISOString())
@@ -370,6 +373,20 @@ async function loadCandidates(input: CalendarMatchInput): Promise<CalendarRow[] 
   }
   const namedChild = input.childIds.length > 0;
   return ((data ?? []) as CalendarRow[]).filter((row) => {
+    const record = row as CalendarRow & { visibility?: string | null; created_by?: string | null };
+    if (
+      input.viewerId &&
+      !eventVisibleOnCalendar(
+        {
+          visibility: record.visibility,
+          description: record.description,
+          created_by: record.created_by,
+        },
+        input.viewerId
+      )
+    ) {
+      return false;
+    }
     const status = (row.status ?? "").toLowerCase();
     if (status === "canceled" || status === "cancelled") return false;
     if (!row.start_time) return false;

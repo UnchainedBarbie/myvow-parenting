@@ -1,4 +1,5 @@
 import type { getServiceRoleClient } from "@/lib/supabase/server";
+import { eventVisibleOnCalendar } from "@/lib/calendar/event-visibility";
 import { formatClockLabel } from "@/lib/sage/event-subject";
 import { isInactiveProposal } from "@/lib/sage/proposal-lifecycle";
 import { resolveDate } from "@/lib/sage/resolver";
@@ -154,12 +155,14 @@ export function eventVisibleToParent(
   event: { visibility: string | null; createdBy: string | null; description?: string | null },
   viewerId: string
 ): boolean {
-  const visibility = (event.visibility ?? "").trim().toLowerCase();
-  const legacyPrivate = !visibility && (event.description?.startsWith("[PRIVATE]") ?? false);
-  if (visibility === "private" || visibility === "just_me_and_kids" || legacyPrivate) {
-    return event.createdBy === viewerId;
-  }
-  return true;
+  return eventVisibleOnCalendar(
+    {
+      visibility: event.visibility,
+      description: event.description,
+      created_by: event.createdBy,
+    },
+    viewerId
+  );
 }
 
 export function isCanceledStatus(status: string | null | undefined): boolean {

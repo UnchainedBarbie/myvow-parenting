@@ -1,4 +1,5 @@
 import { getCustodyFromRotation, type CustodySchedule } from "@/lib/calendarCustody";
+import { eventVisibleOnCalendar } from "@/lib/calendar/event-visibility";
 import { formatDateSpan, zonedDayEndMs, zonedDayStartMs } from "@/lib/record/record-filters";
 import { supportingEvidenceCell } from "@/lib/reports/evidence-refs";
 
@@ -162,12 +163,14 @@ export function eventVisibleToViewer(
   event: { visibility: string | null; description: string | null; createdBy: string | null },
   viewerId: string
 ): boolean {
-  const visibility = event.visibility?.trim().toLowerCase() ?? "";
-  const legacyPrivate = !visibility && (event.description?.startsWith("[PRIVATE]") ?? false);
-  if (visibility === "private" || visibility === "just_me_and_kids" || legacyPrivate) {
-    return event.createdBy === viewerId;
-  }
-  return true;
+  return eventVisibleOnCalendar(
+    {
+      visibility: event.visibility,
+      description: event.description,
+      created_by: event.createdBy,
+    },
+    viewerId
+  );
 }
 
 export function eventDescriptionForReport(description: string | null, visibility: string | null): string {

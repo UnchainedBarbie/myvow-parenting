@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
+import { eventVisibleOnCalendar } from "@/lib/calendar/event-visibility";
 
 /** CalendarEventRow shape returned by this API (matches components/calendar/calendar-month.tsx). */
 export type CalendarEventRow = {
@@ -112,14 +113,7 @@ export async function GET(request: NextRequest) {
     );
 
     const events: CalendarEventRow[] = (eventsRaw ?? [])
-      .filter((e) => {
-        const visibility = (e as { visibility?: string }).visibility;
-        const legacyPrivate = e.description?.startsWith("[PRIVATE]") ?? false;
-        if (visibility === "private") return e.created_by === user.id;
-        if (visibility === "just_me_and_kids") return e.created_by === user.id;
-        if (!visibility && legacyPrivate) return e.created_by === user.id;
-        return true;
-      })
+      .filter((e) => eventVisibleOnCalendar(e, user.id))
       .map((e) => {
         const visibility = (e as { visibility?: string }).visibility as
           | "family"

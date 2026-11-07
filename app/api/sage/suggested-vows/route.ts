@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
 import { loadVisibleExpenses } from "@/lib/expenses-visibility";
+import { eventVisibleOnCalendar } from "@/lib/calendar/event-visibility";
 import { resolveActiveCase } from "@/lib/cases/resolve-active-case";
 
 type SuggestedVow = { vow: string; reason: string };
@@ -68,12 +69,23 @@ export async function POST(_request: NextRequest) {
     // Upcoming calendar events in next 14 days
     const { data: events } = await admin
       .from("calendar_events")
-      .select("title, start_time")
+      .select("title, start_time, visibility, description, created_by")
       .eq("case_id", caseId)
       .gte("start_time", now.toISOString())
       .lte("start_time", fourteenDaysAhead.toISOString())
       .order("start_time", { ascending: true })
       .limit(50);
+
+    const visibleEvents = (events ?? []).filter((ev) =>
+      eventVisibleOnCalendar(
+        {
+          visibility: ev.visibility as string | null,
+          description: ev.description as string | null,
+          created_by: ev.created_by as string | null,
+        },
+        user.id
+      )
+    );
 
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) {
@@ -93,7 +105,7 @@ export async function POST(_request: NextRequest) {
         status: e.status ?? "",
         dispute_reason: e.dispute_reason ?? "",
       })),
-      events: (events ?? []).map((ev) => ({
+      events: visibleEvents.map((ev) => ({
         title: ev.title ?? "",
         start_time: ev.start_time,
       })),

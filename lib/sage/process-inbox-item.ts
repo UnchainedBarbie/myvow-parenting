@@ -313,6 +313,7 @@ export async function processInboxItem(
       source_id: inboxItemId,
       sender,
       plan_sender: "your co-parent",
+      viewer_id: visibleTo,
     });
 
     const { intent, entities } = processed.interpretation;
@@ -795,6 +796,7 @@ export async function processInboundMessageForSage(
         source_id: message.id,
         sender: "your co-parent",
         plan_sender: "your co-parent",
+        viewer_id: visibleTo,
       }),
       incoming ? readIncomingCommunication(incoming) : Promise.resolve(null),
     ]);

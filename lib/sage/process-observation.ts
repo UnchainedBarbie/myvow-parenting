@@ -62,6 +62,8 @@ export type ObservationProcessContext = {
    * established in the session come from here — not from a separate carry-forward.
    */
   conversation?: ConversationContext | null;
+  /** Parent whose calendar a match is allowed to read. */
+  viewer_id?: string | null;
 };
 
 export type ProcessObservationResult = {
@@ -420,6 +422,7 @@ export async function processObservation(
     corpus: messageBodies,
     subject: event_subject ?? null,
     childName,
+    viewerId: context.viewer_id,
   });
   const proposals = finalizeExpenseProposals(
     reconciled.proposals,

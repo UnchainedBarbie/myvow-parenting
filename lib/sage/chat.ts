@@ -736,6 +736,7 @@ export async function processChatMessage(
     sender: "You",
     plan_sender: "You",
     conversation: input.conversation ?? null,
+    viewer_id: input.viewerId ?? null,
   });
 
   if ((input.intake ?? "chat") === "chat") {

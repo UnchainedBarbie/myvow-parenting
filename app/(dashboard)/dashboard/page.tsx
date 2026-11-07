@@ -10,6 +10,7 @@ import { EventRequestsCard } from "@/components/dashboard/event-requests-card";
 import { CalendarNotices } from "@/components/dashboard/calendar-notices";
 import { loadCalendarNoticeCards } from "@/lib/calendar/load-calendar-notices";
 import { loadVisibleExpenses } from "@/lib/expenses-visibility";
+import { eventVisibleOnCalendar } from "@/lib/calendar/event-visibility";
 import {
   canonicalExpenseStatus,
   coparentPortion,
@@ -187,26 +188,27 @@ export default async function DashboardPage() {
     999
   ).toISOString();
 
+  const eventColumns =
+    "id, title, child_id, start_time, all_day, event_type, visibility, description, created_by, deleted_at";
+
   // Today events
   const { data: todayEventsRaw } = await admin
     .from("calendar_events")
-    .select("id, title, child_id, start_time, all_day, event_type, deleted_at")
+    .select(eventColumns)
     .eq("case_id", caseId)
     .gte("start_time", todayStart)
     .lte("start_time", todayEnd)
     .is("deleted_at", null)
     .order("start_time", { ascending: true });
 
-  // Next upcoming calendar event after today (any type)
-  const { data: nextEventRaw } = await admin
+  // Next upcoming event this parent is allowed to see
+  const { data: nextEventsRaw } = await admin
     .from("calendar_events")
-    .select("id, title, child_id, start_time, all_day, event_type, deleted_at")
+    .select(eventColumns)
     .eq("case_id", caseId)
     .gt("start_time", todayEnd)
     .is("deleted_at", null)
-    .order("start_time", { ascending: true })
-    .limit(1)
-    .maybeSingle();
+    .order("start_time", { ascending: true });
 
   // Children for event labels
   const { data: childrenRaw } = await admin
@@ -226,7 +228,9 @@ export default async function DashboardPage() {
       return acc;
     }, {} as Record<string, { first_name: string; date_of_birth: string | null; profile_image: string | null }>);
 
-  const todayEvents: TodayEvent[] = (todayEventsRaw ?? []).map((e) => ({
+  const todayEvents: TodayEvent[] = (todayEventsRaw ?? [])
+    .filter((e) => eventVisibleOnCalendar(e, user.id))
+    .map((e) => ({
     id: e.id as string,
     title: e.title as string,
     start_time: e.start_time as string,
@@ -235,16 +239,17 @@ export default async function DashboardPage() {
     event_type: (e.event_type as string | null) ?? null,
   }));
 
-  const nextEvent: TodayEvent | null = nextEventRaw
+  const nextVisible = (nextEventsRaw ?? []).find((e) => eventVisibleOnCalendar(e, user.id));
+  const nextEvent: TodayEvent | null = nextVisible
     ? {
-        id: nextEventRaw.id as string,
-        title: nextEventRaw.title as string,
-        start_time: nextEventRaw.start_time as string,
-        all_day: (nextEventRaw.all_day as boolean) ?? false,
-        child_name: nextEventRaw.child_id
-          ? childMap[nextEventRaw.child_id as string]?.first_name ?? null
+        id: nextVisible.id as string,
+        title: nextVisible.title as string,
+        start_time: nextVisible.start_time as string,
+        all_day: (nextVisible.all_day as boolean) ?? false,
+        child_name: nextVisible.child_id
+          ? childMap[nextVisible.child_id as string]?.first_name ?? null
           : null,
-        event_type: (nextEventRaw.event_type as string | null) ?? null,
+        event_type: (nextVisible.event_type as string | null) ?? null,
       }
     : null;
 

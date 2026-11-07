@@ -111,6 +111,18 @@ assert.equal(
   eventVisibleToViewer({ visibility: "family", description: null, createdBy: "alex" }, "jordan"),
   true
 );
+assert.equal(
+  eventVisibleToViewer({ visibility: "just_me_and_kids", description: null, createdBy: "alex" }, "alex"),
+  true
+);
+assert.equal(
+  eventVisibleToViewer({ visibility: null, description: "[PRIVATE] Planning", createdBy: "alex" }, "jordan"),
+  false
+);
+assert.equal(
+  eventVisibleToViewer({ visibility: null, description: "Shared note", createdBy: "alex" }, "jordan"),
+  true
+);
 
 function event(partial: Partial<CalendarReportEvent> & Pick<CalendarReportEvent, "id" | "startTime">): CalendarReportEvent {
   return {

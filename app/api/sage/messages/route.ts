@@ -411,6 +411,7 @@ async function reviseOpenCalendar(opts: {
       subject: opts.subject ?? null,
       childName: opts.childName ?? null,
       priorText: opts.priorText ?? opts.target.currentDraft,
+      viewerId: opts.userId,
     }
   );
   const next = reconciled.proposals[0];

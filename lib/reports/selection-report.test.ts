@@ -109,7 +109,7 @@ const paidSummary = one.document.blocks.find((block) => block.kind === "lines" &
 assert.equal(paidSummary?.kind, "lines");
 if (paidSummary?.kind === "lines") {
   assert.match(paidSummary.lines.join(" "), /selected expenses only/);
-  assert.match(paidSummary.lines.join(" "), /Paid expenses are excluded/);
+  assert.match(paidSummary.lines.join(" "), /counts as paid in full/);
   assert.match(paidSummary.lines.join(" "), /You are all settled/);
   assert.doesNotMatch(paidSummary.lines.join(" "), /\$10\.00/);
 }
@@ -141,7 +141,9 @@ if (table?.kind === "table") {
 const summary = many.document.blocks.find((block) => block.kind === "lines" && block.title === "Summary");
 assert.equal(summary?.kind, "lines");
 if (summary?.kind === "lines") {
-  assert.match(summary.lines.join("\n"), /They owe you: \$61\.00/);
+  assert.match(summary.lines.join("\n"), /Agreed outstanding[\s\S]*They owe you: \$46\.00/);
+  assert.match(summary.lines.join("\n"), /Claimed, awaiting response[\s\S]*They owe you: \$15\.00/);
+  assert.doesNotMatch(summary.lines.join("\n"), /\$61\.00/);
   assert.doesNotMatch(summary.lines.join(" "), /\$250\.00|Unselected/);
 }
 assert.equal(many.document.blocks.some((block) => block.kind === "lines" && block.title === "Receipt files"), false);

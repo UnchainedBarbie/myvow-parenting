@@ -1,13 +1,18 @@
 import {
   EXPENSE_CATEGORY_LABELS,
+  EXPENSE_STATUS_LABELS,
+  canonicalExpenseStatus,
   coparentPortion,
+  expenseBalanceFigures,
+  expensePartialPaymentText,
+  expenseShareRemainder,
   expenseTabMoney,
-  expenseTabNetBalance,
   expenseTabSplitText,
   expenseTabStatus,
   expenseTabTheirShareText,
   expenseTabTotalText,
   formatStoredExpenseNumber,
+  type ExpenseBalanceFigures,
   type ExpenseTabRow,
 } from "@/lib/expenses-tab";
 import { formatDateSpan, zonedDayEndMs, zonedDayStartMs } from "@/lib/record/record-filters";
@@ -36,10 +41,13 @@ export type ExpenseReportSource = {
   allocationStatus: string | null;
   status: string;
   disputeReason: string | null;
+  disputedBy?: string | null;
+  disputedAt?: string | null;
   approvedBy: string | null;
   approvedAt: string | null;
   resolvedAt: string | null;
   paidAt: string | null;
+  paidAmount?: string | number | null;
   paymentMethod: string | null;
   paymentReference: string | null;
   paymentNotes: string | null;
@@ -116,29 +124,11 @@ export function formatExpenseNumber(value: number | null): string {
 }
 
 export function expenseStatusLabel(status: string, share: number | null): string {
-  const normalized = status.trim().toLowerCase();
-  if (
-    share === 0 &&
-    (normalized === "submitted" || normalized === "resolved" || normalized === "logged")
-  ) {
+  const canonical = canonicalExpenseStatus(status);
+  if (share === 0 && (canonical === "pending" || canonical === "approved" || canonical === "logged")) {
     return "Logged";
   }
-  switch (normalized) {
-    case "submitted":
-      return "Pending";
-    case "disputed":
-      return "Disputed";
-    case "resolved":
-      return "Resolved";
-    case "paid":
-      return "Paid";
-    case "approved":
-      return "Approved";
-    case "logged":
-      return "Logged";
-    default:
-      return status.trim() || "Not recorded";
-  }
+  return EXPENSE_STATUS_LABELS[status.trim().toLowerCase()] ?? EXPENSE_STATUS_LABELS[canonical] ?? (status.trim() || "Not recorded");
 }
 
 function money(value: string | number | null | undefined): number | null {
@@ -244,13 +234,13 @@ function isPaid(expense: ExpenseReportSource): boolean {
 }
 
 function isAccepted(expense: ExpenseReportSource): boolean {
-  const status = statusOf(expense);
-  return status === "resolved" || status === "approved";
+  return canonicalExpenseStatus(expense.status) === "approved";
 }
 
 function hasPaymentDetails(expense: ExpenseReportSource): boolean {
   return Boolean(
     expense.paidAt?.trim() ||
+      expense.paidAmount != null && expense.paidAmount !== "" ||
       expense.paymentMethod?.trim() ||
       expense.paymentReference?.trim() ||
       expense.paymentNotes?.trim()
@@ -308,6 +298,15 @@ function expenseIdentity(expense: ExpenseReportSource): string {
   return label === "—" ? expense.id : label;
 }
 
+function figureLines(title: string, figure: ExpenseBalanceFigures["agreed"]): string[] {
+  return [
+    title,
+    `They owe you: ${expenseTabMoney(figure.owedToYou)}`,
+    `You owe them: ${expenseTabMoney(figure.youOwe)}`,
+    `Net: ${figure.label}`,
+  ];
+}
+
 function toTabRow(expense: ExpenseReportSource): ExpenseTabRow {
   return {
     amount: expense.amount,
@@ -317,6 +316,7 @@ function toTabRow(expense: ExpenseReportSource): ExpenseTabRow {
     allocation_status: expense.allocationStatus,
     status: expense.status,
     split_label: expense.splitLabel,
+    paid_amount: expense.paidAmount ?? null,
   };
 }
 
@@ -554,14 +554,13 @@ export function prepareExpenseReport(input: {
       add(counterTotals, "markedPaid", info.share);
       counterTotals.markedPaidCount += 1;
     }
-    const acceptedUnpaid =
-      isAccepted(expense) && !isPaid(expense) && info.share != null && info.share > 0 && !info.inconsistent;
-    if (acceptedUnpaid && counterTotals && submitterTotals && info.share != null) {
-      add(counterTotals, "outstandingTheyOwe", info.share);
+    const acceptedRemainder = isAccepted(expense) ? expenseShareRemainder(toTabRow(expense)) : 0;
+    if (acceptedRemainder > 0 && counterTotals && submitterTotals) {
+      add(counterTotals, "outstandingTheyOwe", acceptedRemainder);
       counterTotals.outstandingTheyOweCount += 1;
-      add(submitterTotals, "outstandingOwedToThem", info.share);
+      add(submitterTotals, "outstandingOwedToThem", acceptedRemainder);
       submitterTotals.outstandingOwedToThemCount += 1;
-    } else if (acceptedUnpaid) {
+    } else if (acceptedRemainder > 0) {
       unattributedOutstanding += 1;
     }
     if (statusOf(expense) === "disputed") {
@@ -570,9 +569,12 @@ export function prepareExpenseReport(input: {
         disputedWithShare += 1;
       } else disputedWithoutShare += 1;
     }
-    if (statusOf(expense) === "submitted" && info.share != null && info.share > 0 && !info.inconsistent) {
-      pendingAmount = round2(pendingAmount + info.share);
-      pendingCount += 1;
+    if (canonicalExpenseStatus(expense.status) === "pending") {
+      const claimed = expenseShareRemainder(toTabRow(expense));
+      if (claimed > 0) {
+        pendingAmount = round2(pendingAmount + claimed);
+        pendingCount += 1;
+      }
     }
 
     const id = expenseIdentity(expense);
@@ -607,7 +609,9 @@ export function prepareExpenseReport(input: {
       expenseTabTotalText(expense.amount),
       expenseTabSplitText(tabRow),
       expenseTabTheirShareText(tabRow, input.viewerId),
-      expenseTabStatus(tabRow, input.viewerId),
+      [expenseTabStatus(tabRow, input.viewerId), expensePartialPaymentText(tabRow) ?? ""]
+        .filter(Boolean)
+        .join("\n"),
       evidence,
     ]);
 
@@ -619,11 +623,16 @@ export function prepareExpenseReport(input: {
       ]
         .filter(Boolean)
         .join("\n");
-      const amountText = isPaid(expense)
-        ? info.share == null || info.inconsistent
-          ? "Marked paid. Amount not stored."
-          : `Allocated share marked paid: ${formatExpenseCurrency(info.share)}`
-        : "Payment details recorded. Status is not Paid, so this is not treated as payment in full. A partial amount is not stored.";
+      const paidAmount = money(expense.paidAmount);
+      const remainder = expenseShareRemainder(toTabRow(expense));
+      const amountText =
+        paidAmount != null && remainder > 0
+          ? `Paid ${formatExpenseCurrency(paidAmount)}. Remainder ${formatExpenseCurrency(remainder)}.`
+          : isPaid(expense)
+            ? paidAmount == null
+              ? "Marked paid. No paid amount was stored, so this counts as paid in full."
+              : `Paid ${formatExpenseCurrency(paidAmount)}.`
+            : "Payment details recorded. Status is not Paid, so this is not treated as payment in full.";
       const recordedBy = expense.approvedBy
         ? byUserId.get(expense.approvedBy)?.name ?? "Parent not on this case"
         : "Not recorded";
@@ -649,10 +658,15 @@ export function prepareExpenseReport(input: {
                 : ""
             }. A separate resolution statement is not stored.`
           : "No resolution is recorded. A separate response is not stored.";
+      const disputedBy = expense.disputedBy
+        ? byUserId.get(expense.disputedBy)?.name ?? "Parent not on this case"
+        : "Not recorded";
       disputeRows.push([
         `${id}\n${expense.description.trim() || "No description"}`,
         label,
         expense.disputeReason?.trim() || "No dispute reason was recorded.",
+        disputedBy,
+        expense.disputedAt?.trim() ? formatWhen(expense.disputedAt, input.timeZone) : "Not recorded",
         resolution,
       ]);
     }
@@ -699,22 +713,24 @@ export function prepareExpenseReport(input: {
   const blocks: ExpenseReportDocument["blocks"] = [];
   if (input.options.netBalance) {
     const viewer = input.viewerName.trim() || "the parent who generated this report";
-    const period = expenseTabNetBalance(included.map(toTabRow), input.viewerId);
+    const period = expenseBalanceFigures(included.map(toTabRow), input.viewerId);
+    const balanceIntro = [
+      `Shown for ${viewer}, using the same balance rules as the Expenses tab.`,
+      "Agreed outstanding is the remainder on Approved expenses. Claimed, awaiting response is the remainder on Pending expenses. They are not added together. A Paid expense with no paid amount counts as paid in full.",
+    ];
     if (selectedScope) {
       blocks.push({
         kind: "lines",
         title: "Summary",
         lines: [
-          `Shown for ${viewer}, using the same balance rules as the Expenses tab.`,
+          ...balanceIntro,
           "Totals are calculated from the selected expenses only.",
-          "Paid expenses are excluded from the balance. A share is shown as owed only when the stored status is an accepted, unpaid allocation.",
-          `They owe you: ${expenseTabMoney(period.owedToYou)}`,
-          `You owe them: ${expenseTabMoney(period.youOwe)}`,
-          `Net: ${period.label}`,
+          ...figureLines("Agreed outstanding", period.agreed),
+          ...figureLines("Claimed, awaiting response", period.claimed),
         ],
       });
     } else {
-      const overall = expenseTabNetBalance(input.expenses.map(toTabRow), input.viewerId);
+      const overall = expenseBalanceFigures(input.expenses.map(toTabRow), input.viewerId);
       const periodNote = filtered
         ? `Calculated only from expenses entered in ${dateLabel}. This is not the current overall balance.`
         : "No date filter was applied, so this period balance is the same as the current overall balance.";
@@ -722,16 +738,14 @@ export function prepareExpenseReport(input: {
         kind: "lines",
         title: "Net balance",
         lines: [
-          `Shown for ${viewer}, using the same balance as that parent's Expenses tab. Paid expenses are excluded.`,
+          ...balanceIntro,
           "Current overall balance. Every expense currently on the Expenses tab, including records outside this report's dates.",
-          `They owe you: ${expenseTabMoney(overall.owedToYou)}`,
-          `You owe them: ${expenseTabMoney(overall.youOwe)}`,
-          `Net: ${overall.label}`,
+          ...figureLines("Agreed outstanding", overall.agreed),
+          ...figureLines("Claimed, awaiting response", overall.claimed),
           "Selected reporting period.",
           periodNote,
-          `They owe you: ${expenseTabMoney(period.owedToYou)}`,
-          `You owe them: ${expenseTabMoney(period.youOwe)}`,
-          `Net: ${period.label}`,
+          ...figureLines("Agreed outstanding", period.agreed),
+          ...figureLines("Claimed, awaiting response", period.claimed),
         ],
       });
     }
@@ -789,9 +803,9 @@ export function prepareExpenseReport(input: {
     blocks.push({
       kind: "table",
       title: "Dispute history",
-      intro: "Only recorded dispute reasons and resolution times are shown.",
-      headers: ["Expense", "Status", "Dispute reason", "Resolution"],
-      widths: [46, 28, 90, 91.4],
+      intro: "The dispute reason, the parent who disputed it, and when they disputed it are shown when those were recorded.",
+      headers: ["Expense", "Status", "Dispute reason", "Disputed by", "When", "Resolution"],
+      widths: [40, 24, 52, 32, 36, 71.4],
       rows: disputeRows,
       empty: "No dispute reasons, disputed statuses, or resolution times are stored for the included expenses.",
     });

@@ -14,12 +14,36 @@ export const EXPENSE_CATEGORY_LABELS: Record<string, string> = {
 };
 
 export const EXPENSE_STATUS_LABELS: Record<string, string> = {
-  submitted: "Pending",
-  disputed: "Disputed",
-  resolved: "Resolved",
-  paid: "Paid",
   logged: "Logged",
+  pending: "Pending",
+  submitted: "Pending",
+  approved: "Approved",
+  resolved: "Approved",
+  disputed: "Disputed",
+  paid: "Paid",
 };
+
+export const EXPENSE_STATUS_FILTERS = [
+  { value: "logged", label: "Logged" },
+  { value: "pending", label: "Pending" },
+  { value: "approved", label: "Approved" },
+  { value: "disputed", label: "Disputed" },
+  { value: "paid", label: "Paid" },
+] as const;
+
+/** Stored words from before the status migration still mean Pending and Approved. */
+export function canonicalExpenseStatus(status: string | null | undefined): string {
+  const normalized = (status ?? "").trim().toLowerCase();
+  if (normalized === "submitted") return "pending";
+  if (normalized === "resolved") return "approved";
+  return normalized;
+}
+
+export function expenseStatusMatches(status: string, selected: readonly string[]): boolean {
+  if (selected.length === 0) return true;
+  const canonical = canonicalExpenseStatus(status);
+  return selected.some((value) => canonicalExpenseStatus(value) === canonical);
+}
 
 export type ExpenseTabRow = {
   amount: string | number | null;
@@ -30,6 +54,7 @@ export type ExpenseTabRow = {
   allocation_status?: string | null;
   status: string;
   split_label?: string | null;
+  paid_amount?: string | number | null;
 };
 
 export function formatStoredExpenseNumber(value: number | null | undefined): string {
@@ -68,6 +93,40 @@ export function coparentPortion(
   return owed;
 }
 
+/**
+ * The co-parent share a payment can settle.
+ * A $0 share is a personal record and has nothing to pay.
+ */
+export function payableCoparentShare(
+  exp: Pick<ExpenseTabRow, "other_parent_share" | "amount_owed" | "split_label">
+): number | null {
+  const share = coparentPortion(exp);
+  if (share == null || !(share > 0)) return null;
+  return Math.round(share * 100) / 100;
+}
+
+/** Dollars and cents, or null when the figure is not a number. */
+export function parsePaymentAmount(value: unknown): number | null {
+  if (typeof value === "string" && !value.trim()) return null;
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(parsed)) return null;
+  return Math.round(parsed * 100) / 100;
+}
+
+/** True when the recorded amount covers the co-parent share. Paid means paid in full. */
+export function paymentCoversShare(amount: number | null, share: number | null): boolean {
+  if (amount == null || share == null || !(share > 0)) return false;
+  return share - amount <= 0.001;
+}
+
+/** Why a payment amount cannot be stored, or null when it is within the co-parent share. */
+export function paymentAmountError(amount: number | null, share: number | null): string | null {
+  if (share == null) return "A personal expense has no co-parent share to pay.";
+  if (amount == null || amount <= 0) return "Enter the amount paid.";
+  if (amount - share > 0.001) return "The amount can't be more than the co-parent's share.";
+  return null;
+}
+
 /** Co-parent share shown in the Expenses tab "Their share" column. */
 export function coparentShareForExpense(exp: ExpenseTabRow, currentUserId: string): number {
   const amountNum = Number(exp.amount);
@@ -82,13 +141,37 @@ export function coparentShareForExpense(exp: ExpenseTabRow, currentUserId: strin
 }
 
 export function displayExpenseStatus(exp: { status: string }, involved: boolean): string {
-  if (
-    !involved &&
-    (exp.status === "submitted" || exp.status === "resolved" || exp.status === "logged")
-  ) {
+  const canonical = canonicalExpenseStatus(exp.status);
+  if (!involved && (canonical === "pending" || canonical === "approved" || canonical === "logged")) {
     return "Logged";
   }
-  return EXPENSE_STATUS_LABELS[exp.status] ?? exp.status;
+  return EXPENSE_STATUS_LABELS[exp.status] ?? EXPENSE_STATUS_LABELS[canonical] ?? exp.status;
+}
+
+/**
+ * Outstanding co-parent share.
+ * Paid with no paid_amount counts as paid in full. The result is never below zero.
+ */
+export function expenseShareRemainder(
+  exp: Pick<ExpenseTabRow, "status" | "other_parent_share" | "amount_owed" | "split_label" | "paid_amount">
+): number {
+  const share = coparentPortion(exp);
+  if (share == null || !(share > 0)) return 0;
+  const paid = finiteNumber(exp.paid_amount);
+  if (canonicalExpenseStatus(exp.status) === "paid" && paid == null) return 0;
+  const remainder = Math.round((share - (paid ?? 0)) * 100) / 100;
+  return remainder > 0 ? remainder : 0;
+}
+
+/** Amount paid and what is left, when a recorded payment does not cover the share. */
+export function expensePartialPaymentText(
+  exp: Pick<ExpenseTabRow, "status" | "other_parent_share" | "amount_owed" | "split_label" | "paid_amount">
+): string | null {
+  const paid = finiteNumber(exp.paid_amount);
+  if (paid == null || !(paid > 0)) return null;
+  const remainder = expenseShareRemainder(exp);
+  if (!(remainder > 0)) return null;
+  return `Paid ${expenseTabMoney(paid)} · ${expenseTabMoney(remainder)} left`;
 }
 
 export function expenseTabStatus(exp: ExpenseTabRow, currentUserId: string): string {
@@ -121,29 +204,51 @@ export type ExpenseTabNet = {
   label: string;
 };
 
-/** Same net as the Expenses tab: unpaid amount_owed, from the signed-in parent's point of view. */
-export function expenseTabNetBalance(expenses: ExpenseTabRow[], currentUserId: string): ExpenseTabNet {
-  let owedToYou = 0;
-  let youOwe = 0;
-  for (const exp of expenses) {
-    const amountNum = Number(exp.amount);
-    const owedNum = exp.amount_owed != null ? Number(exp.amount_owed) : null;
-    if (
-      exp.status !== "paid" &&
-      !Number.isNaN(amountNum) &&
-      owedNum != null &&
-      !Number.isNaN(owedNum)
-    ) {
-      if (exp.submitted_by === currentUserId) owedToYou += owedNum;
-      else youOwe += owedNum;
-    }
-  }
-  const net = owedToYou - youOwe;
+export type ExpenseBalanceFigures = {
+  agreed: ExpenseTabNet;
+  claimed: ExpenseTabNet;
+};
+
+function moneyFigure(owedToYou: number, youOwe: number): ExpenseTabNet {
+  const owed = Math.round(owedToYou * 100) / 100;
+  const owe = Math.round(youOwe * 100) / 100;
+  const net = Math.round((owed - owe) * 100) / 100;
   const label =
     net > 0.01
       ? `You are owed $${net.toFixed(2)}`
       : net < -0.01
         ? `You owe $${Math.abs(net).toFixed(2)}`
         : "You are all settled";
-  return { owedToYou, youOwe, net, label };
+  return { owedToYou: owed, youOwe: owe, net, label };
+}
+
+function figureForStatuses(
+  expenses: ExpenseTabRow[],
+  currentUserId: string,
+  statuses: ReadonlySet<string>
+): ExpenseTabNet {
+  let owedToYou = 0;
+  let youOwe = 0;
+  for (const exp of expenses) {
+    if (!statuses.has(canonicalExpenseStatus(exp.status))) continue;
+    const remainder = expenseShareRemainder(exp);
+    if (!(remainder > 0)) continue;
+    if (exp.submitted_by === currentUserId) owedToYou += remainder;
+    else youOwe += remainder;
+  }
+  return moneyFigure(owedToYou, youOwe);
+}
+
+/**
+ * Two balances, from the signed-in parent's point of view.
+ * Agreed outstanding is Approved rows. Claimed, awaiting response is Pending rows.
+ */
+export function expenseBalanceFigures(
+  expenses: ExpenseTabRow[],
+  currentUserId: string
+): ExpenseBalanceFigures {
+  return {
+    agreed: figureForStatuses(expenses, currentUserId, new Set(["approved"])),
+    claimed: figureForStatuses(expenses, currentUserId, new Set(["pending"])),
+  };
 }

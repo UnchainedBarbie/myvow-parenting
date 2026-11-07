@@ -10,6 +10,12 @@ import { EventRequestsCard } from "@/components/dashboard/event-requests-card";
 import { CalendarNotices } from "@/components/dashboard/calendar-notices";
 import { loadCalendarNoticeCards } from "@/lib/calendar/load-calendar-notices";
 import { loadVisibleExpenses } from "@/lib/expenses-visibility";
+import {
+  canonicalExpenseStatus,
+  coparentPortion,
+  expenseBalanceFigures,
+  type ExpenseTabRow,
+} from "@/lib/expenses-tab";
 import { linkUnassignedParentMessages } from "@/lib/messages/deliver-parent-message";
 import { presentMessageForViewer } from "@/lib/messages/parent-message-visibility";
 type TodayEvent = {
@@ -276,54 +282,38 @@ export default async function DashboardPage() {
   }));
 
   // Expenses: net balance + open items
-  const balanceLoaded = await loadVisibleExpenses(
-    (columns) =>
-      admin
-        .from("expenses")
-        .select(columns)
-        .eq("case_id", caseId)
-        .is("deleted_at", null),
-    "id, amount, amount_owed, other_parent_share, submitted_by, status, deleted_at",
-    { userId: user.id, role: membership?.role ?? null }
-  );
+  const balanceColumns =
+    "id, amount, amount_owed, other_parent_share, split_label, submitted_by, status, paid_amount, deleted_at";
+  const loadBalance = (columns: string) =>
+    loadVisibleExpenses(
+      (selected) =>
+        admin.from("expenses").select(selected).eq("case_id", caseId).is("deleted_at", null),
+      columns,
+      { userId: user.id, role: membership?.role ?? null }
+    );
+  let balanceLoaded = await loadBalance(balanceColumns);
+  if (balanceLoaded.error && /paid_amount/i.test(balanceLoaded.error.message ?? "")) {
+    balanceLoaded = await loadBalance(balanceColumns.replace(", paid_amount", ""));
+  }
   const expensesRaw = balanceLoaded.rows;
-
-  let totalOwedToYou = 0;
-  let totalYouOwe = 0;
+  const balanceRows: ExpenseTabRow[] = (expensesRaw ?? []).map((e) => ({
+    amount: e.amount as string | number | null,
+    amount_owed: e.amount_owed as string | number | null,
+    other_parent_share: (e as { other_parent_share?: string | number | null }).other_parent_share ?? null,
+    split_label: (e as { split_label?: string | null }).split_label ?? null,
+    submitted_by: (e.submitted_by as string | null) ?? "",
+    status: (e.status as string | null) ?? "",
+    paid_amount: (e as { paid_amount?: string | number | null }).paid_amount ?? null,
+  }));
+  const expenseFigures = expenseBalanceFigures(balanceRows, user.id);
   let openExpenseItems = 0;
-  for (const e of expensesRaw ?? []) {
-    const amountNum = Number(e.amount);
-    const owedNum =
-      (e.amount_owed as number | null | undefined) != null
-        ? Number(e.amount_owed)
-        : null;
-    const shareNum =
-      (e as { other_parent_share?: number | null }).other_parent_share != null
-        ? Number((e as { other_parent_share?: number | null }).other_parent_share)
-        : owedNum;
-    const status = (e.status as string | null) ?? "";
-    if (
-      (status === "submitted" || status === "disputed") &&
-      shareNum != null &&
-      !Number.isNaN(shareNum) &&
-      shareNum > 0
-    ) {
+  for (const row of balanceRows) {
+    const status = canonicalExpenseStatus(row.status);
+    const share = coparentPortion(row);
+    if ((status === "pending" || status === "disputed") && share != null && share > 0) {
       openExpenseItems += 1;
     }
-    if (Number.isNaN(amountNum) || owedNum == null || Number.isNaN(owedNum)) continue;
-    if (e.submitted_by === user.id) {
-      totalOwedToYou += owedNum;
-    } else {
-      totalYouOwe += owedNum;
-    }
   }
-  const net = totalOwedToYou - totalYouOwe;
-  const netLabel =
-    net > 0.01
-      ? `You are owed $${net.toFixed(2)}`
-      : net < -0.01
-        ? `You owe $${Math.abs(net).toFixed(2)}`
-        : "You are all settled";
 
   // Messages over last 14 days for tone/communication status
   const twoWeeksAgo = new Date(now);
@@ -428,7 +418,8 @@ export default async function DashboardPage() {
                 awaitingResponseCount={awaitingResponseCount}
                 communicationToneLabel={communicationToneLabel}
                 firstUnreadConversationId={firstUnreadConversationId}
-                netLabel={netLabel}
+                agreedOutstandingLabel={expenseFigures.agreed.label}
+                claimedAwaitingLabel={expenseFigures.claimed.label}
               />
             }
             contentBelowChecklist={

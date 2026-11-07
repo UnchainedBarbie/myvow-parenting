@@ -1,7 +1,16 @@
 import assert from "node:assert/strict";
 import type { Proposal } from "@/lib/sage/planner";
 import { expenseWorkflowStatus } from "@/lib/expenses-share";
-import { coparentShareForExpense, expenseTabNetBalance } from "@/lib/expenses-tab";
+import {
+  coparentShareForExpense,
+  payableCoparentShare,
+  parsePaymentAmount,
+  paymentAmountError,
+  expenseBalanceFigures,
+  expensePartialPaymentText,
+  expenseShareRemainder,
+  paymentCoversShare,
+} from "@/lib/expenses-tab";
 import {
   detectExpenseLoggingIntent,
   detectExpensePayer,
@@ -338,7 +347,7 @@ assert.equal(dentalPlan.fields?.split_label, "50/50");
 assert.match(dentalPlan.review, /Notify co-parent: on/);
 assert.equal(
   expenseWorkflowStatus({ otherParentShare: 60, notifyCoparent: dentalPlan.notifyCoparent }),
-  "submitted"
+  "pending"
 );
 
 const shoesIntent = detectExpenseLoggingIntent(
@@ -360,7 +369,7 @@ assert.equal(shoesPlan.fields?.amount_owed, 0);
 assert.equal(shoesPlan.fields?.split_label, "Personal");
 assert.match(shoesPlan.review, /Notify co-parent: off/);
 assert.equal(
-  expenseTabNetBalance(
+  expenseBalanceFigures(
     [
       {
         amount: 65,
@@ -372,7 +381,7 @@ assert.equal(
       },
     ],
     "parent-a"
-  ).net,
+  ).agreed.net,
   0
 );
 
@@ -418,8 +427,41 @@ assert.equal(quietShare.fields?.amount_owed, 60);
 assert.match(quietShare.review, /Notify co-parent: off/);
 assert.equal(
   expenseWorkflowStatus({ otherParentShare: 60, notifyCoparent: false }),
-  "resolved"
+  "pending"
 );
+assert.equal(expenseWorkflowStatus({ otherParentShare: 0 }), "logged");
+const approvedShare = {
+  amount: 100,
+  other_parent_share: 40,
+  amount_owed: 40,
+  split_label: "50/50",
+  submitted_by: "parent-a",
+  status: "approved",
+  paid_amount: null,
+};
+const pendingShare = { ...approvedShare, status: "pending" };
+const paidInFull = { ...approvedShare, status: "paid", paid_amount: null };
+const paidPartial = { ...approvedShare, status: "paid", paid_amount: 15 };
+assert.equal(expenseShareRemainder(approvedShare), 40);
+assert.equal(expenseShareRemainder(paidInFull), 0);
+assert.equal(expenseShareRemainder(paidPartial), 25);
+const partialApproved = { ...approvedShare, paid_amount: 15 };
+assert.equal(expenseShareRemainder(partialApproved), 25);
+assert.equal(expensePartialPaymentText(partialApproved), "Paid $15.00 · $25.00 left");
+assert.equal(paymentCoversShare(15, 40), false);
+assert.equal(paymentCoversShare(40, 40), true);
+assert.equal(
+  expenseBalanceFigures([partialApproved], "parent-a").agreed.owedToYou,
+  25
+);
+const figures = expenseBalanceFigures(
+  [approvedShare, pendingShare, paidInFull, paidPartial, { ...approvedShare, submitted_by: "parent-b", status: "approved", paid_amount: 10 }],
+  "parent-a"
+);
+assert.equal(figures.agreed.owedToYou, 40);
+assert.equal(figures.agreed.youOwe, 30);
+assert.equal(figures.claimed.owedToYou, 40);
+assert.equal(figures.claimed.youOwe, 0);
 
 const otherPaid = planExpenseEntry({
   intent: "unspecified",
@@ -460,5 +502,27 @@ const ambiguousChoice = planExpenseEntry({
 });
 assert.equal(ambiguousChoice.mode, "choose");
 assert.equal(ambiguousChoice.fields, null);
+
+const personalShare = {
+  amount: 40,
+  other_parent_share: 0,
+  amount_owed: 0,
+  split_label: "Personal",
+};
+assert.equal(payableCoparentShare(personalShare), null);
+assert.equal(paymentAmountError(10, payableCoparentShare(personalShare)), "A personal expense has no co-parent share to pay.");
+const sharedShare = payableCoparentShare({
+  other_parent_share: 40,
+  amount_owed: 40,
+  split_label: "50/50",
+});
+assert.equal(sharedShare, 40);
+assert.equal(paymentAmountError(parsePaymentAmount("40"), sharedShare), null);
+assert.equal(paymentAmountError(parsePaymentAmount("20.5"), sharedShare), null);
+assert.equal(
+  paymentAmountError(parsePaymentAmount("40.01"), sharedShare),
+  "The amount can't be more than the co-parent's share."
+);
+assert.equal(paymentAmountError(parsePaymentAmount(""), sharedShare), "Enter the amount paid.");
 
 console.log("expense sharing tests passed");

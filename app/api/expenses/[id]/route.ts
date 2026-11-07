@@ -222,9 +222,13 @@ export async function PATCH(
     if (body.payment_reference !== undefined) updates.payment_reference = body.payment_reference || null;
     if (body.payment_notes !== undefined) updates.payment_notes = body.payment_notes || null;
 
-    if (body.status === "resolved" || body.status === "paid") {
+    if (body.status === "resolved" || body.status === "approved" || body.status === "paid") {
       updates.approved_by = user.id;
       updates.approved_at = now;
+    }
+    if (body.status === "disputed") {
+      updates.disputed_by = user.id;
+      updates.disputed_at = now;
     }
 
     if (isOwner && (body.amount !== undefined || body.category !== undefined || childrenProvided)) {
@@ -280,7 +284,12 @@ export async function PATCH(
             (expense as { status?: string }).status ??
             ""
         );
-        if (currentStatus === "submitted" || currentStatus === "resolved") {
+        if (
+          currentStatus === "submitted" ||
+          currentStatus === "pending" ||
+          currentStatus === "resolved" ||
+          currentStatus === "logged"
+        ) {
           updates.status = expenseWorkflowStatus({
             otherParentShare: plan.fields.other_parent_share,
             notifyCoparent: plan.notifyCoparent,

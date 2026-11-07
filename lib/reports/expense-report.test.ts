@@ -89,6 +89,7 @@ const records: ExpenseReportSource[] = [
     amountOwed: 25,
     status: "paid",
     paidAt: "2026-10-15T18:00:00.000Z",
+    paidAmount: 25,
     paymentMethod: "Venmo",
     paymentReference: "VN-19",
     approvedBy: "alex",
@@ -114,6 +115,8 @@ const records: ExpenseReportSource[] = [
     amountOwed: 30,
     status: "disputed",
     disputeReason: "The hours do not match the invoice.",
+    disputedBy: "jordan",
+    disputedAt: "2026-10-14T18:00:00.000Z",
   }),
   expense({
     id: "e6",
@@ -166,9 +169,11 @@ const balanceText = balance.lines.join("\n");
 assert.match(balanceText, /Shown for Alex Rivera/);
 assert.match(balanceText, /Current overall balance/);
 assert.match(balanceText, /Selected reporting period/);
-assert.match(balanceText, /They owe you: \$185\.00/);
-assert.match(balanceText, /You owe them: \$30\.00/);
-assert.match(balanceText, /Net: You are owed \$155\.00/);
+assert.match(balanceText, /Agreed outstanding/);
+assert.match(balanceText, /Claimed, awaiting response/);
+assert.match(balanceText, /They owe you: \$100\.00/);
+assert.match(balanceText, /They owe you: \$85\.00/);
+assert.doesNotMatch(balanceText, /\$155\.00|\$185\.00/);
 assert.doesNotMatch(balanceText, /not an established debt|50\/50/);
 
 const ledger = prepared.document.blocks.find((block) => block.kind === "table" && block.title === "All expenses");
@@ -232,7 +237,7 @@ const payments = prepared.document.blocks.find((block) => block.kind === "table"
 assert.equal(payments?.kind, "table");
 if (payments?.kind !== "table") throw new Error("missing payments");
 assert.equal(payments.rows.length, 2);
-const paidRow = payments.rows.find((row) => row[2].includes("Allocated share marked paid"));
+const paidRow = payments.rows.find((row) => row[2].includes("Paid $25.00"));
 const partialRow = payments.rows.find((row) => row[2].includes("not treated as payment in full"));
 assert.ok(paidRow);
 assert.match(paidRow?.[2] ?? "", /\$25\.00/);
@@ -245,6 +250,8 @@ assert.equal(disputes?.kind, "table");
 if (disputes?.kind !== "table") throw new Error("missing disputes");
 assert.equal(disputes.rows.length, 1);
 assert.match(disputes.rows[0][2], /hours do not match/);
+assert.equal(disputes.rows[0][3], "Jordan Lee");
+assert.match(disputes.rows[0][4], /Oct/);
 assert.doesNotMatch(disputes.rows[0].join(" "), /Sage|rewritten/i);
 
 const duplicates = prepared.document.blocks.find(

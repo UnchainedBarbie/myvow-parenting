@@ -67,17 +67,24 @@ export default async function ExpensesPage() {
     .eq("case_id", caseId)
     .order("first_name");
 
-  const loadedExpenses = await loadVisibleExpenses(
-    (columns) =>
-      admin
-        .from("expenses")
-        .select(columns)
-        .eq("case_id", caseId)
-        .is("deleted_at", null)
-        .order("created_at", { ascending: false }),
-    "id, description, amount, category, category_description, child_id, amount_owed, other_parent_share, status, created_at, incurred_date, expense_number, submitted_by, receipt_file_id, dispute_reason, paid_at, payment_method, payment_reference, payment_notes, deleted_at, allocation_status, split_label",
-    { userId: user.id, role: membership?.role ?? null }
-  );
+  const expenseColumns =
+    "id, description, amount, category, category_description, child_id, amount_owed, other_parent_share, status, created_at, incurred_date, expense_number, submitted_by, receipt_file_id, dispute_reason, paid_at, paid_amount, payment_method, payment_reference, payment_notes, deleted_at, allocation_status, split_label";
+  const loadExpenses = (columns: string) =>
+    loadVisibleExpenses(
+      (selected) =>
+        admin
+          .from("expenses")
+          .select(selected)
+          .eq("case_id", caseId)
+          .is("deleted_at", null)
+          .order("created_at", { ascending: false }),
+      columns,
+      { userId: user.id, role: membership?.role ?? null }
+    );
+  let loadedExpenses = await loadExpenses(expenseColumns);
+  if (loadedExpenses.error && /paid_amount/i.test(loadedExpenses.error.message ?? "")) {
+    loadedExpenses = await loadExpenses(expenseColumns.replace(", paid_amount", ""));
+  }
   const expensesRaw = loadedExpenses.rows;
 
   const expenseIds = (expensesRaw ?? []).map((e) => e.id as string);
@@ -202,6 +209,10 @@ export default async function ExpensesPage() {
         : null,
     dispute_reason: (e as { dispute_reason?: string | null }).dispute_reason ?? null,
     paid_at: (e as { paid_at?: string | null }).paid_at ?? null,
+    paid_amount:
+      (e as { paid_amount?: string | number | null }).paid_amount != null
+        ? String((e as { paid_amount?: string | number | null }).paid_amount)
+        : null,
     payment_method: (e as { payment_method?: string | null }).payment_method ?? null,
     payment_reference: (e as { payment_reference?: string | null }).payment_reference ?? null,
     payment_notes: (e as { payment_notes?: string | null }).payment_notes ?? null,

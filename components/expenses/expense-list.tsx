@@ -19,11 +19,20 @@ import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { coparentShareInvolves } from "@/lib/expenses-share";
 import {
   EXPENSE_CATEGORY_LABELS as CATEGORY_LABELS,
+  EXPENSE_STATUS_FILTERS,
+  canonicalExpenseStatus,
   coparentShareForExpense as coparentShareForRow,
   displayExpenseStatus,
+  expenseBalanceFigures,
+  expensePartialPaymentText,
+  expenseStatusMatches,
+  paymentCoversShare,
   expenseTabSplitText,
   expenseTabTheirShareText,
   formatStoredExpenseNumber,
+  parsePaymentAmount,
+  payableCoparentShare,
+  paymentAmountError,
 } from "@/lib/expenses-tab";
 import { Label } from "@/components/ui/label";
 import { ChildMultiSelect } from "@/components/documents/child-multi-select";
@@ -34,12 +43,7 @@ import {
   expenseVisibilityLabel,
 } from "@/lib/expenses-visibility";
 
-const STATUS_FILTER_OPTIONS = [
-  { value: "submitted", label: "Pending" },
-  { value: "disputed", label: "Disputed" },
-  { value: "resolved", label: "Resolved" },
-  { value: "paid", label: "Paid" },
-] as const;
+const STATUS_FILTER_OPTIONS = EXPENSE_STATUS_FILTERS;
 
 export type ExpenseRow = {
   id: string;
@@ -61,6 +65,7 @@ export type ExpenseRow = {
   receipt_file_name: string | null;
   dispute_reason?: string | null;
   paid_at?: string | null;
+  paid_amount?: string | null;
   payment_method?: string | null;
   payment_reference?: string | null;
   payment_notes?: string | null;
@@ -278,7 +283,7 @@ export function ExpenseList({
   const [filterChildren, setFilterChildren] = useState<string[]>([]);
   const [filterStatuses, setFilterStatuses] = useState<string[]>(() => {
     const status = searchParams.get("status")?.toLowerCase();
-    if (status === "pending") return ["submitted"];
+    if (status === "pending") return ["pending"];
     if (status === "disputed") return ["disputed"];
     return [];
   });
@@ -308,9 +313,19 @@ export function ExpenseList({
   const [disputeText, setDisputeText] = useState("");
   const [markPaidExpense, setMarkPaidExpense] = useState<ExpenseRow | null>(null);
   const [markPaidDate, setMarkPaidDate] = useState<string>("");
+  const [markPaidAmount, setMarkPaidAmount] = useState<string>("");
   const [markPaidMethod, setMarkPaidMethod] = useState<string>("");
   const [markPaidRef, setMarkPaidRef] = useState<string>("");
   const [markPaidNotes, setMarkPaidNotes] = useState<string>("");
+  const [paymentReadOnly, setPaymentReadOnly] = useState(false);
+  const [paymentBaseline, setPaymentBaseline] = useState<{
+    date: string;
+    amount: string;
+    method: string;
+    reference: string;
+    notes: string;
+    paidAtIso: string | null;
+  } | null>(null);
   const [exportingSelected, setExportingSelected] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
   const [creatingReport, setCreatingReport] = useState(false);
@@ -355,7 +370,7 @@ export function ExpenseList({
         return m ? `${m[1]}-${m[2]}-${m[3]}` : "";
       })(),
       category_description: (exp.category_description ?? "").slice(0, 100),
-      status: exp.status ?? "submitted",
+      status: canonicalExpenseStatus(exp.status) || "pending",
       dispute_reason: exp.dispute_reason ?? "",
       paid_at: (exp as { paid_at?: string | null }).paid_at
         ? new Date((exp as { paid_at: string }).paid_at).toISOString().slice(0, 10)
@@ -418,10 +433,6 @@ export function ExpenseList({
           incurred_date: editForm.incurred_date || null,
           status: editForm.status || undefined,
           dispute_reason: editForm.dispute_reason.trim() || null,
-          paid_at: editForm.paid_at || null,
-          payment_method: editForm.payment_method.trim() || null,
-          payment_reference: editForm.payment_reference.trim() || null,
-          payment_notes: editForm.payment_notes.trim() || null,
           ...(editExpense.submitted_by === currentUserId &&
           editForm.visibility !== expenseVisibilityKey(editExpense.visibility)
             ? { visibility: editForm.visibility || null }
@@ -466,11 +477,8 @@ export function ExpenseList({
     }
   }
 
-  const { filtered, totals } = useMemo(() => {
+  const { filtered, figures } = useMemo(() => {
     const parts = debouncedSearch.split(/\s+/).filter(Boolean);
-
-    let totalOwedToYou = 0;
-    let totalYouOwe = 0;
 
     const result = expenses.filter((exp) => {
       const text = [
@@ -494,7 +502,7 @@ export function ExpenseList({
           return false;
         }
       }
-      if (filterStatuses.length && !filterStatuses.includes(exp.status)) return false;
+      if (!expenseStatusMatches(exp.status, filterStatuses)) return false;
       if (filterVisibilities.length && !filterVisibilities.includes(expenseVisibilityKey(exp.visibility))) return false;
 
       if (startDate || endDate) {
@@ -503,36 +511,14 @@ export function ExpenseList({
         if (endDate && key > endDate) return false;
       }
 
-      const amountNum = Number(exp.amount);
-      const owedNum = exp.amount_owed != null ? Number(exp.amount_owed) : null;
-      // Exclude fully paid expenses from net balance.
-      if (
-        exp.status !== "paid" &&
-        !Number.isNaN(amountNum) &&
-        owedNum != null &&
-        !Number.isNaN(owedNum)
-      ) {
-        if (exp.submitted_by === currentUserId) {
-          totalOwedToYou += owedNum;
-        } else {
-          totalYouOwe += owedNum;
-        }
-      }
-
       return true;
     });
 
     result.sort((a, b) => compareExpenses(a, b, sortKey, sortDir, currentUserId));
 
-    const net = totalOwedToYou - totalYouOwe;
-
     return {
       filtered: result,
-      totals: {
-        totalOwedToYou,
-        totalYouOwe,
-        net,
-      },
+      figures: expenseBalanceFigures(result, currentUserId),
     };
   }, [debouncedSearch, expenses, filterCategories, filterChildren, filterStatuses, filterVisibilities, startDate, endDate, currentUserId, sortKey, sortDir]);
 
@@ -779,15 +765,16 @@ export function ExpenseList({
 
   async function handleRespond(
     expenseId: string,
-    action: "approve" | "dispute" | "resolve" | "mark_paid",
+    action: "approve" | "dispute" | "resolve" | "mark_paid" | "update_payment",
     opts?: {
       dispute_reason?: string;
       paid_at?: string;
+      paid_amount?: number;
       payment_method?: string;
       payment_reference?: string;
       payment_notes?: string;
     }
-  ) {
+  ): Promise<boolean> {
     setRespondingId(expenseId);
     try {
       const body: {
@@ -795,6 +782,7 @@ export function ExpenseList({
         action: string;
         dispute_reason?: string;
         paid_at?: string;
+        paid_amount?: number;
         payment_method?: string;
         payment_reference?: string;
         payment_notes?: string;
@@ -803,10 +791,13 @@ export function ExpenseList({
         action,
       };
       if (opts?.dispute_reason) body.dispute_reason = opts.dispute_reason;
-      if (opts?.paid_at) body.paid_at = opts.paid_at;
-      if (opts?.payment_method) body.payment_method = opts.payment_method;
-      if (opts?.payment_reference) body.payment_reference = opts.payment_reference;
-      if (opts?.payment_notes) body.payment_notes = opts.payment_notes;
+      if (action === "mark_paid" || action === "update_payment") {
+        body.paid_at = opts?.paid_at;
+        body.paid_amount = opts?.paid_amount;
+        body.payment_method = opts?.payment_method ?? "";
+        body.payment_reference = opts?.payment_reference ?? "";
+        body.payment_notes = opts?.payment_notes ?? "";
+      }
       const res = await fetch("/api/expenses/respond", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -817,7 +808,7 @@ export function ExpenseList({
         showErrorToast(
           (data as { message?: string }).message ?? "Request failed"
         );
-        return;
+        return false;
       }
       router.refresh();
       if (action === "approve") {
@@ -827,24 +818,117 @@ export function ExpenseList({
       } else if (action === "resolve") {
         showSuccessToast("Expense resolved");
       } else if (action === "mark_paid") {
-        showSuccessToast("Marked as paid");
+        showSuccessToast("Expense marked paid");
+      } else if (action === "update_payment") {
+        showSuccessToast("Payment record updated");
       }
+      return true;
+    } catch (e) {
+      showErrorToast(e instanceof Error ? e.message : "Request failed");
+      return false;
     } finally {
       setRespondingId(null);
     }
   }
 
+  function paymentDateInput(iso: string | null | undefined): string {
+    if (!iso) return "";
+    const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) return "";
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    return `${date.getFullYear()}-${month}-${day}`;
+  }
+
+  function openPayment(exp: ExpenseRow, mode: "record" | "view") {
+    const share = payableCoparentShare(exp);
+    const recorded = parsePaymentAmount(exp.paid_amount);
+    const date =
+      mode === "view"
+        ? paymentDateInput(exp.paid_at)
+        : paymentDateInput(new Date().toISOString());
+    const amount =
+      mode === "view"
+        ? recorded != null
+          ? recorded.toFixed(2)
+          : ""
+        : share != null
+          ? share.toFixed(2)
+          : "";
+    const method = mode === "view" ? exp.payment_method ?? "" : "";
+    const reference = mode === "view" ? exp.payment_reference ?? "" : "";
+    const notes = mode === "view" ? exp.payment_notes ?? "" : "";
+    setMarkPaidExpense(exp);
+    setPaymentReadOnly(mode === "view");
+    setMarkPaidDate(date);
+    setMarkPaidAmount(amount);
+    setMarkPaidMethod(method);
+    setMarkPaidRef(reference);
+    setMarkPaidNotes(notes);
+    setPaymentBaseline(
+      mode === "view"
+        ? {
+            date,
+            amount,
+            method,
+            reference,
+            notes,
+            paidAtIso: exp.paid_at ?? null,
+          }
+        : null
+    );
+  }
+
+  function closePayment() {
+    setMarkPaidExpense(null);
+    setPaymentBaseline(null);
+    setPaymentReadOnly(false);
+  }
+
+  async function savePayment() {
+    if (!markPaidExpense || respondingId) return;
+    const share = payableCoparentShare(markPaidExpense);
+    const amount = parsePaymentAmount(markPaidAmount);
+    const amountError = paymentAmountError(amount, share);
+    if (amountError || amount == null) {
+      showErrorToast(amountError ?? "Enter the amount paid.");
+      return;
+    }
+    const unchanged =
+      paymentBaseline != null &&
+      markPaidDate === paymentBaseline.date &&
+      amount === parsePaymentAmount(paymentBaseline.amount) &&
+      markPaidMethod === paymentBaseline.method &&
+      markPaidRef.trim() === paymentBaseline.reference.trim() &&
+      markPaidNotes.trim() === paymentBaseline.notes.trim();
+    if (unchanged) {
+      setPaymentReadOnly(true);
+      return;
+    }
+    const paidAtIso =
+      paymentBaseline && markPaidDate === paymentBaseline.date && paymentBaseline.paidAtIso
+        ? paymentBaseline.paidAtIso
+        : markPaidDate
+          ? new Date(`${markPaidDate}T00:00:00`).toISOString()
+          : new Date().toISOString();
+    const saved = await handleRespond(
+      markPaidExpense.id,
+      paymentBaseline ? "update_payment" : "mark_paid",
+      {
+        paid_at: paidAtIso,
+        paid_amount: amount,
+        payment_method: markPaidMethod,
+        payment_reference: markPaidRef.trim(),
+        payment_notes: markPaidNotes.trim(),
+      }
+    );
+    if (saved) closePayment();
+  }
+
   const canRespond = (exp: ExpenseRow) =>
     exp.submitted_by !== currentUserId &&
-    exp.status === "submitted" &&
+    canonicalExpenseStatus(exp.status) === "pending" &&
     coparentShareInvolves(coparentShareForRow(exp, currentUserId));
-
-  const netLabel =
-    totals.net > 0.01
-      ? `You are owed $${totals.net.toFixed(2)}`
-      : totals.net < -0.01
-        ? `You owe $${Math.abs(totals.net).toFixed(2)}`
-        : "You are all settled";
 
   async function handleCreateExpenseReport() {
     const ids = expenses.filter((exp) => selectedIds.has(exp.id)).map((exp) => exp.id);
@@ -925,8 +1009,10 @@ const dateFilterValue: DateFilterValue = {
               onClick={() => setSummaryOpen(true)}
             >
               <div>
-                <p className="text-[11px] text-foreground-secondary mb-0.5">Net balance</p>
-                <p className="text-sm font-medium text-foreground">{netLabel}</p>
+                <p className="text-[11px] text-foreground-secondary mb-0.5">Agreed outstanding</p>
+                <p className="text-sm font-medium text-foreground">{figures.agreed.label}</p>
+                <p className="text-[11px] text-foreground-secondary mt-1">Claimed, awaiting response</p>
+                <p className="text-sm font-medium text-foreground">{figures.claimed.label}</p>
               </div>
               <span className="text-[11px] text-primary underline">View details</span>
             </button>
@@ -956,19 +1042,37 @@ const dateFilterValue: DateFilterValue = {
                       Close
                     </button>
                   </div>
-                  <div className="space-y-1 text-sm">
-                    <p className="flex justify-between">
-                      <span>They owe you</span>
-                      <span className="font-medium">${totals.totalOwedToYou.toFixed(2)}</span>
-                    </p>
-                    <p className="flex justify-between">
-                      <span>You owe them</span>
-                      <span className="font-medium">${totals.totalYouOwe.toFixed(2)}</span>
-                    </p>
-                    <p className="flex justify-between border-t border-border pt-2 mt-1 text-[13px]">
-                      <span className="text-foreground-secondary">Net</span>
-                      <span className="font-medium">{netLabel}</span>
-                    </p>
+                  <div className="space-y-3 text-sm">
+                    <div className="space-y-1">
+                      <p className="text-[11px] text-foreground-secondary">Agreed outstanding</p>
+                      <p className="flex justify-between">
+                        <span>They owe you</span>
+                        <span className="font-medium">${figures.agreed.owedToYou.toFixed(2)}</span>
+                      </p>
+                      <p className="flex justify-between">
+                        <span>You owe them</span>
+                        <span className="font-medium">${figures.agreed.youOwe.toFixed(2)}</span>
+                      </p>
+                      <p className="flex justify-between border-t border-border pt-2 mt-1 text-[13px]">
+                        <span className="text-foreground-secondary">Net</span>
+                        <span className="font-medium">{figures.agreed.label}</span>
+                      </p>
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-[11px] text-foreground-secondary">Claimed, awaiting response</p>
+                      <p className="flex justify-between">
+                        <span>They owe you</span>
+                        <span className="font-medium">${figures.claimed.owedToYou.toFixed(2)}</span>
+                      </p>
+                      <p className="flex justify-between">
+                        <span>You owe them</span>
+                        <span className="font-medium">${figures.claimed.youOwe.toFixed(2)}</span>
+                      </p>
+                      <p className="flex justify-between border-t border-border pt-2 mt-1 text-[13px]">
+                        <span className="text-foreground-secondary">Net</span>
+                        <span className="font-medium">{figures.claimed.label}</span>
+                      </p>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1252,27 +1356,26 @@ const dateFilterValue: DateFilterValue = {
               <tbody>
                 {filtered.map((exp, idx) => {
                   const amountNum = Number(exp.amount);
-                  const theirShare = coparentShareForRow(exp, currentUserId);
-                  const involved = coparentShareInvolves(theirShare);
+                  const involved = coparentShareInvolves(coparentShareForRow(exp, currentUserId));
                   const catColors = getCategoryColor(exp.category);
                   const otherCategoryNote =
                     exp.category === "other"
                       ? (exp.category_description ?? "").trim()
                       : "";
                   const statusLabel = displayExpenseStatus(exp, involved);
+                  const partialPayment = expensePartialPaymentText(exp);
+                  const statusKey = canonicalExpenseStatus(exp.status);
                   const statusClasses =
                     !involved &&
-                    (exp.status === "submitted" ||
-                      exp.status === "resolved" ||
-                      exp.status === "logged")
+                    (statusKey === "pending" || statusKey === "approved" || statusKey === "logged")
                       ? "bg-[#F2F5EF] text-[#5B7A52]"
-                      : exp.status === "submitted"
+                      : statusKey === "pending"
                       ? "bg-muted text-foreground-secondary"
-                      : exp.status === "disputed"
+                      : statusKey === "disputed"
                         ? "bg-[#FDF6E3] text-[#D4A843]"
-                        : exp.status === "resolved"
+                        : statusKey === "approved" || statusKey === "logged"
                           ? "bg-[#F2F5EF] text-[#5B7A52]"
-                          : exp.status === "paid"
+                          : statusKey === "paid"
                             ? "bg-[#E0EDDA] text-[#3D6B35]"
                             : "bg-muted text-foreground-secondary";
                   const handleRowActivate = () => {
@@ -1372,17 +1475,45 @@ const dateFilterValue: DateFilterValue = {
                       </td>
                       <td className="px-3 py-1.5 align-middle whitespace-nowrap">
                         <div className="flex flex-col items-start gap-1">
-                          <span
-                            className={cn(
-                              "inline-block rounded-full px-2 py-0.5 text-xs font-medium",
-                              statusClasses
-                            )}
-                          >
-                            {statusLabel}
-                          </span>
+                          {exp.status === "paid" ? (
+                            <button
+                              type="button"
+                              className={cn(
+                                "inline-block rounded-full px-2 py-0.5 text-xs font-medium hover:underline",
+                                statusClasses
+                              )}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openPayment(exp, "view");
+                              }}
+                            >
+                              {statusLabel}
+                            </button>
+                          ) : (
+                            <span
+                              className={cn(
+                                "inline-block rounded-full px-2 py-0.5 text-xs font-medium",
+                                statusClasses
+                              )}
+                            >
+                              {statusLabel}
+                            </span>
+                          )}
+                          {partialPayment && (
+                            <button
+                              type="button"
+                              className="text-left text-[11px] text-foreground-secondary hover:underline"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openPayment(exp, "view");
+                              }}
+                            >
+                              {partialPayment}
+                            </button>
+                          )}
                           {exp.submitted_by !== currentUserId ? (
                             <div className="flex flex-wrap gap-1 text-[11px]">
-                              {involved && exp.status === "submitted" && (
+                              {involved && statusKey === "pending" && (
                                 <>
                                   <button
                                     type="button"
@@ -1422,32 +1553,23 @@ const dateFilterValue: DateFilterValue = {
                                   Resolve
                                 </button>
                               )}
-                              {exp.status === "resolved" && (
+                              {payableCoparentShare(exp) != null && statusKey === "approved" && (
                                 <button
                                   type="button"
                                   className="inline-flex items-center rounded-full bg-[#5B7A52] px-2 py-0.5 text-[11px] text-white hover:bg-[#476242]"
                                   disabled={respondingId === exp.id}
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    const today = new Date().toISOString().slice(0, 10);
-                                    setMarkPaidExpense(exp);
-                                    setMarkPaidDate(today);
-                                    const theirShareNum =
-                                      theirShare != null && !Number.isNaN(theirShare)
-                                        ? theirShare
-                                        : 0;
-                                    setMarkPaidMethod("");
-                                    setMarkPaidRef("");
-                                    setMarkPaidNotes("");
+                                    openPayment(exp, partialPayment ? "view" : "record");
                                   }}
                                 >
-                                  Mark Paid
+                                  {partialPayment ? "Update payment" : "Mark Paid"}
                                 </button>
                               )}
                             </div>
                           ) : (
                             <div className="flex flex-col gap-1 text-[11px] text-foreground-secondary">
-                              {involved && exp.status === "submitted" && (
+                              {involved && statusKey === "pending" && (
                                 <span>Awaiting response</span>
                               )}
                               {exp.status === "disputed" && (
@@ -1470,8 +1592,8 @@ const dateFilterValue: DateFilterValue = {
                                   </button>
                                 </>
                               )}
-                              {involved && exp.status === "resolved" && (
-                                <span className="text-[#5B7A52]">Resolved</span>
+                              {involved && statusKey === "approved" && !partialPayment && (
+                                <span className="text-[#5B7A52]">Approved</span>
                               )}
                               {exp.status === "paid" && (
                                 <span className="text-[#3D6B35]">Paid</span>
@@ -1629,43 +1751,73 @@ const dateFilterValue: DateFilterValue = {
       <div
         className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-3"
         onClick={(e) => {
-          if (e.target === e.currentTarget) {
-            setMarkPaidExpense(null);
-          }
+          if (e.target === e.currentTarget) closePayment();
         }}
       >
-        <div className="w-full max-w-[420px] rounded-2xl border border-[#E8E4DC] bg-[#FDFBF7] p-4 shadow-card">
-          <h2 className="font-heading text-base font-semibold text-[#3D3D3D]">
-            Mark expense as paid
+        <div
+          className="w-full max-w-[420px] rounded-2xl border border-[#E8E4DC] bg-[#FDFBF7] p-4 shadow-card"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="payment-record-title"
+        >
+          <h2 id="payment-record-title" className="font-heading text-base font-semibold text-[#3D3D3D]">
+            {paymentBaseline ? "Payment record" : "Mark expense as paid"}
           </h2>
           <p className="mt-1 text-[11px] text-[#8A8A8A]">
-            {markPaidExpense.description || "Expense"} · $
-            {Number(markPaidExpense.amount).toFixed(2)}
+            {markPaidExpense.description || "Expense"}
+            {payableCoparentShare(markPaidExpense) != null
+              ? ` · Co-parent's share $${payableCoparentShare(markPaidExpense)!.toFixed(2)}`
+              : ""}
           </p>
 
           <div className="mt-3 space-y-2">
             <div className="space-y-1">
-              <label className="text-xs font-medium text-[#3D3D3D]">
+              <label className="text-xs font-medium text-[#3D3D3D]" htmlFor="payment-date">
                 Date paid
               </label>
               <input
+                id="payment-date"
                 type="date"
                 value={markPaidDate}
+                disabled={paymentReadOnly}
                 onChange={(e) => setMarkPaidDate(e.target.value)}
-                className="h-8 w-full rounded-md border border-[#E8E4DC] bg-white px-2 text-xs text-[#3D3D3D] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E]"
+                className="h-8 w-full rounded-md border border-[#E8E4DC] bg-white px-2 text-xs text-[#3D3D3D] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E] disabled:cursor-default disabled:bg-[#F4F1EA]"
               />
             </div>
 
             <div className="space-y-1">
-              <label className="text-xs font-medium text-[#3D3D3D]">
+              <label className="text-xs font-medium text-[#3D3D3D]" htmlFor="payment-amount">
+                Amount
+              </label>
+              <input
+                id="payment-amount"
+                type="number"
+                min="0.01"
+                step="0.01"
+                value={markPaidAmount}
+                disabled={paymentReadOnly}
+                onChange={(e) => setMarkPaidAmount(e.target.value)}
+                className="h-8 w-full rounded-md border border-[#E8E4DC] bg-white px-2 text-xs text-[#3D3D3D] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E] disabled:cursor-default disabled:bg-[#F4F1EA]"
+              />
+              {!paymentReadOnly && payableCoparentShare(markPaidExpense) != null && (
+                <p className="text-[11px] text-[#8A8A8A]">
+                  The co-parent's share is ${payableCoparentShare(markPaidExpense)!.toFixed(2)}. Enter that, or a smaller amount. A smaller amount stays Approved and the remainder stays outstanding. The status becomes Paid when the amount covers the share.
+                </p>
+              )}
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-[#3D3D3D]" htmlFor="payment-method">
                 Payment method
               </label>
               <select
+                id="payment-method"
                 value={markPaidMethod}
+                disabled={paymentReadOnly}
                 onChange={(e) => setMarkPaidMethod(e.target.value)}
-                className="h-8 w-full rounded-md border border-[#E8E4DC] bg-white px-2 text-xs text-[#3D3D3D] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E]"
+                className="h-8 w-full rounded-md border border-[#E8E4DC] bg-white px-2 text-xs text-[#3D3D3D] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E] disabled:cursor-default disabled:bg-[#F4F1EA]"
               >
-                <option value="">Select method</option>
+                <option value="">{paymentReadOnly ? "—" : "Select method"}</option>
                 <option value="Venmo">Venmo</option>
                 <option value="Zelle">Zelle</option>
                 <option value="Cash">Cash</option>
@@ -1676,27 +1828,31 @@ const dateFilterValue: DateFilterValue = {
             </div>
 
             <div className="space-y-1">
-              <label className="text-xs font-medium text-[#3D3D3D]">
+              <label className="text-xs font-medium text-[#3D3D3D]" htmlFor="payment-reference">
                 Reference / confirmation number
               </label>
               <input
+                id="payment-reference"
                 type="text"
                 value={markPaidRef}
+                disabled={paymentReadOnly}
                 onChange={(e) => setMarkPaidRef(e.target.value)}
-                placeholder="e.g., Venmo transaction ID"
-                className="h-8 w-full rounded-md border border-[#E8E4DC] bg-white px-2 text-xs text-[#3D3D3D] placeholder:text-[#B0A899] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E]"
+                placeholder={paymentReadOnly ? "" : "e.g., Venmo transaction ID"}
+                className="h-8 w-full rounded-md border border-[#E8E4DC] bg-white px-2 text-xs text-[#3D3D3D] placeholder:text-[#B0A899] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E] disabled:cursor-default disabled:bg-[#F4F1EA]"
               />
             </div>
 
             <div className="space-y-1">
-              <label className="text-xs font-medium text-[#3D3D3D]">
+              <label className="text-xs font-medium text-[#3D3D3D]" htmlFor="payment-notes">
                 Notes
               </label>
               <textarea
+                id="payment-notes"
                 value={markPaidNotes}
+                disabled={paymentReadOnly}
                 onChange={(e) => setMarkPaidNotes(e.target.value)}
-                placeholder="Any additional details"
-                className="w-full min-h-[72px] rounded-md border border-[#E8E4DC] bg-white px-2 py-1.5 text-xs text-[#3D3D3D] placeholder:text-[#B0A899] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E]"
+                placeholder={paymentReadOnly ? "" : "Any additional details"}
+                className="w-full min-h-[72px] rounded-md border border-[#E8E4DC] bg-white px-2 py-1.5 text-xs text-[#3D3D3D] placeholder:text-[#B0A899] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E] disabled:cursor-default disabled:bg-[#F4F1EA]"
               />
             </div>
           </div>
@@ -1707,31 +1863,52 @@ const dateFilterValue: DateFilterValue = {
               variant="outline"
               size="sm"
               className="h-8 rounded-full text-xs"
-              onClick={() => setMarkPaidExpense(null)}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              className="h-8 rounded-full bg-[#5B7A52] text-xs text-white hover:bg-[#476242]"
               onClick={() => {
-                if (!markPaidExpense) return;
-                const paidAtIso = markPaidDate
-                  ? new Date(markPaidDate + "T00:00:00").toISOString()
-                  : new Date().toISOString();
-                void handleRespond(markPaidExpense.id, "mark_paid", {
-                  paid_at: paidAtIso,
-                  payment_method: markPaidMethod || undefined,
-                  payment_reference: markPaidRef.trim() || undefined,
-                  payment_notes: markPaidNotes.trim() || undefined,
-                }).finally(() => {
-                  setMarkPaidExpense(null);
-                });
+                if (paymentBaseline && !paymentReadOnly) {
+                  setMarkPaidDate(paymentBaseline.date);
+                  setMarkPaidAmount(paymentBaseline.amount);
+                  setMarkPaidMethod(paymentBaseline.method);
+                  setMarkPaidRef(paymentBaseline.reference);
+                  setMarkPaidNotes(paymentBaseline.notes);
+                  setPaymentReadOnly(true);
+                  return;
+                }
+                closePayment();
               }}
             >
-              Mark Paid
+              {paymentBaseline && !paymentReadOnly ? "Cancel" : "Close"}
             </Button>
+            {paymentReadOnly && payableCoparentShare(markPaidExpense) != null ? (
+              <Button
+                type="button"
+                size="sm"
+                className="h-8 rounded-full bg-[#5B7A52] text-xs text-white hover:bg-[#476242]"
+                onClick={() => {
+                  if (!markPaidAmount) {
+                    const share = payableCoparentShare(markPaidExpense);
+                    if (share != null) setMarkPaidAmount(share.toFixed(2));
+                  }
+                  setPaymentReadOnly(false);
+                }}
+              >
+                Edit
+              </Button>
+            ) : (
+              <Button
+                type="button"
+                size="sm"
+                className="h-8 rounded-full bg-[#5B7A52] text-xs text-white hover:bg-[#476242]"
+                disabled={respondingId === markPaidExpense.id}
+                onClick={() => void savePayment()}
+              >
+                {paymentCoversShare(
+                  parsePaymentAmount(markPaidAmount),
+                  payableCoparentShare(markPaidExpense)
+                )
+                  ? "Mark Paid"
+                  : "Save payment"}
+              </Button>
+            )}
           </div>
         </div>
       </div>
@@ -1950,7 +2127,9 @@ const dateFilterValue: DateFilterValue = {
                     onChange={(e) => setEditForm((f) => ({ ...f, status: e.target.value }))}
                     className="h-8 w-full rounded-md border border-[#E8E4DC] bg-white px-2 text-sm text-[#3D3D3D] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E]"
                   >
-                    {STATUS_FILTER_OPTIONS.map((opt) => (
+                    {STATUS_FILTER_OPTIONS.filter(
+                      (opt) => opt.value !== "paid" || editExpense.status === "paid"
+                    ).map((opt) => (
                       <option key={opt.value} value={opt.value}>{opt.label}</option>
                     ))}
                   </select>
@@ -1971,54 +2150,9 @@ const dateFilterValue: DateFilterValue = {
                 )}
 
                 {editForm.status === "paid" && (
-                  <>
-                    <div className="space-y-1">
-                      <Label className="text-xs font-medium text-[#3D3D3D]">Date paid</Label>
-                      <Input
-                        type="date"
-                        value={editForm.paid_at}
-                        onChange={(e) => setEditForm((f) => ({ ...f, paid_at: e.target.value }))}
-                        className="h-8 text-sm border-[#E8E4DC]"
-                      />
-                    </div>
-
-                    <div className="space-y-1">
-                      <Label className="text-xs font-medium text-[#3D3D3D]">Payment method</Label>
-                      <select
-                        value={editForm.payment_method}
-                        onChange={(e) => setEditForm((f) => ({ ...f, payment_method: e.target.value }))}
-                        className="h-8 w-full rounded-md border border-[#E8E4DC] bg-white px-2 text-sm text-[#3D3D3D] focus:outline-none focus:ring-1 focus:ring-[#7C8B6E]"
-                      >
-                        <option value="">—</option>
-                        <option value="Venmo">Venmo</option>
-                        <option value="Zelle">Zelle</option>
-                        <option value="Cash">Cash</option>
-                        <option value="Check">Check</option>
-                        <option value="Bank Transfer">Bank Transfer</option>
-                        <option value="Other">Other</option>
-                      </select>
-                    </div>
-
-                    <div className="space-y-1">
-                      <Label className="text-xs font-medium text-[#3D3D3D]">Payment reference</Label>
-                      <Input
-                        value={editForm.payment_reference}
-                        onChange={(e) => setEditForm((f) => ({ ...f, payment_reference: e.target.value }))}
-                        placeholder="Optional"
-                        className="h-8 text-sm border-[#E8E4DC]"
-                      />
-                    </div>
-
-                    <div className="space-y-1">
-                      <Label className="text-xs font-medium text-[#3D3D3D]">Payment notes</Label>
-                      <Input
-                        value={editForm.payment_notes}
-                        onChange={(e) => setEditForm((f) => ({ ...f, payment_notes: e.target.value }))}
-                        placeholder="Optional"
-                        className="h-8 text-sm border-[#E8E4DC]"
-                      />
-                    </div>
-                  </>
+                  <p className="text-[11px] text-[#8A8A8A]">
+                    Open the Paid status to see the payment record.
+                  </p>
                 )}
               </>
             )}

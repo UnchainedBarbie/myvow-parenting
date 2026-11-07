@@ -12,16 +12,14 @@ export function coparentShareInvolves(
 
 /**
  * Workflow status for a newly saved expense.
- * notifyCoparent: user explicitly asked to involve co-parent even on a $0 share.
+ * A shared expense is Pending. A $0.00 share is Logged and has no workflow.
  */
 export function expenseWorkflowStatus(opts: {
   otherParentShare: number | null | undefined;
   notifyCoparent?: boolean;
-}): "submitted" | "resolved" {
-  if (opts.notifyCoparent === true) return "submitted";
-  if (opts.notifyCoparent === false) return "resolved";
-  if (coparentShareInvolves(opts.otherParentShare)) return "submitted";
-  return "resolved";
+}): "pending" | "logged" {
+  if (coparentShareInvolves(opts.otherParentShare)) return "pending";
+  return "logged";
 }
 
 /** Medical/dental bills are allocable shared categories — never "other"/personal. */

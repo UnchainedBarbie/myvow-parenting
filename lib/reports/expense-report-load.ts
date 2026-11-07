@@ -111,18 +111,33 @@ export async function loadExpenseReport(input: {
     admin.from("users").select("id, full_name, email, timezone").eq("id", userId).maybeSingle(),
     admin.from("case_members").select("role").eq("case_id", caseId).eq("user_id", userId).maybeSingle(),
   ]);
-  const expenseLoaded = await loadVisibleExpenses(
-    (columns) =>
-      admin
-        .from("expenses")
-        .select(columns)
-        .eq("case_id", caseId)
-        .is("deleted_at", null)
-        .order("created_at", { ascending: true })
-        .order("id", { ascending: true }),
-    "id, expense_number, created_at, incurred_date, description, category, category_description, amount, submitted_by, amount_owed, other_parent_share, other_parent_percent, split_label, allocation_status, status, dispute_reason, approved_by, approved_at, resolved_at, paid_at, payment_method, payment_reference, payment_notes, receipt_file_id",
-    { userId, role: (roleResult.data as { role?: string | null } | null)?.role ?? null }
-  );
+  const loadExpenseRows = (columns: string) =>
+    loadVisibleExpenses(
+      (selected) =>
+        admin
+          .from("expenses")
+          .select(selected)
+          .eq("case_id", caseId)
+          .is("deleted_at", null)
+          .order("created_at", { ascending: true })
+          .order("id", { ascending: true }),
+      columns,
+      { userId, role: (roleResult.data as { role?: string | null } | null)?.role ?? null }
+    );
+  const optionalColumns = ["disputed_by", "disputed_at", "paid_amount"];
+  let expenseColumns =
+    "id, expense_number, created_at, incurred_date, description, category, category_description, amount, submitted_by, amount_owed, other_parent_share, other_parent_percent, split_label, allocation_status, status, dispute_reason, disputed_by, disputed_at, approved_by, approved_at, resolved_at, paid_at, paid_amount, payment_method, payment_reference, payment_notes, receipt_file_id";
+  let expenseLoaded = await loadExpenseRows(expenseColumns);
+  while (expenseLoaded.error) {
+    const missing = optionalColumns.find(
+      (column) =>
+        expenseColumns.includes(column) &&
+        new RegExp(column, "i").test(expenseLoaded.error?.message ?? "")
+    );
+    if (!missing) break;
+    expenseColumns = expenseColumns.replace(`, ${missing}`, "");
+    expenseLoaded = await loadExpenseRows(expenseColumns);
+  }
 
   if (expenseLoaded.error) {
     throw new Error(expenseLoaded.error.message);
@@ -155,8 +170,12 @@ export async function loadExpenseReport(input: {
   const relatedIds = [
     ...new Set(
       rawExpenses.flatMap((expense) => {
-        const row = expense as { submitted_by?: string | null; approved_by?: string | null };
-        return [row.submitted_by, row.approved_by].filter((id): id is string => Boolean(id));
+        const row = expense as {
+          submitted_by?: string | null;
+          approved_by?: string | null;
+          disputed_by?: string | null;
+        };
+        return [row.submitted_by, row.approved_by, row.disputed_by].filter((id): id is string => Boolean(id));
       })
     ),
   ];
@@ -295,10 +314,13 @@ export async function loadExpenseReport(input: {
       allocationStatus: typeof row.allocation_status === "string" ? row.allocation_status : null,
       status: typeof row.status === "string" ? row.status : "",
       disputeReason: typeof row.dispute_reason === "string" ? row.dispute_reason : null,
+      disputedBy: typeof row.disputed_by === "string" ? row.disputed_by : null,
+      disputedAt: typeof row.disputed_at === "string" ? row.disputed_at : null,
       approvedBy: typeof row.approved_by === "string" ? row.approved_by : null,
       approvedAt: typeof row.approved_at === "string" ? row.approved_at : null,
       resolvedAt: typeof row.resolved_at === "string" ? row.resolved_at : null,
       paidAt: typeof row.paid_at === "string" ? row.paid_at : null,
+      paidAmount: (row.paid_amount as string | number | null | undefined) ?? null,
       paymentMethod: typeof row.payment_method === "string" ? row.payment_method : null,
       paymentReference: typeof row.payment_reference === "string" ? row.payment_reference : null,
       paymentNotes: typeof row.payment_notes === "string" ? row.payment_notes : null,

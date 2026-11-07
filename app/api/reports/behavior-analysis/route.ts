@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, getServiceRoleClient } from "@/lib/supabase/server";
 import { loadVisibleExpenses } from "@/lib/expenses-visibility";
+import {
+  EXPENSE_STATUS_LABELS,
+  canonicalExpenseStatus,
+  expenseShareRemainder,
+} from "@/lib/expenses-tab";
 
 type BehaviorAnalysisReportData = {
   summary: {
@@ -367,53 +372,74 @@ export async function POST(request: NextRequest) {
     };
 
     // 3. Expenses for this case within date range.
-    const expenseLoaded = await loadVisibleExpenses(
-      (columns) =>
-        admin
-          .from("expenses")
-          .select(columns)
-          .eq("case_id", caseId)
-          .is("deleted_at", null)
-          .gte("created_at", fromIso)
-          .lte("created_at", toIso)
-          .order("created_at", { ascending: true }),
-      "id, created_at, amount, amount_owed, status, dispute_reason, paid_at",
-      { userId: user.id, role: membership.role }
-    );
+    const loadAnalysisExpenses = (columns: string) =>
+      loadVisibleExpenses(
+        (selected) =>
+          admin
+            .from("expenses")
+            .select(selected)
+            .eq("case_id", caseId)
+            .is("deleted_at", null)
+            .gte("created_at", fromIso)
+            .lte("created_at", toIso)
+            .order("created_at", { ascending: true }),
+        columns,
+        { userId: user.id, role: membership.role }
+      );
+    let analysisColumns =
+      "id, created_at, amount, amount_owed, other_parent_share, split_label, status, dispute_reason, paid_at, paid_amount";
+    let expenseLoaded = await loadAnalysisExpenses(analysisColumns);
+    if (expenseLoaded.error && /paid_amount/i.test(expenseLoaded.error.message ?? "")) {
+      analysisColumns = analysisColumns.replace(", paid_amount", "");
+      expenseLoaded = await loadAnalysisExpenses(analysisColumns);
+    }
+    if (expenseLoaded.error) {
+      return NextResponse.json({ message: "Couldn't load expenses." }, { status: 500 });
+    }
     const expenses = expenseLoaded.rows;
-
-    const expenseStatusCounts = (expenses ?? []).reduce(
-      (acc, e) => {
-        const status = (e as { status?: string | null }).status ?? "unknown";
-        acc[status] = (acc[status] ?? 0) + 1;
+    const analysisRows = (expenses ?? []).map((e) => {
+      const row = {
+        amount: e.amount as string | number | null,
+        amount_owed: (e as { amount_owed?: string | number | null }).amount_owed ?? null,
+        other_parent_share:
+          (e as { other_parent_share?: string | number | null }).other_parent_share ?? null,
+        split_label: (e as { split_label?: string | null }).split_label ?? null,
+        submitted_by: "",
+        status: (e as { status?: string | null }).status ?? "",
+        paid_amount: (e as { paid_amount?: string | number | null }).paid_amount ?? null,
+      };
+      const status = canonicalExpenseStatus(row.status);
+      return {
+        id: e.id,
+        created_at: e.created_at,
+        amount: e.amount,
+        status: EXPENSE_STATUS_LABELS[status] ?? (row.status || "Not recorded"),
+        remainder: expenseShareRemainder(row),
+        paid_amount: row.paid_amount,
+        dispute_reason: (e as { dispute_reason?: string | null }).dispute_reason ?? null,
+        paid_at: (e as { paid_at?: string | null }).paid_at ?? null,
+      };
+    });
+    const expenseStatusCounts = analysisRows.reduce(
+      (acc, row) => {
+        acc[row.status] = (acc[row.status] ?? 0) + 1;
         return acc;
       },
       {} as Record<string, number>
     );
+    const sumRemainder = (status: string) =>
+      analysisRows.reduce(
+        (sum, row) => (row.status === status ? sum + row.remainder : sum),
+        0
+      );
 
     const expensesSummary = {
-      total_expenses: (expenses ?? []).length,
+      total_expenses: analysisRows.length,
       status_counts: expenseStatusCounts,
-      total_amount: (expenses ?? []).reduce(
-        (sum, e) => sum + Number((e as { amount?: number | null }).amount ?? 0),
-        0
-      ),
-      total_amount_owed: (expenses ?? []).reduce(
-        (sum, e) =>
-          sum +
-          Number((e as { amount_owed?: number | null }).amount_owed ?? 0),
-        0
-      ),
-      expenses: (expenses ?? []).map((e) => ({
-        id: e.id,
-        created_at: e.created_at,
-        amount: e.amount,
-        amount_owed: (e as { amount_owed?: number | null }).amount_owed ?? null,
-        status: e.status,
-        dispute_reason: (e as { dispute_reason?: string | null })
-          .dispute_reason ?? null,
-        paid_at: (e as { paid_at?: string | null }).paid_at ?? null,
-      })),
+      total_amount: analysisRows.reduce((sum, row) => sum + Number(row.amount ?? 0), 0),
+      agreed_outstanding: Math.round(sumRemainder("Approved") * 100) / 100,
+      claimed_awaiting_response: Math.round(sumRemainder("Pending") * 100) / 100,
+      expenses: analysisRows,
     };
 
     // 4. Calendar events for this case and range.
@@ -599,7 +625,7 @@ Privacy rules:
           },
           financial_compliance: {
             outstanding_amount:
-              "estimated amount still owed or unresolved, based on expenses data",
+              "Report agreed_outstanding and claimed_awaiting_response as two separate figures. Do not add them together. Status words are Logged, Pending, Approved, Disputed, and Paid. Remainder is the co-parent share minus paid_amount, and never below zero. A Paid expense with no paid_amount counts as paid in full.",
             late_payments:
               "description and approximate count of significantly delayed payments",
             dispute_ratio:

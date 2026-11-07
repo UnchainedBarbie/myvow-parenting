@@ -35,7 +35,8 @@ type Props = {
   awaitingResponseCount: number;
   communicationToneLabel: string;
   firstUnreadConversationId: string | null;
-  netLabel: string;
+  agreedOutstandingLabel: string;
+  claimedAwaitingLabel: string;
 };
 
 const MODULES: { type: OpenItemType; title: string }[] = [
@@ -61,7 +62,8 @@ function ModuleTiles({
   awaitingResponseCount,
   communicationToneLabel,
   firstUnreadConversationId,
-  netLabel,
+  agreedOutstandingLabel,
+  claimedAwaitingLabel,
 }: Props) {
   const router = useRouter();
   const openItems = useOpenItems();
@@ -73,11 +75,11 @@ function ModuleTiles({
   const [reminderReviewed, setReminderReviewed] = useState<ReviewedDraft | null>(null);
 
   useEffect(() => {
-    const match = netLabel.match(/\$([0-9][0-9,]*\.\d{2})/);
+    const match = agreedOutstandingLabel.match(/\$([0-9][0-9,]*\.\d{2})/);
     const amount = match ? match[1] : "0.00";
-    const template = `Hi, just a friendly reminder that there are outstanding shared expenses totaling $${amount}. Could you please review and confirm when you get a chance? Thank you.`;
+    const template = `Hi, just a friendly reminder that the agreed outstanding balance for shared expenses is $${amount}. Could you please review and confirm when you get a chance? Thank you.`;
     setReminderText(template);
-  }, [netLabel]);
+  }, [agreedOutstandingLabel]);
 
   async function handleReviewReminder() {
     const text = reminderText.trim();
@@ -267,11 +269,16 @@ function ModuleTiles({
                     )}
                     {module.type === "expense" && (
                       <div className="space-y-1">
-                        <p className="text-[11px] text-foreground-secondary">{netLabel}</p>
+                        <p className="text-[11px] text-foreground-secondary">
+                          Agreed outstanding: {agreedOutstandingLabel}
+                        </p>
+                        <p className="text-[11px] text-foreground-secondary">
+                          Claimed, awaiting response: {claimedAwaitingLabel}
+                        </p>
                         {openExpenseItems > 0 && (
                           <div className="flex items-start justify-between gap-3 rounded-lg border border-[#E8E4DC] bg-white px-3 py-2">
                             <p className="text-sm text-foreground">
-                              {openExpenseItems} submitted or disputed{" "}
+                              {openExpenseItems} pending or disputed{" "}
                               {openExpenseItems === 1 ? "expense" : "expenses"}
                             </p>
                             <Link href="/expenses?status=pending" className={SUB_LINK_CLASS}>
